@@ -22,6 +22,12 @@ Requires Windows 10 20H2 or later, or Windows 11. No source build is required.
 
 On first launch, the setup wizard can install a dedicated local gateway in WSL or connect OpenClaw Companion to an existing gateway. If you do not have a gateway yet, choose **Install a local gateway (WSL)**.
 
+## Uninstall
+
+Go to **Settings → Apps → Installed apps**, find **OpenClaw Companion**, and click **Uninstall** (or use **Add or Remove Programs** in Control Panel). This also removes the local WSL gateway it set up.
+
+Your settings file at `%APPDATA%\OpenClawTray\settings.json` and device identity files under `%APPDATA%\OpenClawTray\` are not removed automatically; delete them manually for a fully clean uninstall. See [docs/SETUP.md](docs/SETUP.md#uninstalling) for details, including the headless `--uninstall --confirm-destructive` CLI path used for testing.
+
 ## 🔌 Node mode (agent control)
 
 Use OpenClaw Companion for normal setup. You should not need to edit `openclaw.json` by hand.
