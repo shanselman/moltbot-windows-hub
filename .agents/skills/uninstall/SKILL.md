@@ -61,12 +61,16 @@ distro or Tailscale session actually in use).
    Get-Content out2.log
    ```
 
-5. **Verify** nothing expected survived:
+5. **Verify** the specific artifacts the engine is supposed to clean up — not the AppData
+   roots themselves. `TrayArtifactCleanup` resets/removes selected files in place; it does
+   not delete `%APPDATA%\OpenClawTray[-Dev]` or `%LOCALAPPDATA%\OpenClawTray[-Dev]`, so
+   asserting those roots are gone will report a successful run as failed:
 
    ```powershell
-   wsl -l -v
-   Test-Path "$env:APPDATA\OpenClawTray-Dev"
-   Test-Path "$env:LOCALAPPDATA\OpenClawTray-Dev"
+   wsl -l -v   # target distro should no longer be listed
+   Test-Path "$env:APPDATA\OpenClawTray-Dev\Logs"        # should be False
+   Test-Path "$env:LOCALAPPDATA\OpenClawTray-Dev\Logs"   # should be False
+   Test-Path "$env:LOCALAPPDATA\OpenClawTray-Dev\run.marker"  # should be False
    ```
 
    A `Failed to delete AppData Logs directory` warning because the run's own log/journal
