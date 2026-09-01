@@ -28,7 +28,15 @@ distro or Tailscale session actually in use).
    # (build first if it doesn't exist yet: .\build.ps1)
    ```
 
-2. **Dry-run first**, capturing output and exit code (a bare shell invocation can swallow
+2. **Kill any running instance first.** A background `OpenClaw.Tray.WinUI.exe` (e.g. the
+   tray icon) holds its own log/journal files open, which makes later steps fail to
+   delete the AppData Logs directory:
+
+   ```powershell
+   Get-Process OpenClaw.Tray.WinUI -ErrorAction SilentlyContinue | Stop-Process -Force
+   ```
+
+3. **Dry-run first**, capturing output and exit code (a bare shell invocation can swallow
    the exit code for a WinUI apphost; use `Start-Process -Wait -PassThru`):
 
    ```powershell
@@ -43,7 +51,7 @@ distro or Tailscale session actually in use).
    `OpenClawTray-Dev` / `OpenClawGateway-Dev`, separate from a real install's
    `OpenClawTray` / `OpenClawGateway`.
 
-3. **Check for real state the dry-run doesn't surface**, e.g. a live WSL distro:
+4. **Check for real state the dry-run doesn't surface**, e.g. a live WSL distro:
 
    ```powershell
    wsl -l -v
@@ -52,7 +60,7 @@ distro or Tailscale session actually in use).
    If the distro named in step 2's output is present, flag to the user that it will be
    unregistered (`wsl --unregister`), permanently deleting its filesystem.
 
-4. **Confirm with the user**, then run the real uninstall the same way:
+5. **Confirm with the user**, then run the real uninstall the same way:
 
    ```powershell
    $p = Start-Process -FilePath $exe -ArgumentList '--uninstall','--confirm-destructive' -PassThru -Wait `
@@ -61,7 +69,7 @@ distro or Tailscale session actually in use).
    Get-Content out2.log
    ```
 
-5. **Verify** the specific artifacts the engine is supposed to clean up — not the AppData
+6. **Verify** the specific artifacts the engine is supposed to clean up — not the AppData
    roots themselves. `TrayArtifactCleanup` resets/removes selected files in place; it does
    not delete `%APPDATA%\OpenClawTray[-Dev]` or `%LOCALAPPDATA%\OpenClawTray[-Dev]`, so
    asserting those roots are gone will report a successful run as failed:
@@ -73,8 +81,9 @@ distro or Tailscale session actually in use).
    Test-Path "$env:LOCALAPPDATA\OpenClawTray-Dev\run.marker"  # should be False
    ```
 
-   A `Failed to delete AppData Logs directory` warning because the run's own log/journal
-   file is still open is expected and harmless.
+   With step 2's kill done, `%APPDATA%\OpenClawTray-Dev\Logs` should also be gone; if a
+   `Failed to delete AppData Logs directory` warning still shows up, it's the current
+   run's own still-open log/journal file and is harmless.
 
 ## Notes
 
