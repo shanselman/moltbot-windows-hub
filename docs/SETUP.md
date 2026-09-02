@@ -187,6 +187,8 @@ OpenClaw Companion checks for updates automatically and shows a notification whe
 
 ## Uninstalling
 
-Go to **Settings → Apps → Installed apps**, find **OpenClaw Companion**, and click **Uninstall**. Alternatively, use **Add or Remove Programs** in the Control Panel.
+Go to **Settings → Apps → Installed apps**, find **OpenClaw Companion**, and click **Uninstall**. Alternatively, use **Add or Remove Programs** in the Control Panel. You'll be asked whether to also remove the local WSL gateway; choose **Yes** to unregister its WSL distro and generated state, or **No** to leave the gateway and that state in place.
 
-Your settings file at `%APPDATA%\OpenClawTray\settings.json` and device identity files under `%APPDATA%\OpenClawTray\` (including per-gateway keys at `%APPDATA%\OpenClawTray\gateways\<gateway-id>\device-key-ed25519.json`) are not removed automatically - delete them manually if you want a clean uninstall.
+Your settings file at `%APPDATA%\OpenClawTray\settings.json` is not removed automatically, and device identity files for gateways unrelated to the one you removed (including per-gateway keys at `%APPDATA%\OpenClawTray\gateways\<gateway-id>\device-key-ed25519.json`) are preserved. Choosing **Yes** does also remove the removed gateway's own identity directory and, if it was your only gateway, clears your root device tokens; delete `%APPDATA%\OpenClawTray\` manually if you want a fully clean uninstall.
+
+For a headless CLI uninstall path used for dev/testing (`--uninstall --dry-run`, then `--confirm-destructive`), see `.agents/skills/uninstall/SKILL.md`.

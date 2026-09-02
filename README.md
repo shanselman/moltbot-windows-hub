@@ -26,7 +26,7 @@ On first launch, the setup wizard can install a dedicated local gateway in WSL o
 
 Go to **Settings → Apps → Installed apps**, find **OpenClaw Companion**, and click **Uninstall** (or use **Add or Remove Programs** in Control Panel). You'll be asked whether to also remove the local WSL gateway; choose **Yes** to unregister its WSL distro and generated state, or **No** to leave the gateway and that state in place.
 
-Your settings file at `%APPDATA%\OpenClawTray\settings.json` and device identity files under `%APPDATA%\OpenClawTray\` are not removed automatically; delete them manually for a fully clean uninstall. See [docs/SETUP.md](docs/SETUP.md#uninstalling) for details, including the headless `--uninstall --confirm-destructive` CLI path used for testing.
+Your settings file at `%APPDATA%\OpenClawTray\settings.json` is not removed automatically, and device identity files for gateways unrelated to the one you removed are preserved. Choosing **Yes** does also remove the removed gateway's own identity directory under `%APPDATA%\OpenClawTray\gateways\` and, if it was your only gateway, clears your root device tokens; delete `%APPDATA%\OpenClawTray\` manually for a fully clean uninstall. See [docs/SETUP.md](docs/SETUP.md#uninstalling) for details, including the headless `--uninstall --confirm-destructive` CLI path used for testing.
 
 ## 🔌 Node mode (agent control)
 
