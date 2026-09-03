@@ -178,7 +178,6 @@ public sealed class GatewayConfig
 {
     public string Bind { get; set; } = "loopback";
     public string? InstallUrl { get; set; }
-    public string Selection { get; set; } = "recommended";
     public string? Version { get; set; }
     // Runtime-only input for the explicit headless release-candidate validation lane.
     [JsonIgnore]
@@ -187,8 +186,6 @@ public sealed class GatewayConfig
     public string ReloadMode { get; set; } = "hybrid";
     public string AuthMode { get; set; } = "token";
     public Dictionary<string, string>? ExtraConfig { get; set; }
-    [JsonIgnore]
-    public GatewayReleaseResolution? ResolvedRelease { get; set; }
 }
 
 // ─── Capabilities Configuration ───

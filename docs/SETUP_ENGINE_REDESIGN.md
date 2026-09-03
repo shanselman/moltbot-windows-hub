@@ -124,7 +124,6 @@ rerun setup with a supported new name.
   "Gateway": {
     "Bind": "loopback",
     "InstallUrl": null,
-    "Version": null,
     "HealthTimeoutSeconds": 90,
     "ReloadMode": "hot",
     "AuthMode": "token",
@@ -326,7 +325,7 @@ OpenClaw.SetupEngine.Program.Main(["--log-path", "./trace.log"])
 ```
 
 Common flags include `--config`, `--headless`, `--dry-run`, `--rollback-on-failure`, `--no-rollback-on-failure`, `--log-path`, `--gateway-port`, and uninstall safety flags such as `--uninstall` plus `--confirm-destructive`.
-The cross-repository release gate may also pass `--gateway-candidate-package <absolute-tgz>` together with `--validate-gateway-candidate`, headless mode, and rollback-on-failure. This runtime-only input is not deserialized from setup config and does not authorize normal product setup to install an unvalidated release.
+Normal setup uses npm `latest`. The cross-repository release gate may pass an exact `Gateway.Version` with `--validate-gateway-candidate`. It may also pass `--gateway-candidate-package <absolute-tgz>` together with that flag, headless mode, and rollback-on-failure. The package input is runtime-only and does not change normal product setup.
 
 SetupEngine option names are case-insensitive. Value options accept either separated
 syntax (`--config custom.json`) or equals syntax (`--config=custom.json`). Unknown

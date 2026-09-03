@@ -170,11 +170,11 @@ public static class Program
             try
             {
                 if (config.Gateway.ValidationPackagePath != null)
-                    GatewayReleasePolicy.ResolveAndApplyValidationPackage(config);
+                    GatewayInstallPolicy.ValidateAndApplyValidationPackage(config);
                 else
-                    GatewayReleasePolicy.ResolveAndApply(
+                    GatewayInstallPolicy.ValidateAndApply(
                         config,
-                        allowCandidate: validateGatewayCandidate);
+                        allowExactCandidate: validateGatewayCandidate);
             }
             catch (GatewayCompatibilityException ex)
             {
@@ -200,9 +200,11 @@ public static class Program
         Console.WriteLine($"Gateway: {config.EffectiveGatewayUrl}");
         if (!uninstall && !wizardOnly)
         {
+            var gatewayRelease = string.IsNullOrWhiteSpace(config.Gateway.Version)
+                ? "npm latest"
+                : config.Gateway.Version;
             Console.WriteLine(
-                $"Gateway release: {config.Gateway.Version} " +
-                $"({config.Gateway.Selection}, protocol v{GatewayReleasePolicy.ProtocolGeneration})");
+                $"Gateway release: {gatewayRelease} (protocol v{GatewayInstallPolicy.ProtocolGeneration})");
         }
         Console.WriteLine($"Mode: {(uninstall ? "UNINSTALL" : "SETUP")}");
         if (uninstall)
@@ -334,9 +336,6 @@ public static class Program
             PipelineOutcome.Cancelled => $"═══ {label} CANCELLED ═══",
             _ => "═══ UNKNOWN STATE ═══"
         });
-        if (result.CompatibilityFailure is not null)
-            Console.WriteLine($"\n{BuildCompatibilityFallbackMessage(config, result.CompatibilityFailure.Value)}");
-
         Console.WriteLine($"\nLog: {config.LogPath}");
         Console.WriteLine($"Journal: {journalPath}");
 
@@ -366,29 +365,13 @@ public static class Program
             message = result.Message,
             requiresRestart = result.RequiresRestart,
             compatibilityFailure = result.CompatibilityFailure?.ToString(),
-            selectedGatewayVersion = config.Gateway.Version,
-            gatewayProtocolGeneration = GatewayReleasePolicy.ProtocolGeneration,
-            fallbackGatewayVersion =
-                result.CompatibilityFailure is { } failureKind &&
-                GatewayReleasePolicy.CanRetryWithFallback(config, failureKind)
-                    ? GatewayReleasePolicy.FallbackVersion
-                    : null,
+            installedGatewayVersion = config.Gateway.Version,
+            gatewayProtocolGeneration = GatewayInstallPolicy.ProtocolGeneration,
             logPath = config.LogPath,
             journalPath
         };
         return System.Text.Json.JsonSerializer.Serialize(jsonResult, SetupConfig.JsonWriteOptions);
     }
-
-    internal static string BuildCompatibilityFallbackMessage(
-        SetupConfig config,
-        GatewayCompatibilityFailureKind failureKind)
-    {
-        var fallback = GatewayReleasePolicy.FallbackVersion;
-        return !GatewayReleasePolicy.CanRetryWithFallback(config, failureKind)
-            ? $"No additional validated fallback is available at or above security floor {GatewayReleasePolicy.SecurityFloor}."
-            : $"To retry explicitly with validated fallback {fallback}, set Gateway.Selection to \"fallback\" and rerun setup.";
-    }
-
     private static List<SetupStep> BuildSteps(SetupConfig config)
         => SetupStepFactory.BuildDefaultSteps();
 

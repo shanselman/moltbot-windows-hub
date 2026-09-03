@@ -34,7 +34,7 @@ The Capabilities page applies the selected profile to both setup config and runt
 
 ### OpenClaw onboard
 
-After OpenClaw onboard completes-or when the user explicitly skips it-local setup runs the pinned gateway CLI's non-interactive baseline initializer against the final runtime workspace, then writes fixed Windows-node guidance into a setup-owned managed section of that workspace's `AGENTS.md`. The section is replaced idempotently between markers, preserves user-authored `AGENTS.md` content and file permissions outside those markers, and does not modify OpenClaw source files. This helps the initial companion-app OpenClaw session know to use the Windows node / `nodes` tool for Windows desktop, files, screenshots, camera, notifications, browser proxy, and Windows command tasks.
+After OpenClaw onboard completes-or when the user explicitly skips it-local setup runs the installed gateway CLI's non-interactive baseline initializer against the final runtime workspace, then writes fixed Windows-node guidance into a setup-owned managed section of that workspace's `AGENTS.md`. The section is replaced idempotently between markers, preserves user-authored `AGENTS.md` content and file permissions outside those markers, and does not modify OpenClaw source files. This helps the initial companion-app OpenClaw session know to use the Windows node / `nodes` tool for Windows desktop, files, screenshots, camera, notifications, browser proxy, and Windows command tasks.
 
 Renders server-defined setup steps via RPC (`wizard.start` / `wizard.next`). The gateway controls the flow - steps can be:
 - **Note** - informational messages

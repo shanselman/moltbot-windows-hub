@@ -27,17 +27,22 @@ public static class SetupReviewSummaryBuilder
         var gatewayPort = config.GatewayPort;
         var installPath = Path.Combine(localDataDir ?? SetupContext.ResolveLocalDataDir(), "wsl", distroName);
         var gatewayDataPath = Path.Combine(dataDir ?? SetupContext.ResolveDataDir(), "gateways.json");
-        var release = config.Gateway.ResolvedRelease ?? GatewayReleasePolicy.ResolveAndApply(config);
-        var installUrl = config.Gateway.InstallUrl ?? GatewayReleasePolicy.DefaultInstallUrl;
+        var installUrl = config.Gateway.InstallUrl ?? GatewayInstallPolicy.DefaultInstallUrl;
         var installerHost = TryGetHttpsHost(installUrl);
+        var isCustomInstaller = !GatewayInstallPolicy.IsOfficialInstallerUrl(installUrl);
+        var requestedVersion = config.Gateway.Version?.Trim();
         var installerDescription = installerHost is null
             ? "Installer URL is not HTTPS; setup will stop before downloading anything."
-            : release.IsCustomInstaller
-                ? $"Unverified custom installer from {installerHost}; exact Gateway {release.Version}, protocol v{release.ProtocolGeneration} is checked after install."
-                : $"Official Gateway {release.Version}; validated for protocol v{release.ProtocolGeneration} and fetched over HTTPS from {installerHost}.";
+            : isCustomInstaller
+                ? $"Unverified custom installer from {installerHost}; exact Gateway {requestedVersion}, protocol v{GatewayInstallPolicy.ProtocolGeneration} is checked after install."
+                : string.IsNullOrWhiteSpace(requestedVersion)
+                    ? $"Latest stable OpenClaw package from npm, fetched over HTTPS from {installerHost}. Protocol v{GatewayInstallPolicy.ProtocolGeneration} is checked after install."
+                    : $"Exact Gateway candidate {requestedVersion}, fetched over HTTPS from {installerHost}. Protocol v{GatewayInstallPolicy.ProtocolGeneration} is checked after install.";
         var installerBadge = installerHost is null
             ? "Invalid URL"
-            : release.IsCustomInstaller ? "Custom" : $"v{release.ProtocolGeneration} validated";
+            : isCustomInstaller
+                ? "Custom"
+                : string.IsNullOrWhiteSpace(requestedVersion) ? "npm latest" : "Candidate";
         var isLanBind = gatewayBind.Equals("lan", StringComparison.OrdinalIgnoreCase);
         var tailscaleEnabled = config.Tailscale.Enabled;
         var tailnetDnsSuffix = config.Tailscale.TailnetDnsSuffix?.Trim().Trim('.');
@@ -59,8 +64,8 @@ public static class SetupReviewSummaryBuilder
             ? "setup stops before CLI download: installer URL must use HTTPS"
             : InstallCliStep.BuildInstallCommandPreview(
                 installUrl,
-                release.Version,
-                release.IsCustomInstaller ? null : GatewayReleasePolicy.NodeVersion);
+                requestedVersion,
+                isCustomInstaller ? null : GatewayInstallPolicy.NodeVersion);
         LocalModelInfo localAiModel =
             LocalModelCatalog.Find(config.LocalAi.SelectedModelId) ?? LocalModelCatalog.Default;
         LocalInferenceRunProfile? localAiProfile =

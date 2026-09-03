@@ -55,20 +55,11 @@ on newer behavior.
 - `https://github.com/openclaw/openclaw/blob/main/src/gateway/server-methods/nodes.ts`
 - `https://github.com/openclaw/openclaw/blob/main/packages/gateway-protocol/src/schema/frames.ts`
 
-The setup engine installs the exact Windows-validated recommendation from
-`src/OpenClaw.SetupEngine/GatewayReleasePolicy.cs`. The policy currently
-requires Gateway protocol v4 and security floor `2026.6.11`. npm dist-tags are
-candidate discovery hints only. Before promoting a newer upstream release,
-verify its tagged protocol source and run exact-version Windows setup,
-pairing, reconnect, recovery, and Gateway-to-node proof.
+The setup engine uses the official installer without `--version`, so npm
+`latest` selects the stable OpenClaw package. Setup records the installed CLI
+version and requires the gateway handshake to report the same version.
 
-The current recommendation is exact release `2026.6.34`; `2026.6.11` is the
-explicit validated fallback. Exact release `2026.7.1` is protocol-v4 compatible
-but runtime-rejected because its clean setup wizard restart did not recover a
-trusted managed endpoint. `2026.7.1-2` is rejected for missing provenance and
-stable release-validation evidence.
-
-The managed gateway release pin is not the WebSocket protocol pin. Windows
+Package selection is independent of the WebSocket protocol range. Windows
 currently advertises `minProtocol: 3` and `maxProtocol: 4`; the gateway reports
 its current protocol constant in `hello-ok.protocol`, not a per-connection
 negotiated value. After the gateway accepts the advertised range, Windows records

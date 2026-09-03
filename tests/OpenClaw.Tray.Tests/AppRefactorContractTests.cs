@@ -1311,21 +1311,6 @@ public sealed class AppRefactorContractTests
     }
 
     [Fact]
-    public void CompletePage_OffersExactFallbackOnlyThroughTypedCompatibilityPath()
-    {
-        var root = TestRepositoryPaths.GetRepositoryRoot();
-        var setupWindow = File.ReadAllText(Path.Combine(root, "src", "OpenClaw.SetupEngine.UI", "SetupWindow.xaml.cs"));
-        var complete = File.ReadAllText(Path.Combine(root, "src", "OpenClaw.SetupEngine.UI", "Pages", "CompletePage.xaml.cs"));
-        var progress = File.ReadAllText(Path.Combine(root, "src", "OpenClaw.SetupEngine.UI", "Pages", "ProgressPage.xaml.cs"));
-
-        Assert.Contains("result.CompatibilityFailure", progress);
-        Assert.Contains("GatewayReleasePolicy.CanRetryWithFallback(_config, failureKind)", setupWindow);
-        Assert.Contains("GatewayReleasePolicy.TryApplyFallback(_config, out error)", setupWindow);
-        Assert.Contains("Retry with validated fallback {args.GatewayFallbackVersion}", complete);
-        Assert.Contains("FallbackButton.Visibility = args.CanRetryGatewayFallback", complete);
-    }
-
-    [Fact]
     public void CompletePage_OffersTypedRestartChoiceWithoutForcingApplicationsClosed()
     {
         var root = TestRepositoryPaths.GetRepositoryRoot();

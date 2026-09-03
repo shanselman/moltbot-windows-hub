@@ -33,6 +33,7 @@ public class SetupConfigTests : IDisposable
         Assert.Equal("trace", config.LogLevel);
         Assert.False(config.RollbackOnFailure);
         Assert.Equal("loopback", config.Gateway.Bind);
+        Assert.Null(config.Gateway.Version);
         Assert.Equal("hybrid", config.Gateway.ReloadMode);
         Assert.False(config.SkipPermissions);
         Assert.False(config.SkipWizard);
@@ -426,7 +427,7 @@ public class SetupConfigTests : IDisposable
                 {
                     Bind = "lan",
                     InstallUrl = "https://example.test/install.sh",
-                    Version = GatewayReleasePolicy.SecurityFloor
+                    Version = "2026.8.1"
                 },
                 LocalAi =
                 {
@@ -455,7 +456,7 @@ public class SetupConfigTests : IDisposable
             Assert.DoesNotContain("--max-time", summary.ExactCommands);
             Assert.DoesNotContain("--remove-on-error", summary.ExactCommands);
             Assert.Contains(
-                $"bash -s -- --version '{GatewayReleasePolicy.SecurityFloor}' < \"$installer\"",
+                "bash -s -- --version '2026.8.1' < \"$installer\"",
                 summary.ExactCommands);
             Assert.DoesNotContain("--node-version", summary.ExactCommands);
             Assert.DoesNotContain("--retry", summary.ExactCommands);
@@ -480,19 +481,14 @@ public class SetupConfigTests : IDisposable
     }
 
     [Fact]
-    public void SetupReviewSummary_OfficialInstallerShowsSelectedGatewayAndNodeVersions()
+    public void SetupReviewSummary_DefaultsToNpmLatestWithoutVersionArgument()
     {
-        var config = new SetupConfig();
+        var summary = SetupReviewSummaryBuilder.Build(new SetupConfig());
 
-        var summary = SetupReviewSummaryBuilder.Build(config);
-
-        Assert.Contains($"'{GatewayReleasePolicy.DefaultInstallUrl}'", summary.ExactCommands);
-        Assert.Contains(
-            $"bash -s -- --version '{GatewayReleasePolicy.RecommendedVersion}' " +
-            $"--node-version '{GatewayReleasePolicy.NodeVersion}' < \"$installer\"",
-            summary.ExactCommands);
-        Assert.DoesNotContain("--retry", summary.ExactCommands);
-        Assert.DoesNotContain("| bash", summary.ExactCommands);
+        Assert.Contains("Latest stable OpenClaw package from npm", summary.InstallerDescription);
+        Assert.Equal("npm latest", summary.InstallerBadge);
+        Assert.DoesNotContain("--version", summary.ExactCommands, StringComparison.Ordinal);
+        Assert.Contains("--node-version", summary.ExactCommands, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -503,7 +499,7 @@ public class SetupConfigTests : IDisposable
             Gateway =
             {
                 InstallUrl = "http://example.test/install.sh",
-                Version = GatewayReleasePolicy.SecurityFloor
+                Version = "2026.8.1"
             }
         };
 

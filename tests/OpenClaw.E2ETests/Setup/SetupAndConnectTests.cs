@@ -169,10 +169,10 @@ public class SetupAndConnectTests
 
     private static string ResolveNodeCommandsAllowKey()
     {
-        var gatewayVersion =
-            Environment.GetEnvironmentVariable("OPENCLAW_E2E_GATEWAY_VERSION") ??
-            GatewayReleasePolicy.RecommendedVersion;
-        return ConfigureGatewayStep.ResolveNodeCommandsAllowKey(gatewayVersion);
+        var gatewayVersion = Environment.GetEnvironmentVariable("OPENCLAW_E2E_GATEWAY_VERSION");
+        return string.IsNullOrWhiteSpace(gatewayVersion)
+            ? ConfigureGatewayStep.NodeCommandsAllowKey
+            : ConfigureGatewayStep.ResolveNodeCommandsAllowKey(gatewayVersion);
     }
 
     [E2EFact]

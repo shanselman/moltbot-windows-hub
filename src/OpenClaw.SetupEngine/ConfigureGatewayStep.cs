@@ -181,9 +181,10 @@ public sealed class ConfigureGatewayStep : SetupStep
 
     internal static string ResolveNodeCommandsAllowKey(string? gatewayVersion)
     {
-        var selectedVersion = string.IsNullOrWhiteSpace(gatewayVersion)
-            ? GatewayReleasePolicy.RecommendedVersion
-            : gatewayVersion.Trim();
+        if (string.IsNullOrWhiteSpace(gatewayVersion))
+            return NodeCommandsAllowKey;
+
+        var selectedVersion = gatewayVersion.Trim();
         if (!GatewayReleaseVersion.TryParse(selectedVersion, out var parsedVersion))
             throw new ArgumentException($"Gateway version '{selectedVersion}' is not an exact stable release.", nameof(gatewayVersion));
         if (!GatewayReleaseVersion.TryParse(NodeCommandsConfigMigrationVersion, out var migrationVersion))

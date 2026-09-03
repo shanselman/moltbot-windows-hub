@@ -333,12 +333,7 @@ public sealed class E2ESetupFixture : IAsyncLifetime
     {
         var candidateVersion =
             Environment.GetEnvironmentVariable("OPENCLAW_E2E_GATEWAY_VERSION")?.Trim();
-        var gateway = new Dictionary<string, object?>
-        {
-            ["Selection"] = string.IsNullOrWhiteSpace(candidateVersion)
-                ? "recommended"
-                : "exact"
-        };
+        var gateway = new Dictionary<string, object?>();
         if (!string.IsNullOrWhiteSpace(candidateVersion))
             gateway["Version"] = candidateVersion;
 

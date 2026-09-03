@@ -82,14 +82,8 @@
     // Network bind: "loopback" (127.0.0.1, secure default), "lan" (0.0.0.0, opt-in for LAN access)
     "Bind": "loopback",
     // Override CLI install script URL (null = official https://openclaw.ai/install-cli.sh).
-    // A custom URL requires an exact Version and is reported as unverified.
+    // The official installer uses npm latest. A custom URL requires an exact Version.
     "InstallUrl": null,
-    // "recommended" installs the exact evidence-backed Windows release.
-    // "fallback" is explicit and fails closed when no distinct validated fallback exists.
-    // "exact" requires Version and accepts only an embedded attested official release.
-    "Selection": "recommended",
-    // Exact version for Selection="exact" or for a custom InstallUrl.
-    "Version": null,
     // Seconds to wait for gateway health endpoint before failing
     "HealthTimeoutSeconds": 90,
     // Config reload strategy: "off" or "hybrid"
@@ -163,7 +157,7 @@
   // Inject setup-owned guidance into the final OpenClaw runtime workspace AGENTS.md.
   "WindowsNodeContext": {
     "Enabled": true,
-    // Optional WSL workspace path override; null = let the pinned gateway CLI's baseline setup use its configured/default workspace.
+    // Optional WSL workspace path override; null = let the installed gateway CLI's baseline setup use its configured/default workspace.
     "WorkspacePath": null,
     // Seconds allowed for OpenClaw workspace seeding and AGENTS.md context injection.
     "TimeoutSeconds": 180
