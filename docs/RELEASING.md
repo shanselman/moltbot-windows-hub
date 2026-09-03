@@ -133,9 +133,11 @@ though Updatum 1.3.4's default parsing does not rank `2026.7.1-3` above
 `2026.7.1-2`, the `OpenClawReleaseVersion` fallback in the update check pipeline
 compares releases under OpenClaw correction ordering and discovers `2026.7.1-3`.
 
-Gateway versions are a separate, independently pinned domain. A Windows Hub
-correction release does not change `GatewayReleasePolicy.RecommendedVersion` or
-its evidence gates; see [`adr/0001-gateway-release-policy.md`](adr/0001-gateway-release-policy.md).
+Gateway versions are a separate domain. Managed setup resolves npm `latest`
+independently and verifies that the protocol-v4 handshake reports the installed
+package version. A Windows Hub correction release does not select a Gateway
+package version; see
+[`adr/0001-gateway-release-policy.md`](adr/0001-gateway-release-policy.md).
 
 ```powershell
 git tag -a vX.Y.Z-alpha.N -m "OpenClaw Windows Hub vX.Y.Z-alpha.N"

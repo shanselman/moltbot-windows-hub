@@ -20,10 +20,10 @@ tag must not be published if that exact tag already exists or a newer
 stable/correction release has already been published.
 
 Windows Hub release tags are an independent version domain. They are not
-validated against, or required to match, any other repository's releases. The
-Gateway package version is pinned separately by
-`GatewayReleasePolicy.RecommendedVersion` under its own evidence gates, and a
-Windows Hub correction release never changes that pin.
+validated against, or required to match, any other repository's releases.
+Managed Gateway setup resolves the npm `latest` package independently and
+verifies that the protocol-v4 handshake reports the installed package version.
+A Windows Hub correction release does not select a Gateway package version.
 
 `GitVersion.yml` controls how tag history becomes SemVer. The product build
 imports GitVersion through `src\Directory.Build.props`, so normal `dotnet build`,
