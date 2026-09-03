@@ -31,18 +31,25 @@ public static class SetupReviewSummaryBuilder
         var installerHost = TryGetHttpsHost(installUrl);
         var isCustomInstaller = !GatewayInstallPolicy.IsOfficialInstallerUrl(installUrl);
         var requestedVersion = config.Gateway.Version?.Trim();
+        var isDefaultLatest = string.IsNullOrWhiteSpace(requestedVersion) ||
+                              requestedVersion.Equals("latest", StringComparison.OrdinalIgnoreCase);
+        var isExactVersion = GatewayPackageVersion.IsExact(requestedVersion);
         var installerDescription = installerHost is null
             ? "Installer URL is not HTTPS; setup will stop before downloading anything."
             : isCustomInstaller
                 ? $"Unverified custom installer from {installerHost}; exact Gateway {requestedVersion}, protocol v{GatewayInstallPolicy.ProtocolGeneration} is checked after install."
-                : string.IsNullOrWhiteSpace(requestedVersion)
+                : isDefaultLatest
                     ? $"Latest stable OpenClaw package from npm, fetched over HTTPS from {installerHost}. Protocol v{GatewayInstallPolicy.ProtocolGeneration} is checked after install."
-                    : $"Exact Gateway candidate {requestedVersion}, fetched over HTTPS from {installerHost}. Protocol v{GatewayInstallPolicy.ProtocolGeneration} is checked after install.";
+                    : isExactVersion
+                        ? $"Exact OpenClaw package {requestedVersion}, fetched over HTTPS from {installerHost}. Protocol v{GatewayInstallPolicy.ProtocolGeneration} is checked after install."
+                        : $"OpenClaw {requestedVersion} channel from npm, fetched over HTTPS from {installerHost}. Protocol v{GatewayInstallPolicy.ProtocolGeneration} is checked after install.";
         var installerBadge = installerHost is null
             ? "Invalid URL"
             : isCustomInstaller
                 ? "Custom"
-                : string.IsNullOrWhiteSpace(requestedVersion) ? "npm latest" : "Candidate";
+                : isDefaultLatest
+                    ? "npm latest"
+                    : isExactVersion ? requestedVersion! : $"npm {requestedVersion}";
         var isLanBind = gatewayBind.Equals("lan", StringComparison.OrdinalIgnoreCase);
         var tailscaleEnabled = config.Tailscale.Enabled;
         var tailnetDnsSuffix = config.Tailscale.TailnetDnsSuffix?.Trim().Trim('.');

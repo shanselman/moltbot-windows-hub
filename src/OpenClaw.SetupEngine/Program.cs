@@ -172,9 +172,7 @@ public static class Program
                 if (config.Gateway.ValidationPackagePath != null)
                     GatewayInstallPolicy.ValidateAndApplyValidationPackage(config);
                 else
-                    GatewayInstallPolicy.ValidateAndApply(
-                        config,
-                        allowExactCandidate: validateGatewayCandidate);
+                    GatewayInstallPolicy.ValidateAndApply(config);
             }
             catch (GatewayCompatibilityException ex)
             {
@@ -365,7 +363,7 @@ public static class Program
             message = result.Message,
             requiresRestart = result.RequiresRestart,
             compatibilityFailure = result.CompatibilityFailure?.ToString(),
-            installedGatewayVersion = config.Gateway.Version,
+            installedGatewayVersion = config.Gateway.InstalledVersion,
             gatewayProtocolGeneration = GatewayInstallPolicy.ProtocolGeneration,
             logPath = config.LogPath,
             journalPath

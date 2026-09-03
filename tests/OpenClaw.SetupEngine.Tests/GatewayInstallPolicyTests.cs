@@ -21,6 +21,16 @@ public sealed class GatewayInstallPolicyTests
         Assert.False(GatewayReleaseVersion.TryParse(value, out _));
     }
 
+    [Theory]
+    [InlineData("2026.9.1")]
+    [InlineData("2026.7.1-2")]
+    [InlineData("2026.9.2-beta.3")]
+    [InlineData("2026.9.2-rc-hotfix.1+build-local")]
+    public void PackageVersionParser_AcceptsPublishedVersionShapes(string value)
+    {
+        Assert.True(GatewayPackageVersion.IsExact(value));
+    }
+
     [Fact]
     public void ValidateAndApply_DefaultsOfficialInstallerToNpmLatest()
     {
@@ -33,31 +43,84 @@ public sealed class GatewayInstallPolicyTests
     }
 
     [Fact]
-    public void ValidateAndApply_RejectsOfficialVersionPinInProductMode()
+    public void ValidateAndApply_AcceptsExactOfficialVersion()
     {
         var config = new SetupConfig
         {
             Gateway = new GatewayConfig { Version = "2026.8.1" }
+        };
+
+        GatewayInstallPolicy.ValidateAndApply(config);
+
+        Assert.Equal("2026.8.1", config.Gateway.Version);
+    }
+
+    [Theory]
+    [InlineData("latest", "latest")]
+    [InlineData("stable", "latest")]
+    [InlineData("extended-stable", "extended-stable")]
+    [InlineData("beta", "beta")]
+    [InlineData("dev", "dev")]
+    [InlineData("next", "next")]
+    public void ValidateAndApply_AcceptsUpstreamChannelSelectors(string selector, string expected)
+    {
+        var config = new SetupConfig
+        {
+            Gateway = new GatewayConfig { Version = selector }
+        };
+
+        GatewayInstallPolicy.ValidateAndApply(config);
+
+        Assert.Equal(expected, config.Gateway.Version);
+    }
+
+    [Fact]
+    public void ValidateAndApply_RejectsUnknownOfficialSelector()
+    {
+        var config = new SetupConfig
+        {
+            Gateway = new GatewayConfig { Version = "workspace:*" }
         };
 
         var error = Assert.Throws<GatewayCompatibilityException>(
             () => GatewayInstallPolicy.ValidateAndApply(config));
 
         Assert.Equal(GatewayCompatibilityFailureKind.InvalidPolicy, error.Kind);
-        Assert.Contains("npm latest", error.Message, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Theory]
+    [InlineData("""{"Gateway":{"Selection":"recommended"}}""", GatewayInstallPolicy.LegacyRecommendedVersion)]
+    [InlineData("""{"Gateway":{"Selection":"recommended","Version":"2026.6.34"}}""", "2026.6.34")]
+    [InlineData("""{"Gateway":{"Selection":"exact","Version":"2026.6.34"}}""", "2026.6.34")]
+    [InlineData("""{"Gateway":{"Version":"2026.6.34"}}""", "2026.6.34")]
+    [InlineData("""{"Gateway":{"Selection":"fallback"}}""", GatewayInstallPolicy.LegacyFallbackVersion)]
+    [InlineData("""{"Gateway":{"Selection":"fallback","Version":"2026.6.11"}}""", "2026.6.11")]
+    public void ValidateAndApply_MigratesLegacySelection(
+        string json,
+        string? expectedVersion)
+    {
+        var config = System.Text.Json.JsonSerializer.Deserialize<SetupConfig>(
+            json,
+            SetupConfig.JsonOptions)!;
+
+        GatewayInstallPolicy.ValidateAndApply(config);
+
+        Assert.Null(config.Gateway.Selection);
+        Assert.Equal(expectedVersion, config.Gateway.Version);
     }
 
     [Fact]
-    public void ValidateAndApply_AllowsExactVersionOnlyForCandidateValidation()
+    public void ValidateAndApply_ValidatesConfiguredFallback()
     {
         var config = new SetupConfig
         {
-            Gateway = new GatewayConfig { Version = "2026.8.1" }
+            Gateway = new GatewayConfig { FallbackVersion = "beta" }
         };
 
-        GatewayInstallPolicy.ValidateAndApply(config, allowExactCandidate: true);
+        var error = Assert.Throws<GatewayCompatibilityException>(
+            () => GatewayInstallPolicy.ValidateAndApply(config));
 
-        Assert.Equal("2026.8.1", config.Gateway.Version);
+        Assert.Equal(GatewayCompatibilityFailureKind.InvalidPolicy, error.Kind);
     }
 
     [Fact]
@@ -107,7 +170,11 @@ public sealed class GatewayInstallPolicyTests
     {
         var config = new SetupConfig
         {
-            Gateway = new GatewayConfig { Version = "2026.8.1" }
+            Gateway = new GatewayConfig
+            {
+                Version = "latest",
+                InstalledVersion = "2026.8.1"
+            }
         };
 
         Assert.Null(GatewayInstallPolicy.ValidateHandshake(
@@ -127,5 +194,33 @@ public sealed class GatewayInstallPolicyTests
             config,
             new GatewaySelfInfo { Protocol = 4, ServerVersion = "2026.8.2" });
         Assert.Equal(GatewayCompatibilityFailureKind.ServerVersionMismatch, versionError?.Kind);
+    }
+
+    [Fact]
+    public void ConfiguredFallback_IsOfferedOnlyForTypedCompatibilityFailures()
+    {
+        var config = new SetupConfig
+        {
+            Gateway = new GatewayConfig
+            {
+                Version = "latest",
+                InstalledVersion = "2026.9.1",
+                FallbackVersion = "2026.6.34"
+            }
+        };
+
+        Assert.True(GatewayInstallPolicy.CanRetryWithFallback(
+            config,
+            GatewayCompatibilityFailureKind.ProtocolMismatch));
+        Assert.False(GatewayInstallPolicy.CanRetryWithFallback(
+            config,
+            GatewayCompatibilityFailureKind.InstalledRuntimeMismatch));
+
+        Assert.True(GatewayInstallPolicy.TryApplyFallback(config, out var error), error);
+        Assert.Equal("2026.6.34", config.Gateway.Version);
+        Assert.Null(config.Gateway.InstalledVersion);
+        Assert.False(GatewayInstallPolicy.CanRetryWithFallback(
+            config,
+            GatewayCompatibilityFailureKind.ProtocolMismatch));
     }
 }

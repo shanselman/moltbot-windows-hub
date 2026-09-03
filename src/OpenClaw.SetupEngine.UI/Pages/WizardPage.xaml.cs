@@ -843,7 +843,7 @@ public sealed partial class WizardPage : Page
                 !skip &&
                 _hostAccessPlan.CanControlWslGateway &&
                 GatewayWizardRestartRecoveryPolicy.IsTerminalRestartCandidate(
-                    _config.Gateway.Version,
+                    _config.Gateway.InstalledVersion,
                     _stepId,
                     _currentTitle,
                     _currentMessage);
@@ -862,7 +862,7 @@ public sealed partial class WizardPage : Page
 
             if (_expectedTerminalRestart &&
                 GatewayWizardRestartRecoveryPolicy.IsExpectedTerminalRestart(
-                    _config.Gateway.Version,
+                    _config.Gateway.InstalledVersion,
                     _stepId,
                     ex,
                     _currentTitle,

@@ -639,8 +639,11 @@ The repository uses GitHub Actions for continuous integration and release automa
   selects the current stable OpenClaw package.
 - Setup records the installed CLI version and requires the protocol-v4 gateway
   handshake to report that same version.
-- `Gateway.Version` is rejected for normal official installs. It is accepted
-  only with `--validate-gateway-candidate` or a custom `Gateway.InstallUrl`.
+- `Gateway.Version` follows the upstream installer selector contract. Leave it
+  null for npm `latest`, use a supported npm channel tag, or set an exact
+  OpenClaw package version.
+- `Gateway.FallbackVersion` may name an exact stable release to offer after a
+  typed compatibility failure. It is never a default product pin.
 - A custom installer is labeled unverified and requires an exact stable
   `Gateway.Version`.
 - Set `OPENCLAW_E2E_GATEWAY_VERSION` to exercise an exact published candidate in

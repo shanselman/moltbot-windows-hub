@@ -86,43 +86,97 @@ public readonly record struct GatewayReleaseVersion(int Year, int Month, int Pat
     }
 }
 
+public static class GatewayPackageVersion
+{
+    private static readonly Regex s_pattern = new(
+        @"^(?<year>\d{4})\.(?<month>\d{1,2})\.(?<patch>\d+)(?:-[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?(?:\+[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?$",
+        RegexOptions.Compiled | RegexOptions.CultureInvariant);
+
+    private static readonly Regex s_outputPattern = new(
+        @"(?<![0-9A-Za-z.+-])(?<version>\d{4}\.\d{1,2}\.\d+(?:-[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?(?:\+[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?)(?![0-9A-Za-z.+-])",
+        RegexOptions.Compiled | RegexOptions.CultureInvariant);
+
+    public static bool IsExact(string? value)
+    {
+        if (string.IsNullOrWhiteSpace(value))
+            return false;
+
+        var match = s_pattern.Match(value.Trim());
+        return match.Success &&
+               int.TryParse(match.Groups["month"].Value, out var month) &&
+               month is >= 1 and <= 12;
+    }
+
+    public static bool TryGetReleaseLine(string? value, out GatewayReleaseVersion version)
+    {
+        version = default;
+        if (string.IsNullOrWhiteSpace(value))
+            return false;
+
+        var match = s_pattern.Match(value.Trim());
+        if (!match.Success ||
+            !int.TryParse(match.Groups["year"].Value, out var year) ||
+            !int.TryParse(match.Groups["month"].Value, out var month) ||
+            !int.TryParse(match.Groups["patch"].Value, out var patch) ||
+            month is < 1 or > 12)
+        {
+            return false;
+        }
+
+        version = new GatewayReleaseVersion(year, month, patch, Correction: 0);
+        return true;
+    }
+
+    public static bool TryExtract(string? output, out string version)
+    {
+        version = "";
+        if (string.IsNullOrWhiteSpace(output))
+            return false;
+
+        var match = s_outputPattern.Match(output);
+        if (!match.Success || !IsExact(match.Groups["version"].Value))
+            return false;
+
+        version = match.Groups["version"].Value;
+        return true;
+    }
+}
+
 public static class GatewayInstallPolicy
 {
     public const string DefaultInstallUrl = "https://openclaw.ai/install-cli.sh";
     public const int ProtocolGeneration = 4;
     public const string NodeVersion = "24.19.0";
+    public const string LegacyRecommendedVersion = "2026.6.34";
+    public const string LegacyFallbackVersion = "2026.6.11";
+
+    private static readonly HashSet<string> s_supportedTags = new(
+        ["latest", "next", "beta", "extended-stable", "dev"],
+        StringComparer.OrdinalIgnoreCase);
 
     public static bool IsOfficialInstallerUrl(string? installUrl) =>
         string.IsNullOrWhiteSpace(installUrl) ||
         string.Equals(installUrl, DefaultInstallUrl, StringComparison.OrdinalIgnoreCase);
 
-    public static void ValidateAndApply(SetupConfig config, bool allowExactCandidate = false)
+    public static void ValidateAndApply(SetupConfig config)
     {
         ArgumentNullException.ThrowIfNull(config);
 
         var gateway = config.Gateway;
-        var requestedVersion = gateway.Version?.Trim();
         var customInstaller = !IsOfficialInstallerUrl(gateway.InstallUrl);
+        var requestedVersion = ResolveLegacySelection(gateway);
+        gateway.InstalledVersion = null;
 
         if (customInstaller)
         {
             RequireExactVersion(requestedVersion, "Custom Gateway installer URLs require an exact stable Gateway.Version.");
             gateway.Version = requestedVersion;
+            gateway.FallbackVersion = NormalizeFallbackVersion(gateway.FallbackVersion);
             return;
         }
 
-        if (!string.IsNullOrWhiteSpace(requestedVersion))
-        {
-            if (!allowExactCandidate)
-            {
-                throw Failure(
-                    GatewayCompatibilityFailureKind.InvalidPolicy,
-                    "Official Gateway installs use the npm latest tag. Gateway.Version is reserved for explicit candidate validation.");
-            }
-
-            RequireExactVersion(requestedVersion, "Gateway candidate validation requires an exact stable Gateway.Version.");
-            gateway.Version = requestedVersion;
-        }
+        gateway.Version = NormalizeOfficialSelector(requestedVersion);
+        gateway.FallbackVersion = NormalizeFallbackVersion(gateway.FallbackVersion);
     }
 
     internal static void ValidateAndApplyValidationPackage(SetupConfig config)
@@ -141,6 +195,8 @@ public static class GatewayInstallPolicy
             selectedVersion,
             "Gateway candidate package validation requires an exact Gateway.Version.");
         config.Gateway.Version = selectedVersion;
+        config.Gateway.Selection = null;
+        config.Gateway.InstalledVersion = null;
     }
 
     public static GatewayCompatibilityException? ValidateHandshake(
@@ -155,7 +211,7 @@ public static class GatewayInstallPolicy
                 $"Gateway compatibility check failed: expected protocol v{ProtocolGeneration}, received {actual}.");
         }
 
-        var installedVersion = config.Gateway.Version;
+        var installedVersion = config.Gateway.InstalledVersion;
         if (string.IsNullOrWhiteSpace(installedVersion))
         {
             return Failure(
@@ -172,6 +228,114 @@ public static class GatewayInstallPolicy
         }
 
         return null;
+    }
+
+    public static bool CanRetryWithFallback(
+        SetupConfig config,
+        GatewayCompatibilityFailureKind failureKind) =>
+        failureKind is GatewayCompatibilityFailureKind.InstalledVersionMismatch
+            or GatewayCompatibilityFailureKind.ProtocolMismatch
+            or GatewayCompatibilityFailureKind.ServerVersionMismatch &&
+        IsOfficialInstallerUrl(config.Gateway.InstallUrl) &&
+        GatewayReleaseVersion.TryParse(config.Gateway.FallbackVersion, out _) &&
+        !string.Equals(config.Gateway.Version, config.Gateway.FallbackVersion, StringComparison.Ordinal) &&
+        !string.Equals(config.Gateway.InstalledVersion, config.Gateway.FallbackVersion, StringComparison.Ordinal);
+
+    public static bool TryApplyFallback(SetupConfig config, out string? error)
+    {
+        if (!IsOfficialInstallerUrl(config.Gateway.InstallUrl))
+        {
+            error = "Custom Gateway installers do not use Gateway.FallbackVersion.";
+            return false;
+        }
+
+        var fallbackVersion = config.Gateway.FallbackVersion?.Trim();
+        if (!GatewayReleaseVersion.TryParse(fallbackVersion, out _))
+        {
+            error = "Gateway.FallbackVersion must be an exact stable OpenClaw version.";
+            return false;
+        }
+
+        if (string.Equals(config.Gateway.Version, fallbackVersion, StringComparison.Ordinal) ||
+            string.Equals(config.Gateway.InstalledVersion, fallbackVersion, StringComparison.Ordinal))
+        {
+            error = $"Gateway {fallbackVersion} is already selected.";
+            return false;
+        }
+
+        config.Gateway.Selection = null;
+        config.Gateway.Version = fallbackVersion;
+        config.Gateway.InstalledVersion = null;
+        error = null;
+        return true;
+    }
+
+    private static string? ResolveLegacySelection(GatewayConfig gateway)
+    {
+        var selection = gateway.Selection?.Trim();
+        var version = gateway.Version?.Trim();
+        gateway.Selection = null;
+
+        if (string.IsNullOrWhiteSpace(selection))
+            return version;
+
+        if (selection.Equals("recommended", StringComparison.OrdinalIgnoreCase))
+            return string.IsNullOrWhiteSpace(version)
+                ? LegacyRecommendedVersion
+                : version;
+
+        if (selection.Equals("exact", StringComparison.OrdinalIgnoreCase))
+        {
+            RequireExactVersion(version, "Legacy Gateway selection 'exact' requires Gateway.Version.");
+            return version;
+        }
+
+        if (selection.Equals("fallback", StringComparison.OrdinalIgnoreCase))
+        {
+            var legacyFallback = string.IsNullOrWhiteSpace(version)
+                ? LegacyFallbackVersion
+                : version;
+            RequireExactVersion(
+                legacyFallback,
+                "Legacy Gateway selection 'fallback' requires an exact stable Gateway.Version.");
+            return legacyFallback;
+        }
+
+        throw Failure(
+            GatewayCompatibilityFailureKind.InvalidPolicy,
+            $"Invalid legacy Gateway.Selection '{selection}'. Use recommended, fallback, or exact.");
+    }
+
+    private static string? NormalizeOfficialSelector(string? selector)
+    {
+        if (string.IsNullOrWhiteSpace(selector))
+            return null;
+
+        var normalized = selector.Trim();
+        if (GatewayPackageVersion.IsExact(normalized))
+            return normalized;
+
+        if (normalized.Equals("stable", StringComparison.OrdinalIgnoreCase))
+            return "latest";
+
+        if (s_supportedTags.Contains(normalized))
+            return normalized.ToLowerInvariant();
+
+        throw Failure(
+            GatewayCompatibilityFailureKind.InvalidPolicy,
+            $"Gateway version selector '{normalized}' is invalid. Use latest, stable, extended-stable, beta, dev, next, or an exact OpenClaw package version.");
+    }
+
+    private static string? NormalizeFallbackVersion(string? fallbackVersion)
+    {
+        if (string.IsNullOrWhiteSpace(fallbackVersion))
+            return null;
+
+        fallbackVersion = fallbackVersion.Trim();
+        RequireExactVersion(
+            fallbackVersion,
+            "Gateway.FallbackVersion must be an exact stable OpenClaw version.");
+        return fallbackVersion;
     }
 
     private static void RequireExactVersion(string? version, string missingMessage)

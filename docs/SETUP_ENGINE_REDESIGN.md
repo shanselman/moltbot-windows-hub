@@ -124,6 +124,8 @@ rerun setup with a supported new name.
   "Gateway": {
     "Bind": "loopback",
     "InstallUrl": null,
+    "Version": null,
+    "FallbackVersion": null,
     "HealthTimeoutSeconds": 90,
     "ReloadMode": "hot",
     "AuthMode": "token",
@@ -325,7 +327,16 @@ OpenClaw.SetupEngine.Program.Main(["--log-path", "./trace.log"])
 ```
 
 Common flags include `--config`, `--headless`, `--dry-run`, `--rollback-on-failure`, `--no-rollback-on-failure`, `--log-path`, `--gateway-port`, and uninstall safety flags such as `--uninstall` plus `--confirm-destructive`.
-Normal setup uses npm `latest`. The cross-repository release gate may pass an exact `Gateway.Version` with `--validate-gateway-candidate`. It may also pass `--gateway-candidate-package <absolute-tgz>` together with that flag, headless mode, and rollback-on-failure. The package input is runtime-only and does not change normal product setup.
+Normal setup uses npm `latest`. `Gateway.Version` may select an upstream npm
+channel tag or an exact OpenClaw package version. `Gateway.FallbackVersion` may
+name an exact stable release to offer after a typed compatibility failure.
+Legacy `recommended`, `exact`, and `fallback` selections are migrated when the
+configuration is loaded. Legacy recommendation and fallback configurations
+without a recorded version retain their former `2026.6.34` and `2026.6.11`
+pins. The cross-repository release gate may pass
+`--gateway-candidate-package <absolute-tgz>` with
+`--validate-gateway-candidate`, headless mode, and rollback-on-failure. The
+package input is runtime-only and does not change normal npm setup.
 
 SetupEngine option names are case-insensitive. Value options accept either separated
 syntax (`--config custom.json`) or equals syntax (`--config=custom.json`). Unknown

@@ -82,8 +82,13 @@
     // Network bind: "loopback" (127.0.0.1, secure default), "lan" (0.0.0.0, opt-in for LAN access)
     "Bind": "loopback",
     // Override CLI install script URL (null = official https://openclaw.ai/install-cli.sh).
-    // The official installer uses npm latest. A custom URL requires an exact Version.
+    // The official installer defaults to npm latest. A custom URL requires an exact Version.
     "InstallUrl": null,
+    // Optional upstream selector. null uses latest; tags such as extended-stable or beta
+    // and exact package versions such as 2026.9.1 are also supported.
+    "Version": null,
+    // Optional exact stable version offered after a typed compatibility failure.
+    "FallbackVersion": null,
     // Seconds to wait for gateway health endpoint before failing
     "HealthTimeoutSeconds": 90,
     // Config reload strategy: "off" or "hybrid"

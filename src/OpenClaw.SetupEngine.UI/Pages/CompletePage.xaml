@@ -186,7 +186,7 @@
                 <Border Width="8" Height="8" CornerRadius="4" VerticalAlignment="Center" Background="{ThemeResource SetupInactiveDotBrush}" />
                 <Border Width="20" Height="8" CornerRadius="4" VerticalAlignment="Center" Background="{ThemeResource SetupIndicatorAccentBrush}" />
             </StackPanel>
-            <Button x:Name="LaunchButton" Grid.Column="1"
+            <Button x:Name="LaunchButton" Grid.Column="2"
                     Content="Finish"
                     HorizontalAlignment="Right" MinWidth="100"
                     Style="{StaticResource AccentButtonStyle}"

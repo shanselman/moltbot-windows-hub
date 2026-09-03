@@ -53,7 +53,9 @@ public sealed class ConfigureGatewayStep : SetupStep
 
         var allowedCommandsJson = JsonSerializer.Serialize(ctx.Config.Capabilities.GetEnabledCommandIds());
         var escapedAllowedCommands = WslShellQuoting.QuotePosixSingleQuote(allowedCommandsJson);
-        var nodeCommandsAllowKey = ResolveNodeCommandsAllowKey(gw.Version);
+        var nodeCommandsAllowKey = ResolveNodeCommandsAllowKey(
+            gw.InstalledVersion ??
+            (GatewayPackageVersion.IsExact(gw.Version) ? gw.Version : null));
         var extraConfigOverridesAllowCommands =
             gw.ExtraConfig?.Keys.Any(IsNodeCommandsAllowKey) == true;
         if (gw.ExtraConfig is { Count: > 0 })
@@ -108,7 +110,9 @@ public sealed class ConfigureGatewayStep : SetupStep
         string escapedAllowedCommands,
         TailscaleConfig? tailscale = null)
     {
-        var nodeCommandsAllowKey = ResolveNodeCommandsAllowKey(gw.Version);
+        var nodeCommandsAllowKey = ResolveNodeCommandsAllowKey(
+            gw.InstalledVersion ??
+            (GatewayPackageVersion.IsExact(gw.Version) ? gw.Version : null));
         if (HasConflictingNodeCommandsAllowOverrides(gw.ExtraConfig))
         {
             throw new ArgumentException(
@@ -185,8 +189,13 @@ public sealed class ConfigureGatewayStep : SetupStep
             return NodeCommandsAllowKey;
 
         var selectedVersion = gatewayVersion.Trim();
-        if (!GatewayReleaseVersion.TryParse(selectedVersion, out var parsedVersion))
-            throw new ArgumentException($"Gateway version '{selectedVersion}' is not an exact stable release.", nameof(gatewayVersion));
+        if (!GatewayReleaseVersion.TryParse(selectedVersion, out var parsedVersion) &&
+            !GatewayPackageVersion.TryGetReleaseLine(selectedVersion, out parsedVersion))
+        {
+            throw new ArgumentException(
+                $"Gateway version '{selectedVersion}' is not an exact OpenClaw package version.",
+                nameof(gatewayVersion));
+        }
         if (!GatewayReleaseVersion.TryParse(NodeCommandsConfigMigrationVersion, out var migrationVersion))
             throw new InvalidOperationException("Gateway node command config migration version is invalid.");
 

@@ -26,10 +26,18 @@ evidence.
 - Setup reads the installed CLI version, records it in runtime setup state, and
   requires `hello-ok.server.version` to report the same value.
 - Gateway protocol generation 4 remains required.
-- Exact versions remain available only for explicit release-candidate
-  validation and custom installer URLs.
-- The recommended/fallback selection model, embedded release evidence, security
-  floor, fallback UI, and candidate-promotion workflow are removed.
+- Official installs accept the same selector forms as upstream: npm channel tags
+  or an exact OpenClaw package version. An omitted selector defaults to `latest`.
+- The requested selector remains separate from the exact installed version used
+  by runtime compatibility checks.
+- An operator may configure an exact stable `FallbackVersion`. Setup offers it
+  only after a typed installed-version, protocol, or server-version failure.
+- Legacy `recommended`, `exact`, and `fallback` configurations are translated
+  into the new selector model. Legacy selections without a recorded version
+  retain the former `2026.6.34` recommendation or `2026.6.11` fallback pin as
+  migration-only behavior.
+- Embedded release evidence, the product security floor, and the
+  candidate-promotion workflow are removed.
 - Setup continues to pin and verify Node `24.19.0`. This decision changes the
   OpenClaw npm package selection, not the managed Node runtime.
 
@@ -39,4 +47,6 @@ evidence.
   for a Windows-owned recommendation update.
 - Setup remains fail-closed when the installed CLI version is malformed, the
   gateway reports a different version, or protocol v4 is unavailable.
-- Exact candidate validation remains isolated from normal product setup.
+- Staged candidate-package validation remains isolated from normal npm setup.
+- Existing exact pins continue to install the requested release. Existing
+  shipped Windows builds retain their compiled release policy.
