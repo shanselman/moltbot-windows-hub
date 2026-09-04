@@ -34,8 +34,10 @@ evidence.
   only after a typed installed-version, protocol, or server-version failure.
 - Legacy `recommended`, `exact`, and `fallback` configurations are translated
   into the new selector model. Legacy selections without a recorded version
-  retain the former `2026.6.34` recommendation or `2026.6.11` fallback pin as
-  migration-only behavior.
+  follow the upstream `latest` recommendation or `extended-stable` fallback
+  tag. An explicitly recorded legacy version remains exact. Versionless legacy
+  configurations with a custom installer retain their former exact pins because
+  custom installers cannot resolve npm tags.
 - Embedded release evidence, the product security floor, and the
   candidate-promotion workflow are removed.
 - Setup continues to pin and verify Node `24.19.0`. This decision changes the

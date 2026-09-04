@@ -147,8 +147,10 @@ public static class GatewayInstallPolicy
     public const string DefaultInstallUrl = "https://openclaw.ai/install-cli.sh";
     public const int ProtocolGeneration = 4;
     public const string NodeVersion = "24.19.0";
-    public const string LegacyRecommendedVersion = "2026.6.34";
-    public const string LegacyFallbackVersion = "2026.6.11";
+    public const string RecommendedTag = "latest";
+    public const string FallbackTag = "extended-stable";
+    private const string LegacyCustomInstallerRecommendedVersion = "2026.6.34";
+    private const string LegacyCustomInstallerFallbackVersion = "2026.6.11";
 
     private static readonly HashSet<string> s_supportedTags = new(
         ["latest", "next", "beta", "extended-stable", "dev"],
@@ -164,7 +166,7 @@ public static class GatewayInstallPolicy
 
         var gateway = config.Gateway;
         var customInstaller = !IsOfficialInstallerUrl(gateway.InstallUrl);
-        var requestedVersion = ResolveLegacySelection(gateway);
+        var requestedVersion = ResolveLegacySelection(gateway, customInstaller);
         gateway.InstalledVersion = null;
 
         if (customInstaller)
@@ -270,7 +272,7 @@ public static class GatewayInstallPolicy
         return true;
     }
 
-    private static string? ResolveLegacySelection(GatewayConfig gateway)
+    private static string? ResolveLegacySelection(GatewayConfig gateway, bool customInstaller)
     {
         var selection = gateway.Selection?.Trim();
         var version = gateway.Version?.Trim();
@@ -281,7 +283,9 @@ public static class GatewayInstallPolicy
 
         if (selection.Equals("recommended", StringComparison.OrdinalIgnoreCase))
             return string.IsNullOrWhiteSpace(version)
-                ? LegacyRecommendedVersion
+                ? customInstaller
+                    ? LegacyCustomInstallerRecommendedVersion
+                    : RecommendedTag
                 : version;
 
         if (selection.Equals("exact", StringComparison.OrdinalIgnoreCase))
@@ -292,13 +296,17 @@ public static class GatewayInstallPolicy
 
         if (selection.Equals("fallback", StringComparison.OrdinalIgnoreCase))
         {
-            var legacyFallback = string.IsNullOrWhiteSpace(version)
-                ? LegacyFallbackVersion
-                : version;
+            if (string.IsNullOrWhiteSpace(version))
+            {
+                return customInstaller
+                    ? LegacyCustomInstallerFallbackVersion
+                    : FallbackTag;
+            }
+
             RequireExactVersion(
-                legacyFallback,
+                version,
                 "Legacy Gateway selection 'fallback' requires an exact stable Gateway.Version.");
-            return legacyFallback;
+            return version;
         }
 
         throw Failure(

@@ -89,11 +89,11 @@ public sealed class GatewayInstallPolicyTests
     }
 
     [Theory]
-    [InlineData("""{"Gateway":{"Selection":"recommended"}}""", GatewayInstallPolicy.LegacyRecommendedVersion)]
+    [InlineData("""{"Gateway":{"Selection":"recommended"}}""", GatewayInstallPolicy.RecommendedTag)]
     [InlineData("""{"Gateway":{"Selection":"recommended","Version":"2026.6.34"}}""", "2026.6.34")]
     [InlineData("""{"Gateway":{"Selection":"exact","Version":"2026.6.34"}}""", "2026.6.34")]
     [InlineData("""{"Gateway":{"Version":"2026.6.34"}}""", "2026.6.34")]
-    [InlineData("""{"Gateway":{"Selection":"fallback"}}""", GatewayInstallPolicy.LegacyFallbackVersion)]
+    [InlineData("""{"Gateway":{"Selection":"fallback"}}""", GatewayInstallPolicy.FallbackTag)]
     [InlineData("""{"Gateway":{"Selection":"fallback","Version":"2026.6.11"}}""", "2026.6.11")]
     public void ValidateAndApply_MigratesLegacySelection(
         string json,
@@ -107,6 +107,46 @@ public sealed class GatewayInstallPolicyTests
 
         Assert.Null(config.Gateway.Selection);
         Assert.Equal(expectedVersion, config.Gateway.Version);
+    }
+
+    [Theory]
+    [InlineData("recommended", "2026.6.34")]
+    [InlineData("fallback", "2026.6.11")]
+    public void ValidateAndApply_CustomInstallerPreservesVersionlessLegacyPin(
+        string selection,
+        string expectedVersion)
+    {
+        var config = new SetupConfig
+        {
+            Gateway = new GatewayConfig
+            {
+                InstallUrl = "https://example.test/install.sh",
+                Selection = selection
+            }
+        };
+
+        GatewayInstallPolicy.ValidateAndApply(config);
+
+        Assert.Null(config.Gateway.Selection);
+        Assert.Equal(expectedVersion, config.Gateway.Version);
+    }
+
+    [Fact]
+    public void ValidateAndApply_LegacyFallbackRejectsMutableExplicitSelector()
+    {
+        var config = new SetupConfig
+        {
+            Gateway = new GatewayConfig
+            {
+                Selection = "fallback",
+                Version = "beta"
+            }
+        };
+
+        var error = Assert.Throws<GatewayCompatibilityException>(
+            () => GatewayInstallPolicy.ValidateAndApply(config));
+
+        Assert.Equal(GatewayCompatibilityFailureKind.InvalidPolicy, error.Kind);
     }
 
     [Fact]
