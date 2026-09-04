@@ -99,7 +99,9 @@ distro or Tailscale session actually in use).
 
    ```powershell
    wsl -l -v   # target distro should no longer be listed
-   Test-Path "$env:APPDATA\OpenClawTray-Dev\Logs"        # should be False
+   # The current run's own log/journal remain under Logs\Setup (they are open during
+   # cleanup); success = that directory holds only uninstall-engine-<this-run> files
+   Get-ChildItem "$env:APPDATA\OpenClawTray-Dev\Logs\Setup"   # only this run's uninstall-engine-* files expected
    Test-Path "$env:LOCALAPPDATA\OpenClawTray-Dev\Logs"   # should be False
    Test-Path "$env:LOCALAPPDATA\OpenClawTray-Dev\run.marker"  # should be False
    Test-Path "$env:APPDATA\OpenClawTray-Dev\exec-approvals.json"  # should be False
@@ -110,9 +112,11 @@ distro or Tailscale session actually in use).
    # should error/be absent (autostart registry key removed)
    ```
 
-   With step 2's kill done, `%APPDATA%\OpenClawTray-Dev\Logs` should also be gone; if a
-   `Failed to delete AppData Logs directory` warning still shows up, it's the current
-   run's own still-open log/journal file and is harmless.
+   The current run's own active log and journal under `%APPDATA%\OpenClawTray-Dev\Logs\Setup`
+   are expected to remain: the Setup Engine still holds them open when
+   `TrayArtifactCleanup` runs, so the `Failed to delete AppData Logs directory` warning
+   is normal. A `Failed to delete...` warning naming any other file, or leftover files
+   from earlier runs, means a process is still holding them open (see step 2).
 
 ## Notes
 
