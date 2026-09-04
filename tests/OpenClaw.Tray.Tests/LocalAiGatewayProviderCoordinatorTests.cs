@@ -29,6 +29,70 @@ public sealed class LocalAiGatewayProviderCoordinatorTests
     }
 
     [Fact]
+    public async Task Quiesce_EndpointCycleRetainsManagedPrimaryWhenNoFallbackExists()
+    {
+        // Unsetting the primary makes the gateway resolve its built-in OpenAI
+        // default, so a prompt sent mid-cycle fails with an unrelated
+        // provider-auth error instead of a Local AI one.
+        LocalAiResolvedInstall install = Install(28_765);
+        string managedPrimary = LocalAiGatewayProviderDefinition.BuildPrimaryModel(install);
+        var commands = new FakeWslCommandRunner(
+            LocalAiGatewayProviderDefinition.BuildProviderJson(install),
+            managedPrimary);
+        var coordinator = CreateCoordinator(commands);
+
+        LocalAiEndpointLifecycleResult result = await coordinator.QuiesceAsync(
+            install,
+            LocalAiQuiesceReason.EndpointCycle);
+
+        Assert.True(result.Success);
+        Assert.Null(commands.ProviderJson);
+        Assert.Equal(managedPrimary, commands.PrimaryModel);
+        Assert.DoesNotContain(
+            commands.Calls,
+            call => call.Contains("unset") &&
+                    call.Contains(LocalAiGatewayProviderDefinition.PrimaryModelPath));
+    }
+
+    [Fact]
+    public async Task Quiesce_EndpointCycleStillRestoresRealPriorModel()
+    {
+        LocalAiResolvedInstall install = Install(28_770, "openai/gpt-5");
+        var commands = new FakeWslCommandRunner(
+            LocalAiGatewayProviderDefinition.BuildProviderJson(install),
+            LocalAiGatewayProviderDefinition.BuildPrimaryModel(install))
+        {
+            PrimaryAfterApply = "openai/gpt-5",
+        };
+        var coordinator = CreateCoordinator(commands);
+
+        LocalAiEndpointLifecycleResult result = await coordinator.QuiesceAsync(
+            install,
+            LocalAiQuiesceReason.EndpointCycle);
+
+        Assert.True(result.Success);
+        Assert.Equal("openai/gpt-5", commands.PrimaryModel);
+    }
+
+    [Fact]
+    public async Task Publish_AcceptsPrimaryRetainedByAnEndpointCycle()
+    {
+        LocalAiResolvedInstall install = Install(28_765);
+        string managedPrimary = LocalAiGatewayProviderDefinition.BuildPrimaryModel(install);
+        var commands = new FakeWslCommandRunner(providerJson: null, primaryModel: managedPrimary)
+        {
+            ProviderAfterApply = LocalAiGatewayProviderDefinition.BuildProviderJson(install),
+            PrimaryAfterApply = managedPrimary,
+        };
+        var coordinator = CreateCoordinator(commands);
+
+        LocalAiEndpointLifecycleResult result = await coordinator.PublishAsync(install);
+
+        Assert.True(result.Success);
+        Assert.Equal(managedPrimary, commands.PrimaryModel);
+    }
+
+    [Fact]
     public async Task Quiesce_AcceptsCliRedactedManagedApiKey()
     {
         LocalAiResolvedInstall install = Install(28_765);

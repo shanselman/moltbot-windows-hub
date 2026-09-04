@@ -157,11 +157,95 @@ public sealed class LocalAiPortLifecycleTests
         Assert.Equal(LocalAiRuntimeState.Healthy, snapshot.State);
         Assert.Equal(28_765, snapshot.Endpoint.Port);
         Assert.Equal("0", ArgumentAfter(host.LastSpec!.Arguments, "--port"));
-        Assert.Equal(["quiesce", "start", "probe:28765", "publish:28765"], events);
+        Assert.Equal(["quiesce:EndpointCycle", "start", "probe:28765", "publish:28765"], events);
         Assert.Equal([28_765], client.ProbedPorts);
         LocalAiResolvedInstall? saved = await new LocalAiManifestStore(paths).LoadAsync();
         Assert.Equal(0, saved!.Manifest.RequestedPort);
         Assert.Equal(28_765, saved.Endpoint!.Port);
+    }
+
+    [Fact]
+    public async Task Restart_ReusesLastVerifiedPortAndNeverWithdrawsThePublishedRoute()
+    {
+        // The published route stays valid for the whole startup, so the gateway is
+        // never left without a Local AI provider to fall back from.
+        using var temp = new TempDirectory("local-ai-port-");
+        LocalAiPaths paths = await PrepareInstallAsync(temp);
+        var store = new LocalAiManifestStore(paths);
+        LocalAiResolvedInstall install = (await store.LoadAsync())!;
+        await store.SaveAsync(install.Manifest with { Endpoint = "http://127.0.0.1:28765/v1" });
+
+        var events = new List<string>();
+        var platform = new FakePlatform();
+        var host = new FakeProcessHost(platform, events, selectedPort: 28_765);
+        var client = new FakeClient(events);
+        await using var runtime = CreateRuntime(paths, host, platform, client, new FakeLifecycle(events));
+
+        LocalAiRuntimeSnapshot snapshot = await runtime.EnsureStartedAsync();
+
+        Assert.Equal(LocalAiRuntimeState.Healthy, snapshot.State);
+        Assert.Equal("28765", ArgumentAfter(host.LastSpec!.Arguments, "--port"));
+        Assert.Equal(["start", "probe:28765", "publish:28765"], events);
+        Assert.DoesNotContain(events, e => e.StartsWith("quiesce", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public async Task Restart_WithdrawsStaleRouteWhenTheLastVerifiedPortIsTaken()
+    {
+        using var temp = new TempDirectory("local-ai-port-");
+        LocalAiPaths paths = await PrepareInstallAsync(temp);
+        var store = new LocalAiManifestStore(paths);
+        LocalAiResolvedInstall install = (await store.LoadAsync())!;
+        await store.SaveAsync(install.Manifest with { Endpoint = "http://127.0.0.1:28765/v1" });
+
+        var events = new List<string>();
+        var platform = new FakePlatform();
+        platform.Listeners.Add(new WindowsTcpListenerInfo(
+            IPAddress.Loopback,
+            28_765,
+            9001,
+            "other-process",
+            @"C:\other\server.exe",
+            platform.UtcNow.UtcDateTime));
+        var host = new FakeProcessHost(platform, events, selectedPort: 28_771);
+        var client = new FakeClient(events);
+        await using var runtime = CreateRuntime(paths, host, platform, client, new FakeLifecycle(events));
+
+        LocalAiRuntimeSnapshot snapshot = await runtime.EnsureStartedAsync();
+
+        Assert.Equal(LocalAiRuntimeState.Healthy, snapshot.State);
+        Assert.Equal("0", ArgumentAfter(host.LastSpec!.Arguments, "--port"));
+        Assert.Equal(
+            ["quiesce:EndpointCycle", "start", "probe:28771", "publish:28771"],
+            events);
+    }
+
+    [Fact]
+    public async Task Restart_WithdrawsRetainedRouteWhenStartupNeverBecomesHealthy()
+    {
+        // Nothing will answer the retained route, so it must not be left published.
+        using var temp = new TempDirectory("local-ai-port-");
+        LocalAiPaths paths = await PrepareInstallAsync(temp);
+        var store = new LocalAiManifestStore(paths);
+        LocalAiResolvedInstall install = (await store.LoadAsync())!;
+        await store.SaveAsync(install.Manifest with { Endpoint = "http://127.0.0.1:28765/v1" });
+
+        var events = new List<string>();
+        var platform = new FakePlatform();
+        var host = new FakeProcessHost(platform, events, selectedPort: 28_765) { SuppressListener = true };
+        var client = new FakeClient(events);
+        await using var runtime = CreateRuntime(
+            paths,
+            host,
+            platform,
+            client,
+            new FakeLifecycle(events),
+            startupTimeout: TimeSpan.FromMilliseconds(5));
+
+        LocalAiRuntimeSnapshot snapshot = await runtime.EnsureStartedAsync();
+
+        Assert.Equal(LocalAiRuntimeState.Failed, snapshot.State);
+        Assert.Equal(["start", "stop", "quiesce:Teardown"], events);
     }
 
     [Theory]
@@ -232,7 +316,7 @@ public sealed class LocalAiPortLifecycleTests
 
         Assert.Equal(LocalAiRuntimeState.Starting, refreshed.State);
         Assert.Equal(LocalAiModelAvailabilityState.Unknown, refreshed.ModelEvidence.State);
-        Assert.Equal(["probe:28773", "quiesce"], events);
+        Assert.Equal(["probe:28773", "quiesce:EndpointCycle"], events);
         events.Clear();
 
         LocalAiRuntimeSnapshot recovered = await runtime.RefreshAsync();
@@ -282,7 +366,7 @@ public sealed class LocalAiPortLifecycleTests
         LocalAiRuntimeSnapshot refreshed = await runtime.RefreshAsync();
 
         Assert.Equal(expectedState, refreshed.State);
-        Assert.Equal(["quiesce"], events);
+        Assert.Equal(["quiesce:EndpointCycle"], events);
         Assert.False(host.Process!.HasExited);
     }
 
@@ -314,7 +398,7 @@ public sealed class LocalAiPortLifecycleTests
         Assert.Equal(LocalAiOwnership.None, refreshed.Ownership);
         Assert.Null(refreshed.ProcessId);
         Assert.True(host.Process!.HasExited);
-        Assert.Equal(["probe:28776", "quiesce", "stop"], events);
+        Assert.Equal(["probe:28776", "quiesce:EndpointCycle", "stop"], events);
     }
 
     [Fact]
@@ -345,7 +429,7 @@ public sealed class LocalAiPortLifecycleTests
         Assert.Equal(LocalAiOwnership.None, runtime.Snapshot.Ownership);
         Assert.Null(runtime.Snapshot.ProcessId);
         Assert.True(host.Process!.HasExited);
-        Assert.Equal(["quiesce", "stop"], events);
+        Assert.Equal(["quiesce:EndpointCycle", "stop"], events);
     }
 
     [Fact]
@@ -477,7 +561,7 @@ public sealed class LocalAiPortLifecycleTests
         LocalAiRuntimeSnapshot snapshot = await runtime.EnsureStartedAsync();
 
         Assert.Equal(LocalAiRuntimeState.Conflict, snapshot.State);
-        Assert.Equal(["quiesce"], events);
+        Assert.Equal(["quiesce:Teardown"], events);
         Assert.Null(host.LastSpec);
     }
 
@@ -501,7 +585,7 @@ public sealed class LocalAiPortLifecycleTests
         LocalAiRuntimeSnapshot snapshot = await runtime.EnsureStartedAsync();
 
         Assert.Equal(LocalAiRuntimeState.Failed, snapshot.State);
-        Assert.Equal(["quiesce"], events);
+        Assert.Equal(["quiesce:EndpointCycle"], events);
         Assert.Null(host.LastSpec);
     }
 
@@ -529,7 +613,7 @@ public sealed class LocalAiPortLifecycleTests
 
         Assert.Equal(LocalAiRuntimeState.Conflict, snapshot.State);
         Assert.Empty(client.ProbedPorts);
-        Assert.Equal(["quiesce", "start", "stop"], events);
+        Assert.Equal(["quiesce:EndpointCycle", "start", "stop"], events);
         LocalAiResolvedInstall? saved = await new LocalAiManifestStore(paths).LoadAsync();
         Assert.Null(saved!.Endpoint);
     }
@@ -554,7 +638,7 @@ public sealed class LocalAiPortLifecycleTests
         LocalAiRuntimeSnapshot stopped = await runtime.StopAsync();
 
         Assert.Equal(LocalAiRuntimeState.Stopped, stopped.State);
-        Assert.Equal(["quiesce", "stop"], events);
+        Assert.Equal(["quiesce:Teardown", "stop"], events);
     }
 
     [Fact]
@@ -572,7 +656,7 @@ public sealed class LocalAiPortLifecycleTests
 
         Assert.Equal(LocalAiRuntimeState.Failed, snapshot.State);
         Assert.Equal(1, host.Process!.StopCount);
-        Assert.Equal(["quiesce", "start", "probe:28767", "publish:28767", "stop"], events);
+        Assert.Equal(["quiesce:EndpointCycle", "start", "probe:28767", "publish:28767", "stop", "quiesce:Teardown"], events);
 
         // The endpoint receipt is already durable but the provider is still absent.
         // A later tray start must safely allocate again and complete publication.
@@ -818,6 +902,9 @@ public sealed class LocalAiPortLifecycleTests
         public LocalAiProcessStartSpec? LastSpec { get; private set; }
         public FakeProcess? Process { get; private set; }
 
+        /// <summary>Starts the child without ever opening a listener, so startup times out.</summary>
+        public bool SuppressListener { get; init; }
+
         public Task<ILocalAiManagedProcess> StartProcessAsync(
             LocalAiProcessStartSpec spec,
             Action<LocalAiManagedProcessExit> exited,
@@ -827,6 +914,8 @@ public sealed class LocalAiPortLifecycleTests
             events.Add("start");
             LastSpec = spec;
             Process = new FakeProcess(4201, platform.UtcNow, platform, events);
+            if (SuppressListener)
+                return Task.FromResult<ILocalAiManagedProcess>(Process);
             platform.Listeners.Add(new WindowsTcpListenerInfo(
                 listenerAddress ?? IPAddress.Loopback,
                 selectedPort,
@@ -898,9 +987,10 @@ public sealed class LocalAiPortLifecycleTests
 
         public Task<LocalAiEndpointLifecycleResult> QuiesceAsync(
             LocalAiResolvedInstall install,
+            LocalAiQuiesceReason reason = LocalAiQuiesceReason.Teardown,
             CancellationToken cancellationToken = default)
         {
-            events.Add("quiesce");
+            events.Add($"quiesce:{reason}");
             if (QuiesceException is not null)
                 return Task.FromException<LocalAiEndpointLifecycleResult>(QuiesceException);
             return Task.FromResult(FailQuiesce
