@@ -1,3 +1,14 @@
+// <summary>
+// Builds the deterministic launch plan for the managed llama-server router: validates the
+// qualified install receipt against the runtime/model catalogs, emits the fixed loopback
+// argument list, environment (CUDA device pinning), and generates the lazy-load model preset
+// consumed by the router at startup.
+// Usage:
+//   var plan = LlamaServerRouterConfiguration.Build(paths, install);
+//   // plan.Arguments -> fixed loopback argv; plan.Environment -> CUDA device pinning;
+//   // plan.PresetPath / plan.PresetContent -> write PresetContent to PresetPath before launch;
+//   // plan.ModelAlias -> the model id the router exposes.
+// </summary>
 using OpenClaw.Shared.Inference.Catalog;
 using System.Collections.Immutable;
 using System.Globalization;

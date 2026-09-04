@@ -1,3 +1,19 @@
+// <summary>
+// Native Windows process host for managed local AI executables. Starts inference processes
+// inside a kill-on-close Job Object (no orphaned children), reports exits, and captures
+// stdout/stderr into bounded, sanitized, rotating log files (BoundedRotatingLogWriter).
+// </summary>
+// Usage:
+//   ILocalAiManagedProcessHost host = new WindowsLocalAiManagedProcessHost(logger);
+//   ILocalAiManagedProcess process = await host.StartProcessAsync(
+//       new LocalAiProcessStartSpec(
+//           ExecutablePath: plan.Arguments 0 executable, WorkingDirectory: paths.RootDirectory,
+//           Arguments: args, Environment: env, StandardOutputLogPath: paths.StandardOutputLogPath,
+//           StandardErrorLogPath: paths.StandardErrorLogPath, MaxLogBytes: 8 * 1024 * 1024,
+//           LogBackupCount: 2, MaxLogLineCharacters: 16 * 1024),
+//       exited: exit => OnExited(exit),
+//       cancellationToken);
+//   await process.StopAsync(TimeSpan.FromSeconds(10), cancellationToken); // job object kills children
 using Microsoft.Win32.SafeHandles;
 using OpenClaw.Shared;
 using System.Diagnostics;

@@ -1,3 +1,17 @@
+// <summary>
+// Canonical, companion-owned layout and persistence for local inference artifacts:
+// LocalAiPaths defines contained directory layout with reparse-point/traversal-safe path
+// resolution, LocalAiInstallManifest records the acquired runtime/model receipt, and
+// LocalAiManifestStore persists it with same-directory atomic replacement. Also holds port
+// and gateway-model validation policies shared by setup and runtime launch.
+// Usage:
+//   var paths = new LocalAiPaths(localDataDirectory);
+//   paths.EnsureDirectories();
+//   var store = new LocalAiManifestStore(paths);
+//   LocalAiResolvedInstall? install = await store.LoadAsync(cancellationToken); // null = not installed
+//   await store.SaveAsync(manifest, cancellationToken); // atomic manifest replacement
+//   string contained = paths.ResolveContainedPath("models/model.gguf", nameof(path)); // traversal-safe
+// </summary>
 using System.Collections.Immutable;
 using System.Text.Json;
 using System.Text.Json.Serialization;

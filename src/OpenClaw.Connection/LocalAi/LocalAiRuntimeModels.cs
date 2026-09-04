@@ -1,3 +1,16 @@
+// <summary>
+// Shared runtime state models for the local AI subsystem: runtime/ownership/model-availability
+// enums, LocalAiModelEvidence (digest-backed model verification), LocalAiRuntimeSnapshot
+// (published state including process and KV-cache details), its change-event args, and the
+// ILocalAiRuntime contract that LlamaServerRuntimeService implements.
+// </summary>
+// Usage:
+//   runtime.StateChanged += (_, args) =>
+//   {
+//       LocalAiRuntimeSnapshot s = args.Snapshot;
+//       Log($"{s.State} ownership={s.Ownership} model={s.ModelId} at {s.Endpoint}");
+//       if (s.ModelEvidence.Availability is LocalAiModelAvailabilityState.Loaded) { /* ready */ }
+//   };
 using OpenClaw.Shared.Inference.Catalog;
 
 namespace OpenClaw.Connection.LocalAi;
