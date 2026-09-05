@@ -7,6 +7,69 @@ public class CommandRunnerTests
     private static readonly string s_largeStdin = new('x', 8 * 1024 * 1024);
 
     [Fact]
+    public async Task RunAsync_WslVersion_DecodesOutputBeforeLogging()
+    {
+        if (!OperatingSystem.IsWindows() || !File.Exists(WslConstants.WslExePath))
+            return;
+
+        var logPath = Path.Combine(Path.GetTempPath(), $"openclaw-wsl-output-{Guid.NewGuid():N}.jsonl");
+
+        try
+        {
+            CommandResult result;
+            using (var logger = new SetupLogger(logPath, LogLevel.Trace))
+            {
+                var runner = new CommandRunner(logger);
+                result = await runner.RunAsync(
+                    WslConstants.WslExePath,
+                    ["--version"],
+                    TimeSpan.FromSeconds(15));
+            }
+
+            var output = result.Stdout + result.Stderr;
+            Assert.NotEmpty(output);
+            Assert.DoesNotContain('\0', output);
+
+            var jsonl = await File.ReadAllTextAsync(logPath);
+            Assert.DoesNotContain("\\u0000", jsonl, StringComparison.OrdinalIgnoreCase);
+        }
+        finally
+        {
+            File.Delete(logPath);
+        }
+    }
+
+    [Theory]
+    [InlineData("--version")]
+    [InlineData("--status")]
+    [InlineData("--list")]
+    [InlineData("--install")]
+    [InlineData("--terminate")]
+    [InlineData("--unregister")]
+    [InlineData("--shutdown")]
+    public void UsesUtf16OutputEncoding_WslManagementVerb_ReturnsTrue(string verb)
+    {
+        Assert.True(CommandRunner.UsesUtf16OutputEncoding("wsl.exe", [verb]));
+        Assert.True(CommandRunner.UsesUtf16OutputEncoding(@"C:\Windows\System32\WSL.EXE", [verb]));
+    }
+
+    [Theory]
+    [InlineData("wsl.exe", "-d")]
+    [InlineData("wsl.exe", "--distribution")]
+    [InlineData("wsl.exe", "--exec")]
+    [InlineData("powershell.exe", "--version")]
+    public void UsesUtf16OutputEncoding_OtherCommand_ReturnsFalse(string executable, string argument)
+    {
+        Assert.False(CommandRunner.UsesUtf16OutputEncoding(executable, [argument]));
+    }
+
+    [Fact]
+    public void UsesUtf16OutputEncoding_EmptyArguments_ReturnsFalse()
+    {
+        Assert.False(CommandRunner.UsesUtf16OutputEncoding("wsl.exe", []));
+    }
+
+    [Fact]
     public async Task RunAsync_LargeStdinWriteObeysTimeout()
     {
         var runner = CreateRunner();

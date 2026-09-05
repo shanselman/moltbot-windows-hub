@@ -115,6 +115,12 @@ public sealed class CommandRunner : ICommandRunner
             WorkingDirectory = workingDirectory ?? ""
         };
 
+        if (UsesUtf16OutputEncoding(executable, arguments))
+        {
+            psi.StandardOutputEncoding = Encoding.Unicode;
+            psi.StandardErrorEncoding = Encoding.Unicode;
+        }
+
         foreach (var arg in arguments)
             psi.ArgumentList.Add(arg);
 
@@ -240,6 +246,24 @@ public sealed class CommandRunner : ICommandRunner
             return TimeSpan.Zero;
 
         return remaining < s_outputDrainCap ? remaining : s_outputDrainCap;
+    }
+
+    internal static bool UsesUtf16OutputEncoding(string executable, string[] arguments)
+    {
+        if (!string.Equals(Path.GetFileName(executable), "wsl.exe", StringComparison.OrdinalIgnoreCase) ||
+            arguments.Length == 0)
+        {
+            return false;
+        }
+
+        return arguments[0] is
+            "--version" or
+            "--status" or
+            "--list" or
+            "--install" or
+            "--terminate" or
+            "--unregister" or
+            "--shutdown";
     }
 
     /// <summary>
