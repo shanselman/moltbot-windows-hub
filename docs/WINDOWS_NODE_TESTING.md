@@ -30,7 +30,7 @@ Short version: run required tests, collect a closeout proof pass with `.\run-app
 
 ### New command MCP contract
 
-Every new Windows node call must be exposed through local MCP and `winnode`: register the capability, update `McpToolBridge.CommandDescriptions`, update `src/OpenClaw.WinNode.Cli/skill.md`, add focused tests, and prove discovery/invocation with `winnode` or raw MCP JSON-RPC.
+Every new Windows node call must be exposed through local MCP and `winnode`: register the capability, update `McpToolBridge.CommandDescriptions`, update `.agents/skills/winnode/SKILL.md`, add focused tests, and prove discovery/invocation with `winnode` or raw MCP JSON-RPC.
 
 ### 1. Settings Toggle
 - Verify the toggle appears in Settings under "ADVANCED"
