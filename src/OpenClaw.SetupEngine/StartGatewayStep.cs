@@ -148,7 +148,12 @@ public sealed class StartGatewayStep : SetupStep
         var distro = ctx.DistroName!;
 
         // Check if distro is running before trying systemctl stop
-        var list = await ctx.Commands.RunAsync(WslConstants.WslExePath, ["--list", "--quiet"], TimeSpan.FromSeconds(15), ct: ct);
+        var list = await ctx.Commands.RunAsync(
+            WslConstants.WslExePath,
+            ["--list", "--quiet"],
+            TimeSpan.FromSeconds(15),
+            ct: ct,
+            allowInheritedPipeHandleEscape: true);
         if (!WslInstallSupport.ContainsDistro(list.Stdout, distro))
         {
             ctx.Logger.Info("[Uninstall] Distro not registered — skipping gateway stop");
@@ -156,7 +161,12 @@ public sealed class StartGatewayStep : SetupStep
         }
 
         // Check distro state — only stop if Running
-        var verbose = await ctx.Commands.RunAsync(WslConstants.WslExePath, ["--list", "--verbose"], TimeSpan.FromSeconds(15), ct: ct);
+        var verbose = await ctx.Commands.RunAsync(
+            WslConstants.WslExePath,
+            ["--list", "--verbose"],
+            TimeSpan.FromSeconds(15),
+            ct: ct,
+            allowInheritedPipeHandleEscape: true);
         var isRunning = WslInstallSupport.Normalize(verbose.Stdout)
             .Split(['\r', '\n'], StringSplitOptions.RemoveEmptyEntries)
             .Any(line => line.Contains(distro, StringComparison.OrdinalIgnoreCase)

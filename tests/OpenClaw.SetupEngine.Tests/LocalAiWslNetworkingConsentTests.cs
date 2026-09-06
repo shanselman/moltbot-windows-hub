@@ -99,7 +99,8 @@ public sealed class LocalAiWslNetworkingConsentTests
             string? workingDirectory = null,
             string? stdinInput = null,
             CancellationToken ct = default,
-            Stream? stdinStream = null)
+            Stream? stdinStream = null,
+            bool allowInheritedPipeHandleEscape = false)
         {
             Invocations.Add($"{executable} {string.Join(' ', arguments)}");
             throw new InvalidOperationException(

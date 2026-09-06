@@ -37,7 +37,12 @@ public sealed class CleanupStaleDistroStep : SetupStep
         if (!DistroInstallPathPolicy.TryGetManagedInstallPath(ctx.LocalDataDir, distro, out var wslDir, out var pathError))
             return StepResult.Terminal(pathError);
 
-        var list = await ctx.Commands.RunAsync(WslConstants.WslExePath, ["--list", "--quiet"], TimeSpan.FromSeconds(15), ct: ct);
+        var list = await ctx.Commands.RunAsync(
+            WslConstants.WslExePath,
+            ["--list", "--quiet"],
+            TimeSpan.FromSeconds(15),
+            ct: ct,
+            allowInheritedPipeHandleEscape: true);
         if (list.ExitCode != 0)
             return StepResult.Ok("WSL not available or no distros - nothing to clean");
 

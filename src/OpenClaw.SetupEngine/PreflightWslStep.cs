@@ -48,7 +48,8 @@ internal static class WslViabilityInspector
                 WslConstants.WslExePath,
                 ["--version"],
                 TimeSpan.FromSeconds(5),
-                ct: ct);
+                ct: ct,
+                allowInheritedPipeHandleEscape: true);
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
@@ -106,7 +107,8 @@ internal static class WslViabilityInspector
                 WslConstants.WslExePath,
                 ["--status"],
                 TimeSpan.FromSeconds(10),
-                ct: ct);
+                ct: ct,
+                allowInheritedPipeHandleEscape: true);
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
@@ -204,7 +206,8 @@ public sealed class PreflightWslStep : SetupStep
             WslConstants.WslExePath,
             ["--status"],
             TimeSpan.FromSeconds(10),
-            ct: ct);
+            ct: ct,
+            allowInheritedPipeHandleEscape: true);
         var combined = $"{status.Stdout}\n{status.Stderr}";
         if (!WslInstallSupport.TryGetEnvironmentIssue(combined, out var message))
             return null;
@@ -248,7 +251,8 @@ public sealed class PreflightWslStep : SetupStep
                 WslConstants.WslExePath,
                 ["--version"],
                 TimeSpan.FromSeconds(5),
-                ct: ct);
+                ct: ct,
+                allowInheritedPipeHandleEscape: true);
             if (probe.ExitCode != 0 || WslViabilityInspector.LooksUnavailable(probe))
             {
                 return StepResult.Terminal(

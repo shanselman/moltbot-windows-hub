@@ -41,7 +41,12 @@ public sealed class CreateWslInstanceStep : SetupStep
 
         ctx.Logger.Info($"Creating clean app-owned WSL distro '{distro}' from '{baseDistro}' at '{installPath}'");
 
-        var existing = await ctx.Commands.RunAsync(WslConstants.WslExePath, ["--list", "--quiet"], TimeSpan.FromSeconds(15), ct: ct);
+        var existing = await ctx.Commands.RunAsync(
+            WslConstants.WslExePath,
+            ["--list", "--quiet"],
+            TimeSpan.FromSeconds(15),
+            ct: ct,
+            allowInheritedPipeHandleEscape: true);
         if (existing.ExitCode != 0)
             return StepResult.Fail($"Failed to list WSL distros before creating '{distro}': {existing.Stderr}");
 
@@ -126,7 +131,12 @@ public sealed class CreateWslInstanceStep : SetupStep
 
     private static async Task<StepResult> VerifyFreshDistro(SetupContext ctx, string distro, string installPath, CancellationToken ct)
     {
-        var list = await ctx.Commands.RunAsync(WslConstants.WslExePath, ["--list", "--quiet"], TimeSpan.FromSeconds(15), ct: ct);
+        var list = await ctx.Commands.RunAsync(
+            WslConstants.WslExePath,
+            ["--list", "--quiet"],
+            TimeSpan.FromSeconds(15),
+            ct: ct,
+            allowInheritedPipeHandleEscape: true);
         if (list.ExitCode != 0 || !WslInstallSupport.ContainsDistro(list.Stdout, distro))
         {
             var environmentIssue = await PreflightWslStep.DetectEnvironmentIssueAsync(ctx, ct);
@@ -138,7 +148,8 @@ public sealed class CreateWslInstanceStep : SetupStep
             WslConstants.WslExePath,
             ["--list", "--verbose"],
             DistroVersionVerificationTimeout,
-            ct: ct);
+            ct: ct,
+            allowInheritedPipeHandleEscape: true);
         if (verbose.ExitCode != 0 || !WslInstallSupport.TryGetDistroVersion(verbose.Stdout, distro, out var version))
             return StepResult.Fail($"Fresh WSL install registered '{distro}', but setup could not verify it is WSL2.");
 
@@ -182,7 +193,12 @@ public sealed class CreateWslInstanceStep : SetupStep
     {
         var cleanupErrors = new List<string>();
         var installPathExists = Directory.Exists(installPath) || File.Exists(installPath);
-        var list = await ctx.Commands.RunAsync(WslConstants.WslExePath, ["--list", "--quiet"], TimeSpan.FromSeconds(15), ct: ct);
+        var list = await ctx.Commands.RunAsync(
+            WslConstants.WslExePath,
+            ["--list", "--quiet"],
+            TimeSpan.FromSeconds(15),
+            ct: ct,
+            allowInheritedPipeHandleEscape: true);
         var registrationStateKnown = list.ExitCode == 0;
         var distroExists = registrationStateKnown && WslInstallSupport.ContainsDistro(list.Stdout, distro);
         var canDeleteInstallPath = registrationStateKnown && !distroExists;

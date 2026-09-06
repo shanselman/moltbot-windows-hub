@@ -5822,7 +5822,8 @@ public class SetupStepsTests : IDisposable
             string? workingDirectory = null,
             string? stdinInput = null,
             CancellationToken ct = default,
-            Stream? stdinStream = null)
+            Stream? stdinStream = null,
+            bool allowInheritedPipeHandleEscape = false)
         {
             Calls.Add((executable, arguments));
             TimedCalls.Add((executable, arguments, timeout));
