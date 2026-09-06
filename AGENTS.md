@@ -76,7 +76,7 @@ Every new Windows node call must be exposed, documented, and tested through MCP 
 
 1. Register the capability/command in the tray node capability registry.
 2. Add/update `McpToolBridge.CommandDescriptions`.
-3. Update `src/OpenClaw.WinNode.Cli/skill.md`.
+3. Update `.agents/skills/winnode/SKILL.md`.
 4. Add/update capability, MCP bridge, `winnode`, and UI/gateway tests as appropriate.
 5. Run required validation plus `dotnet test .\tests\OpenClaw.WinNode.Cli.Tests\OpenClaw.WinNode.Cli.Tests.csproj --no-restore` when `winnode`, MCP output, or command docs change.
 
