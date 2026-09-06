@@ -346,28 +346,37 @@ public static class Program
             var outputDir = Path.GetDirectoryName(jsonOutput);
             if (outputDir != null) Directory.CreateDirectory(outputDir);
 
-            var jsonResult = new
-            {
-                outcome = result.Outcome.ToString(),
-                exitCode = result.ExitCode,
-                failedStepId = result.FailedStepId,
-                message = result.Message,
-                compatibilityFailure = result.CompatibilityFailure?.ToString(),
-                selectedGatewayVersion = config.Gateway.Version,
-                gatewayProtocolGeneration = GatewayReleasePolicy.ProtocolGeneration,
-                fallbackGatewayVersion =
-                    result.CompatibilityFailure is { } failureKind &&
-                    GatewayReleasePolicy.CanRetryWithFallback(config, failureKind)
-                        ? GatewayReleasePolicy.FallbackVersion
-                        : null,
-                logPath = config.LogPath,
-                journalPath
-            };
-        var json = System.Text.Json.JsonSerializer.Serialize(jsonResult, SetupConfig.JsonWriteOptions);
+            var json = SerializeJsonOutput(result, config, journalPath);
             await AtomicFile.WriteAllTextAsync(jsonOutput, json);
         }
 
         return result.ExitCode;
+    }
+
+    internal static string SerializeJsonOutput(
+        PipelineResult result,
+        SetupConfig config,
+        string journalPath)
+    {
+        var jsonResult = new
+        {
+            outcome = result.Outcome.ToString(),
+            exitCode = result.ExitCode,
+            failedStepId = result.FailedStepId,
+            message = result.Message,
+            requiresRestart = result.RequiresRestart,
+            compatibilityFailure = result.CompatibilityFailure?.ToString(),
+            selectedGatewayVersion = config.Gateway.Version,
+            gatewayProtocolGeneration = GatewayReleasePolicy.ProtocolGeneration,
+            fallbackGatewayVersion =
+                result.CompatibilityFailure is { } failureKind &&
+                GatewayReleasePolicy.CanRetryWithFallback(config, failureKind)
+                    ? GatewayReleasePolicy.FallbackVersion
+                    : null,
+            logPath = config.LogPath,
+            journalPath
+        };
+        return System.Text.Json.JsonSerializer.Serialize(jsonResult, SetupConfig.JsonWriteOptions);
     }
 
     internal static string BuildCompatibilityFallbackMessage(
