@@ -658,6 +658,11 @@ public abstract class WebSocketClientBase : IDisposable
                     ownerGeneration).ConfigureAwait(false);
                 if (attempt is null)
                 {
+                    if (IsReconnectOwner(ownerSocket, ownerGeneration))
+                    {
+                        continue;
+                    }
+
                     break;
                 }
 

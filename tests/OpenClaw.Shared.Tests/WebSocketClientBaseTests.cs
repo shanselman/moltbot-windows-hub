@@ -519,6 +519,40 @@ public class WebSocketClientBaseTests
     }
 
     [Fact]
+    public async Task ConnectAsync_NewerFailedAttempt_DoesNotAbandonActiveReconnectLoop()
+    {
+        using var server = new ControlledUpgradeWebSocketServer(
+            ControlledUpgradeBehavior.Stall,
+            ControlledUpgradeBehavior.Stall,
+            ControlledUpgradeBehavior.Close,
+            ControlledUpgradeBehavior.Upgrade);
+        using var client = new TestWebSocketClient(server.WebSocketUrl, "token", _logger)
+        {
+            TestConnectAttemptTimeout = TimeSpan.FromMilliseconds(250),
+        };
+
+        await client.ConnectAsync().WaitAsync(TimeSpan.FromSeconds(2));
+        await WaitForConditionAsync(
+            () => server.RequestCount >= 2,
+            TimeSpan.FromSeconds(3));
+
+        await client.ConnectAsync().WaitAsync(TimeSpan.FromSeconds(2));
+
+        await server.UpgradeCompleted.WaitAsync(TimeSpan.FromSeconds(5));
+        await WaitForConditionAsync(
+            () => client.TestIsConnected,
+            TimeSpan.FromSeconds(2));
+
+        Assert.Equal(1, client.OnConnectedCallCount);
+        Assert.Equal(4, server.RequestCount);
+
+        await server.SendTextAsync("recovered-after-newer-failure");
+        await WaitForConditionAsync(
+            () => client.ProcessedMessages.Contains("recovered-after-newer-failure"),
+            TimeSpan.FromSeconds(2));
+    }
+
+    [Fact]
     public async Task ConnectAsync_WhenAutoReconnectDisabled_DoesNotStartReconnectLoop()
     {
         var client = new TestWebSocketClient("ws://127.0.0.1:1", "token", _logger)
@@ -1059,11 +1093,18 @@ internal sealed class LoopbackWebSocketServer : IDisposable
     }
 }
 
+internal enum ControlledUpgradeBehavior
+{
+    Stall,
+    Close,
+    Upgrade,
+}
+
 internal sealed class ControlledUpgradeWebSocketServer : IDisposable
 {
     private readonly TcpListener _listener;
     private readonly CancellationTokenSource _cts = new();
-    private readonly int _stalledUpgradeCount;
+    private readonly Func<int, ControlledUpgradeBehavior> _behaviorForRequest;
     private readonly object _connectionsLock = new();
     private readonly List<TcpClient> _clients = new();
     private readonly List<WebSocket> _webSockets = new();
@@ -1083,8 +1124,35 @@ internal sealed class ControlledUpgradeWebSocketServer : IDisposable
     public Task UpgradeCompleted => _upgradeCompleted.Task;
 
     public ControlledUpgradeWebSocketServer(int stalledUpgradeCount)
+        : this(requestNumber =>
+            requestNumber <= stalledUpgradeCount
+                ? ControlledUpgradeBehavior.Stall
+                : ControlledUpgradeBehavior.Upgrade)
     {
-        _stalledUpgradeCount = stalledUpgradeCount;
+    }
+
+    public ControlledUpgradeWebSocketServer(
+        params ControlledUpgradeBehavior[] behaviors)
+        : this(CreateBehaviorSelector(behaviors))
+    {
+    }
+
+    private static Func<int, ControlledUpgradeBehavior> CreateBehaviorSelector(
+        ControlledUpgradeBehavior[] behaviors)
+    {
+        if (behaviors.Length == 0)
+            throw new ArgumentException("At least one upgrade behavior is required.", nameof(behaviors));
+
+        return requestNumber =>
+            requestNumber <= behaviors.Length
+                ? behaviors[requestNumber - 1]
+                : behaviors[^1];
+    }
+
+    private ControlledUpgradeWebSocketServer(
+        Func<int, ControlledUpgradeBehavior> behaviorForRequest)
+    {
+        _behaviorForRequest = behaviorForRequest;
         _listener = new TcpListener(IPAddress.Loopback, 0);
         _listener.Start();
         var port = ((IPEndPoint)_listener.LocalEndpoint).Port;
@@ -1122,6 +1190,7 @@ internal sealed class ControlledUpgradeWebSocketServer : IDisposable
     {
         WebSocket? webSocket = null;
         var requestNumber = 0;
+        var stalled = false;
         try
         {
             var stream = client.GetStream();
@@ -1132,8 +1201,15 @@ internal sealed class ControlledUpgradeWebSocketServer : IDisposable
                 _firstRequestReceived.TrySetResult();
             }
 
-            if (requestNumber <= _stalledUpgradeCount)
+            var behavior = _behaviorForRequest(requestNumber);
+            if (behavior == ControlledUpgradeBehavior.Close)
             {
+                return;
+            }
+
+            if (behavior == ControlledUpgradeBehavior.Stall)
+            {
+                stalled = true;
                 var buffer = new byte[1];
                 while (await stream.ReadAsync(buffer, _cts.Token) > 0)
                 {
@@ -1185,7 +1261,7 @@ internal sealed class ControlledUpgradeWebSocketServer : IDisposable
         }
         finally
         {
-            if (requestNumber == 1 && requestNumber <= _stalledUpgradeCount)
+            if (requestNumber == 1 && stalled)
             {
                 _firstStalledClientClosed.TrySetResult();
             }
