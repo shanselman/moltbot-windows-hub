@@ -68,7 +68,6 @@ public sealed class OpenClawReactorChatRoot : Component<OpenClawReactorChatRootP
         var (toolCallsCollapseVersion, setToolCallsCollapseVersion) =
             UseState(s_toolCallsCollapseVersion, threadSafe: true);
         var (firstSendInFlight, setFirstSendInFlight) = UseState(false, threadSafe: true);
-        var inputsRevisionRef = UseRef(0L);
 
         UseEffect((Func<Action>)(() =>
         {
@@ -309,8 +308,7 @@ public sealed class OpenClawReactorChatRoot : Component<OpenClawReactorChatRootP
         }
         else
         {
-            props.ComposerSession.ApplyInputs(new ChatComposerInputs(
-                Revision: ++inputsRevisionRef.Current,
+            var composerInputs = new ChatComposerInputs(
                 ConnectionState: connectionState,
                 TurnActive: timeline.TurnActive,
                 CurrentThread: effectiveThread,
@@ -320,9 +318,11 @@ public sealed class OpenClawReactorChatRoot : Component<OpenClawReactorChatRootP
                 MessageOptionsDisabled: timeline.TurnActive || hasPendingQueuedSend,
                 QueuedMessages: queuedMessages,
                 AvailableCommands: snapshot.AvailableCommands,
-                CommandsSupported: snapshot.CommandsSupported));
+                CommandsSupported: snapshot.CommandsSupported);
             composerElement = Component<ReactorChatComposer, ReactorChatComposerViewProps>(new(
                 props.ComposerSession,
+                composerInputs,
+                snapshot,
                 () => setScrollToBottomToken(scrollToBottomToken + 1),
                 props.IsCompact));
         }

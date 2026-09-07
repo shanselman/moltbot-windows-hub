@@ -94,6 +94,13 @@ Stable, stable-correction, and alpha tags use the same signed CI release pipelin
   numeric-suffix tag, including malformed ones such as `-0` and `-03`, is routed
   through the validator rather than silently classified by GitVersion.
 - `vX.Y.Z-alpha.N` creates a prerelease that stable updater checks do not offer.
+  The daily workflow evaluates the default branch at 2:00 PM Pacific, skips a
+  head already represented by a published release, and defers while an
+  unpublished non-alpha tag points at the head. After each successful alpha
+  publication, CI removes canonical alpha release objects and assets older than
+  30 days so daily builds do not overwhelm the Releases page. Their Git tags
+  remain as GitVersion history. If the new release is not yet visible through
+  the Releases API, cleanup defers until the next alpha publication.
 
 The validator has no dependency on another repository's release API. Run it
 offline against an explicit current release to preview a decision:

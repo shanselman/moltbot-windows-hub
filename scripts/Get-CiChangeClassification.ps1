@@ -302,6 +302,13 @@ foreach ($changedPath in $paths) {
         Complete-Impact (New-FullImpact)
         return
     }
+    if ($normalizedPath.Equals(
+            ".agents/skills/winnode/SKILL.md",
+            [StringComparison]::OrdinalIgnoreCase)) {
+        $hasProductChange = $true
+        Add-Lanes -Impact $impact -Core
+        continue
+    }
     if (Test-IsSafeDocumentationPath $normalizedPath) {
         continue
     }

@@ -291,7 +291,7 @@ public partial class App : Application, OpenClawTray.Services.IAppCommands, IPer
         if (!string.IsNullOrEmpty(langOverride))
         {
             // SECURITY: Whitelist known locale codes to prevent locale injection
-            string[] allowedLocales = ["en-us", "fr-fr", "nl-nl", "zh-cn", "zh-tw"];
+            string[] allowedLocales = ["en-us", "fr-fr", "nl-nl", "zh-cn", "zh-tw", "pt-br"];
             if (allowedLocales.Contains(langOverride.ToLowerInvariant()))
                 LocalizationHelper.SetLanguageOverride(langOverride);
             else
@@ -3225,14 +3225,14 @@ public partial class App : Application, OpenClawTray.Services.IAppCommands, IPer
 
     private void PublishSandboxRiskNotification(MxcAvailability availability)
     {
-        if (availability.HasAnyBackend)
+        if (availability.CanRunSystemRunSandbox)
         {
             ClearSandboxRiskNotification();
             return;
         }
 
-        var reasonText = availability.UnsupportedReasons.Count > 0
-            ? string.Join("  ·  ", availability.UnsupportedReasons)
+        var reasonText = availability.SystemRunSandboxUnsupportedReasons.Count > 0
+            ? string.Join("  ·  ", availability.SystemRunSandboxUnsupportedReasons)
             : LocalizationHelper.GetString("AppNotification_SandboxUnavailable_DefaultReason");
         var blockHostFallback = _settings?.SystemRunBlockHostFallbackWhenMxcUnavailable == true;
         var mode = blockHostFallback ? "blocked" : "host-fallback";

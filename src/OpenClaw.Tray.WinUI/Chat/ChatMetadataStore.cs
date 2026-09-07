@@ -66,6 +66,22 @@ internal sealed class AttachmentMetaMatcher
 /// </summary>
 internal sealed class ChatMetadataStore : IDisposable
 {
+    internal enum CachedToolLookupOutcome
+    {
+        NoCandidates,
+        Matched,
+        Unmatched,
+    }
+
+    internal readonly record struct CachedToolLookup(
+        CachedToolMeta? Match,
+        CachedToolLookupOutcome Outcome);
+
+    private readonly record struct CachedToolCorrelationIdentity(
+        string? RunId,
+        string ToolCallId,
+        long LegacyTurn);
+
     internal sealed class CachedToolMeta
     {
         public long Ts { get; set; }
@@ -357,36 +373,66 @@ internal sealed class ChatMetadataStore : IDisposable
 
         lock (_gate)
         {
-            var entries = new List<CachedToolMeta>();
+            IReadOnlyList<CachedToolMeta>? sessionEntries = null;
+            IReadOnlyList<CachedToolMeta>? threadEntries = null;
             if (!string.IsNullOrEmpty(sessionId) &&
-                _toolCache.TryGetValue(sessionId, out var sessionEntries))
+                _toolCache.TryGetValue(sessionId, out var cachedSessionEntries))
             {
-                entries.AddRange(sessionEntries
+                sessionEntries = cachedSessionEntries
                     .Where(entry => !IsOlderResetEntry(
                         entry.ThreadId,
                         entry.ResetGeneration,
                         threadId,
                         resetGeneration))
-                    .Select(Clone));
+                    .ToArray();
             }
 
             if (!string.IsNullOrEmpty(threadId) &&
                 (string.IsNullOrEmpty(sessionId) || !string.Equals(sessionId, threadId, StringComparison.Ordinal)) &&
-                _toolCache.TryGetValue(threadId, out var threadEntries))
+                _toolCache.TryGetValue(threadId, out var cachedThreadEntries))
             {
-                entries.AddRange(threadEntries
+                threadEntries = cachedThreadEntries
                     .Where(entry => !IsOlderResetEntry(
                         entry.ThreadId,
                         entry.ResetGeneration,
                         threadId,
                         resetGeneration))
-                    .Select(Clone));
+                    .ToArray();
             }
 
-            return entries.Count == 0
-                ? null
-                : new Queue<CachedToolMeta>(entries.OrderBy(entry => entry.Ts));
+            return BuildToolMetadataQueue(sessionEntries, threadEntries);
         }
+    }
+
+    internal static Queue<CachedToolMeta>? BuildToolMetadataQueue(
+        IReadOnlyList<CachedToolMeta>? sessionEntries,
+        IReadOnlyList<CachedToolMeta>? threadEntries)
+    {
+        var merged = new List<CachedToolMeta>();
+        var stableIdentities =
+            new Dictionary<CachedToolCorrelationIdentity, int>();
+        var ordered = (sessionEntries ?? Array.Empty<CachedToolMeta>())
+            .Concat(threadEntries ?? Array.Empty<CachedToolMeta>())
+            .OrderBy(entry => entry.Ts);
+
+        foreach (var source in ordered)
+        {
+            var entry = Clone(source);
+            if (!TryGetCorrelationIdentity(entry, out var identity) ||
+                !stableIdentities.TryGetValue(identity, out var existingIndex))
+            {
+                if (TryGetCorrelationIdentity(entry, out identity))
+                    stableIdentities[identity] = merged.Count;
+                merged.Add(entry);
+                continue;
+            }
+
+            MergeToolMetadata(merged[existingIndex], entry);
+        }
+
+        return merged.Count == 0
+            ? null
+            : new Queue<CachedToolMeta>(merged);
     }
 
     internal AttachmentMetaMatcher CreateAttachmentMatcher(
@@ -535,6 +581,63 @@ internal sealed class ChatMetadataStore : IDisposable
         match.Label = NormalizeCachedDisplayText(match.Label);
         match.ToolArgs = NormalizeCachedToolArgs(match.ToolArgs);
         return match;
+    }
+
+    internal static CachedToolLookup TryMatchCachedToolByCallId(
+        Queue<CachedToolMeta>? cache,
+        string? toolCallId,
+        long historyTsMs)
+    {
+        if (cache is null ||
+            cache.Count == 0 ||
+            string.IsNullOrWhiteSpace(toolCallId))
+        {
+            return new(null, CachedToolLookupOutcome.NoCandidates);
+        }
+
+        var entryCount = cache.Count;
+        var entries = new CachedToolMeta[entryCount];
+        var matchIndex = -1;
+        var bestTimestampDistance = double.PositiveInfinity;
+        for (var index = 0; index < entryCount; index++)
+        {
+            var candidate = cache.Dequeue();
+            entries[index] = candidate;
+            if (string.IsNullOrWhiteSpace(candidate.ToolCallId) ||
+                !string.Equals(
+                    candidate.ToolCallId,
+                    toolCallId,
+                    StringComparison.Ordinal))
+            {
+                continue;
+            }
+
+            var timestampDistance =
+                historyTsMs > 0 && candidate.Ts > 0
+                    ? Math.Abs((double)candidate.Ts - historyTsMs)
+                    : double.PositiveInfinity;
+            if (matchIndex < 0 ||
+                timestampDistance < bestTimestampDistance)
+            {
+                matchIndex = index;
+                bestTimestampDistance = timestampDistance;
+            }
+        }
+
+        for (var index = 0; index < entryCount; index++)
+        {
+            if (index != matchIndex)
+                cache.Enqueue(entries[index]);
+        }
+
+        if (matchIndex < 0)
+            return new(null, CachedToolLookupOutcome.Unmatched);
+
+        var match = entries[matchIndex];
+        match.ToolName = NormalizeCachedDisplayText(match.ToolName);
+        match.Label = NormalizeCachedDisplayText(match.Label);
+        match.ToolArgs = NormalizeCachedToolArgs(match.ToolArgs);
+        return new(match, CachedToolLookupOutcome.Matched);
     }
 
     internal void Flush()
@@ -728,6 +831,47 @@ internal sealed class ChatMetadataStore : IDisposable
         ThreadId = entry.ThreadId,
         ResetGeneration = entry.ResetGeneration,
     };
+
+    private static bool TryGetCorrelationIdentity(
+        CachedToolMeta entry,
+        out CachedToolCorrelationIdentity identity)
+    {
+        if (string.IsNullOrWhiteSpace(entry.ToolCallId))
+        {
+            identity = default;
+            return false;
+        }
+
+        var runId = string.IsNullOrWhiteSpace(entry.RunId)
+            ? null
+            : entry.RunId;
+        identity = new CachedToolCorrelationIdentity(
+            runId,
+            entry.ToolCallId,
+            runId is null ? entry.LegacyTurn : 0);
+        return true;
+    }
+
+    private static void MergeToolMetadata(
+        CachedToolMeta existing,
+        CachedToolMeta incoming)
+    {
+        if (incoming.IdentityStrength > existing.IdentityStrength)
+        {
+            existing.ToolName = incoming.ToolName;
+            existing.IdentityStrength = incoming.IdentityStrength;
+        }
+        else if (string.IsNullOrWhiteSpace(existing.ToolName))
+        {
+            existing.ToolName = incoming.ToolName;
+        }
+
+        if (!string.IsNullOrWhiteSpace(incoming.Label))
+            existing.Label = incoming.Label;
+        existing.ToolArgs = MergeCachedToolArgs(
+            existing.ToolArgs,
+            incoming.ToolArgs);
+    }
 
     private static CachedAttachmentMeta Clone(CachedAttachmentMeta entry) => new()
     {

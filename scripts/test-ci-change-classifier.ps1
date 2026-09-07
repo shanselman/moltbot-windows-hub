@@ -86,6 +86,12 @@ $cases = @(
         Classification = "docs_only"
     },
     @{
+        Scenario = "WinNode skill reference"
+        Paths = @(".agents/skills/winnode/SKILL.md")
+        Classification = "targeted"
+        Required = @("core_tests")
+    },
+    @{
         Scenario = "CLI-only product change"
         Paths = @("src/OpenClaw.Cli/Program.cs")
         Classification = "targeted"

@@ -6,6 +6,7 @@ on:
     tags: [ 'v*' ]
   pull_request:
     branches: [ main, master ]
+  workflow_dispatch:
 
 permissions:
   contents: read
@@ -82,8 +83,8 @@ jobs:
           exit 1
         fi
 
-    - name: Test repository triage automation
-      run: node --test .github/scripts/repository-triage.test.cjs
+    - name: Test repository triage automation and dashboard
+      run: node --test .github/scripts/repository-triage.test.cjs .github/extensions/openclaw-triage-dashboard/triage-state.test.mjs
 
     - name: Validate documentation
       shell: pwsh
@@ -230,13 +231,38 @@ jobs:
       with:
         dotnet-version: 10.0.x
 
+    - name: Configure core NuGet cache
+      # Keep the core graph out of the repository-wide NuGet cache used by every other lane.
+      shell: pwsh
+      run: '"NUGET_PACKAGES=$env:RUNNER_TEMP\openclaw-core-nuget-packages" >> $env:GITHUB_ENV'
+
     - name: Cache NuGet packages
       continue-on-error: true
       uses: actions/cache@v6
       with:
-        path: ~/.nuget/packages
-        key: nuget-${{ runner.os }}-${{ hashFiles('**/*.csproj', '**/Directory.Packages.props') }}
-        restore-keys: nuget-${{ runner.os }}-
+        path: ${{ env.NUGET_PACKAGES }}
+        # SDK/config and imported MSBuild files can change restore behavior or shared package references.
+        # These project files are the complete transitive graph restored by the core lane.
+        key: >-
+          nuget-core-${{ runner.os }}-${{ hashFiles(
+            'global.json',
+            'NuGet.Config',
+            'Directory.Build.props',
+            'src/Directory.Build.props',
+            'src/Directory.Build.targets',
+            'tests/Directory.Build.props',
+            'tests/OpenClaw.TestSupport/Directory.Build.props',
+            'tests/OpenClaw.Shared.TestHost/Directory.Build.props',
+            'src/OpenClaw.Shared/OpenClaw.Shared.csproj',
+            'src/OpenClaw.Connection/OpenClaw.Connection.csproj',
+            'src/OpenClaw.Cli/OpenClaw.Cli.csproj',
+            'src/OpenClaw.WinNode.Cli/OpenClaw.WinNode.Cli.csproj',
+            'tests/OpenClaw.TestSupport/OpenClaw.TestSupport.csproj',
+            'tests/OpenClaw.Shared.TestHost/OpenClaw.Shared.TestHost.csproj',
+            'tests/OpenClaw.Shared.Tests/OpenClaw.Shared.Tests.csproj',
+            'tests/OpenClaw.Connection.Tests/OpenClaw.Connection.Tests.csproj',
+            'tests/OpenClaw.WinNode.Cli.Tests/OpenClaw.WinNode.Cli.Tests.csproj'
+          ) }}
 
     - name: Restore core test projects
       run: |
@@ -1173,3 +1199,60 @@ jobs:
           1. Run the installer for your architecture
           2. Launch from Start Menu or system tray
           3. Right-click tray icon → Settings to configure
+
+    - name: Retain alpha releases for 30 days
+      if: needs.metadata.outputs.isPrerelease == 'true' && contains(github.ref_name, '-alpha.')
+      shell: bash
+      env:
+        GH_TOKEN: ${{ github.token }}
+      run: |
+        set -euo pipefail
+
+        releases_json="$(
+          gh api --paginate "repos/${GITHUB_REPOSITORY}/releases?per_page=100" |
+            jq -s 'add'
+        )"
+        current_release_count="$(
+          jq --arg tag "$GITHUB_REF_NAME" '
+            map(select(.draft == false and .prerelease == true and .tag_name == $tag))
+            | length
+          ' <<< "$releases_json"
+        )"
+        if [[ "$current_release_count" != "1" ]]; then
+          echo "::warning::Current alpha release $GITHUB_REF_NAME is not visible yet; deferring retention cleanup."
+          exit 0
+        fi
+
+        while IFS=$'\t' read -r release_id stale_tag; do
+          if [[ -z "$release_id" ]]; then
+            continue
+          fi
+          echo "Deleting old alpha release $stale_tag; retaining its Git tag."
+          deleted=false
+          for attempt in 1 2 3; do
+            if gh api --method DELETE "repos/${GITHUB_REPOSITORY}/releases/$release_id"; then
+              deleted=true
+              break
+            fi
+            echo "::warning::Attempt $attempt could not delete old alpha release $stale_tag."
+            if [[ "$attempt" -lt 3 ]]; then
+              sleep $((attempt * 5))
+            fi
+          done
+          if [[ "$deleted" != "true" ]]; then
+            echo "::warning::Retention cleanup for $stale_tag will retry after the next alpha publication."
+          fi
+        done < <(
+          jq -r '
+            map(select(
+              .draft == false and
+              .prerelease == true and
+              (.tag_name | test("^v[0-9]+\\.[0-9]+\\.[0-9]+-alpha\\.[0-9]+$")) and
+              ((.published_at | fromdateiso8601) < (now - (30 * 24 * 60 * 60)))
+            ))
+            | sort_by(.published_at)
+            | .[]
+            | [.id, .tag_name]
+            | @tsv
+          ' <<< "$releases_json"
+        )

@@ -41,7 +41,7 @@ internal sealed class ChatComposerViewModel : INotifyPropertyChanged, IDisposabl
     /// drops its mutation with no state, revision, or notification change.</summary>
     private readonly object _applyLock = new();
 
-    private readonly Queue<Action> _pendingMutations = new();
+    private readonly Queue<Func<bool>> _pendingMutations = new();
     private bool _draining;
 
     /// <summary>Disposal flag read under three different synchronization domains:
@@ -86,6 +86,7 @@ internal sealed class ChatComposerViewModel : INotifyPropertyChanged, IDisposabl
     private int? _dismissedSlashInputRevision;
     private bool _awaitingCatalog;
     private ChatComposerInputs? _inputs;
+    private long _latestInputsRevision;
 
     public ChatComposerViewModel(IUiDispatcher dispatcher, bool initialSpeakerMuted)
     {
@@ -131,13 +132,17 @@ internal sealed class ChatComposerViewModel : INotifyPropertyChanged, IDisposabl
     public void ApplyInputs(ChatComposerInputs inputs)
     {
         ArgumentNullException.ThrowIfNull(inputs);
-        Mutate(() =>
+        MutateIfChanged(() =>
         {
-            if (_inputs is { } current && inputs.Revision <= current.Revision)
-                return;
+            if (inputs.Revision <= _latestInputsRevision)
+                return false;
+            _latestInputsRevision = inputs.Revision;
+            if (_inputs is { } applied && applied.HasSameProjection(inputs))
+                return false;
 
             _inputs = inputs;
             RecomputeSlashDisplay();
+            return true;
         });
     }
 
@@ -316,6 +321,22 @@ internal sealed class ChatComposerViewModel : INotifyPropertyChanged, IDisposabl
     /// completion cannot mutate a disposed view model or notify a detached view.</summary>
     private void Mutate(Action change)
     {
+        ArgumentNullException.ThrowIfNull(change);
+        EnqueueMutation(() =>
+        {
+            change();
+            return true;
+        });
+    }
+
+    private void MutateIfChanged(Func<bool> change)
+    {
+        ArgumentNullException.ThrowIfNull(change);
+        EnqueueMutation(change);
+    }
+
+    private void EnqueueMutation(Func<bool> change)
+    {
         if (_disposed)
             return;
 
@@ -380,7 +401,7 @@ internal sealed class ChatComposerViewModel : INotifyPropertyChanged, IDisposabl
     {
         while (true)
         {
-            Action next;
+            Func<bool> next;
             lock (_queueLock)
             {
                 if (_disposed)
@@ -418,9 +439,11 @@ internal sealed class ChatComposerViewModel : INotifyPropertyChanged, IDisposabl
 
                 try
                 {
-                    next();
-                    RenderRevision++;
-                    PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(null));
+                    if (next())
+                    {
+                        RenderRevision++;
+                        PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(null));
+                    }
                 }
                 catch (Exception ex)
                 {

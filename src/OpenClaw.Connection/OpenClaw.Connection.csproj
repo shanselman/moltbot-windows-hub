@@ -10,6 +10,7 @@
   <ItemGroup>
     <InternalsVisibleTo Include="OpenClaw.Connection.Tests" />
     <InternalsVisibleTo Include="OpenClaw.Tray.Tests" />
+    <InternalsVisibleTo Include="OpenClaw.SetupEngine.Tests" />
   </ItemGroup>
 
   <ItemGroup>

@@ -73,6 +73,29 @@ function Get-JobBlock {
         $nextMatch.Index - $startMatch.Index)
 }
 
+function Get-StepBlock {
+    param(
+        [Parameter(Mandatory)][string]$Text,
+        [Parameter(Mandatory)][string]$Name
+    )
+
+    $escapedName = [regex]::Escape($Name)
+    $startMatch = [regex]::Match($Text, "(?m)^    - name: ${escapedName}\r?$")
+    if (-not $startMatch.Success) {
+        throw "Could not find CI step '$Name'."
+    }
+    $stepHeadingPattern = [regex]::new("(?m)^    - (?:name:|uses:)")
+    $nextMatch = $stepHeadingPattern.Match(
+        $Text,
+        $startMatch.Index + $startMatch.Length)
+    if (-not $nextMatch.Success) {
+        return $Text.Substring($startMatch.Index)
+    }
+    return $Text.Substring(
+        $startMatch.Index,
+        $nextMatch.Index - $startMatch.Index)
+}
+
 function Get-WorkflowTriggerBlock {
     param(
         [Parameter(Mandatory)][string]$Text,
@@ -392,10 +415,6 @@ foreach ($lane in $testLanes.GetEnumerator()) {
         -Message "Test lane '$($lane.Key)' does not preserve push/tag coverage."
     Assert-Contains `
         -Text $job `
-        -Expected "key: nuget-`${{ runner.os }}-`${{ hashFiles('**/*.csproj', '**/Directory.Packages.props') }}" `
-        -Message "Test lane '$($lane.Key)' must retain the shared NuGet cache key."
-    Assert-Contains `
-        -Text $job `
         -Expected "name: $($lane.Value.Artifact)" `
         -Message "Test lane '$($lane.Key)' is missing its TRX artifact."
     foreach ($project in $lane.Value.Projects) {
@@ -405,6 +424,73 @@ foreach ($lane in $testLanes.GetEnumerator()) {
             -Message "Test lane '$($lane.Key)' lost project '$project'."
     }
 }
+
+$coreJob = Get-JobBlock "core-tests"
+$coreCacheStep = Get-StepBlock -Text $coreJob -Name "Cache NuGet packages"
+foreach ($token in @(
+        "Configure core NuGet cache",
+        "shell: pwsh",
+        '"NUGET_PACKAGES=$env:RUNNER_TEMP\openclaw-core-nuget-packages" >> $env:GITHUB_ENV',
+        'path: ${{ env.NUGET_PACKAGES }}',
+        'nuget-core-${{ runner.os }}-${{ hashFiles(',
+        "'global.json'",
+        "'NuGet.Config'",
+        "'Directory.Build.props'",
+        "'src/Directory.Build.props'",
+        "'src/Directory.Build.targets'",
+        "'tests/Directory.Build.props'",
+        "'tests/OpenClaw.TestSupport/Directory.Build.props'",
+        "'tests/OpenClaw.Shared.TestHost/Directory.Build.props'",
+        "'src/OpenClaw.Shared/OpenClaw.Shared.csproj'",
+        "'src/OpenClaw.Connection/OpenClaw.Connection.csproj'",
+        "'src/OpenClaw.Cli/OpenClaw.Cli.csproj'",
+        "'src/OpenClaw.WinNode.Cli/OpenClaw.WinNode.Cli.csproj'",
+        "'tests/OpenClaw.TestSupport/OpenClaw.TestSupport.csproj'",
+        "'tests/OpenClaw.Shared.TestHost/OpenClaw.Shared.TestHost.csproj'",
+        "'tests/OpenClaw.Shared.Tests/OpenClaw.Shared.Tests.csproj'",
+        "'tests/OpenClaw.Connection.Tests/OpenClaw.Connection.Tests.csproj'",
+        "'tests/OpenClaw.WinNode.Cli.Tests/OpenClaw.WinNode.Cli.Tests.csproj'"
+    )) {
+    Assert-Contains -Text $coreJob -Expected $token -Message "Core NuGet cache is missing '$token'."
+}
+foreach ($token in @(
+        "path: ~/.nuget/packages",
+        'key: nuget-${{ runner.os }}-',
+        'restore-keys: nuget-${{ runner.os }}-',
+        "'**/*.csproj'",
+        "'**/Directory.Packages.props'",
+        "bin/",
+        "obj/",
+        "TestResults",
+        "node_modules",
+        ".dotnet"
+    )) {
+    Assert-NotContains -Text $coreCacheStep -Unexpected $token -Message "Core NuGet cache must not contain '$token'."
+}
+
+$coreJobIndex = $workflow.IndexOf($coreJob, [StringComparison]::Ordinal)
+if ($coreJobIndex -lt 0) {
+    throw "Could not isolate the core job from the workflow."
+}
+$nonCoreWorkflow = $workflow.Remove($coreJobIndex, $coreJob.Length)
+foreach ($token in @(
+        "path: ~/.nuget/packages",
+        'key: nuget-${{ runner.os }}-${{ hashFiles(''**/*.csproj'', ''**/Directory.Packages.props'') }}',
+        'restore-keys: nuget-${{ runner.os }}-'
+    )) {
+    $count = ([regex]::Matches($nonCoreWorkflow, [regex]::Escape($token))).Count
+    if ($count -ne 8) {
+        throw "Expected 8 unchanged non-core cache entries for '$token', found $count."
+    }
+}
+Assert-NotContains `
+    -Text $nonCoreWorkflow `
+    -Unexpected "NUGET_PACKAGES" `
+    -Message "Only the core job may override NUGET_PACKAGES."
+Assert-NotContains `
+    -Text $nonCoreWorkflow `
+    -Unexpected "nuget-core-" `
+    -Message "Only the core job may use the isolated NuGet cache key."
 
 $trayJob = Get-JobBlock "tray-tests"
 foreach ($token in @(
@@ -694,4 +780,4 @@ try {
     }
 }
 
-Write-Host "CI workflow contracts passed: CodeQL branch/path gating, conservative lane routing, stable gate enforcement, decoupled metadata/release builds, preserved test inventory, and fail-closed proof routing." -ForegroundColor Green
+Write-Host "CI workflow contracts passed: CodeQL branch/path gating, conservative lane routing, isolated core NuGet caching, stable gate enforcement, decoupled metadata/release builds, preserved test inventory, and fail-closed proof routing." -ForegroundColor Green

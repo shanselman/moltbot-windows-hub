@@ -419,6 +419,54 @@ public static class MxcConfigBuilder
             .ToList();
     }
 
+    internal static MxcConfig WithNonCascadingVolumeRootGrants(MxcConfig config)
+    {
+        ArgumentNullException.ThrowIfNull(config);
+        if (config.Filesystem is null)
+            return config;
+
+        var readonlyPaths = (config.Filesystem.ReadonlyPaths ?? Array.Empty<string>()).ToList();
+        var readwritePaths = config.Filesystem.ReadwritePaths ?? Array.Empty<string>();
+        var roots = readonlyPaths
+            .Concat(readwritePaths)
+            .Select(TryGetWindowsDriveRoot)
+            .Where(root => root is not null)
+            .Cast<string>()
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToArray();
+
+        foreach (var root in roots)
+        {
+            if (!readonlyPaths.Contains(root, StringComparer.OrdinalIgnoreCase) &&
+                !readwritePaths.Contains(root, StringComparer.OrdinalIgnoreCase))
+            {
+                readonlyPaths.Add(root);
+            }
+        }
+
+        return config with
+        {
+            Filesystem = config.Filesystem with
+            {
+                ReadonlyPaths = readonlyPaths.ToArray(),
+            },
+        };
+    }
+
+    private static string? TryGetWindowsDriveRoot(string path)
+    {
+        if (string.IsNullOrWhiteSpace(path) ||
+            path.Length < 3 ||
+            !char.IsAsciiLetter(path[0]) ||
+            path[1] != ':' ||
+            (path[2] != '\\' && path[2] != '/'))
+        {
+            return null;
+        }
+
+        return $"{char.ToUpperInvariant(path[0])}:\\";
+    }
+
     private static bool IsCoveredBy(string candidate, IEnumerable<string> ancestors)
     {
         var nc = NormalizePath(candidate);

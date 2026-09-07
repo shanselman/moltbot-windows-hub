@@ -1,0 +1,119 @@
+{
+  "schemaVersion": 1,
+  "repo": "openclaw/openclaw-windows-node",
+  "title": "OpenClaw Windows Node global triage",
+  "scope": "All open issues and pull requests as of 2026-09-03.",
+  "generatedAt": "2026-09-03T22:00:00Z",
+  "refreshSeconds": 60,
+  "items": [
+    {
+      "type": "pr",
+      "number": 1308,
+      "title": "Example pull request",
+      "url": "https://github.com/openclaw/openclaw-windows-node/pull/1308",
+      "decision": "TAKE_AFTER_CHECKS",
+      "takeConfidence": 88,
+      "recommendationConfidence": 98,
+      "effort": "Quick",
+      "risk": "Low",
+      "owner": "Maintainer",
+      "nextAction": "Wait for the exact-head test and both architecture builds.",
+      "proofPools": [],
+      "proofStatus": "not-applicable",
+      "reviewStatus": "complete",
+      "reviewedHeadSha": "0123456789abcdef0123456789abcdef01234567",
+      "expectedChecks": [
+        "test",
+        "build (win-x64)",
+        "build (win-arm64)"
+      ],
+      "dependencies": []
+    },
+    {
+      "type": "issue",
+      "number": 1309,
+      "title": "Example issue",
+      "url": "https://github.com/openclaw/openclaw-windows-node/issues/1309",
+      "decision": "NEEDS_INFO",
+      "takeConfidence": 60,
+      "recommendationConfidence": 95,
+      "effort": "Unknown",
+      "risk": "Low",
+      "owner": "Author",
+      "nextAction": "Clarify the expected behavior.",
+      "proofPools": [],
+      "proofStatus": "blocked",
+      "reviewStatus": "blocked",
+      "reviewedHeadSha": "",
+      "expectedChecks": [],
+      "dependencies": []
+    }
+  ],
+  "report": {
+    "changes": [
+      {
+        "change": "New pull requests",
+        "items": "#1308"
+      }
+    ],
+    "ownership": [
+      {
+        "item": "#1308",
+        "assessment": "Maintainer-owned and actively moving."
+      }
+    ],
+    "reviews": [
+      {
+        "item": "#1308",
+        "title": "Example pull request",
+        "decision": "TAKE_AFTER_CHECKS",
+        "summary": "No actionable source finding remains. Exact-head checks are the final gate."
+      }
+    ],
+    "automation": [
+      {
+        "opportunity": "Detect missing expected checks",
+        "why": "Zero failures does not prove that required jobs ran.",
+        "owner": "Repository triage workflow",
+        "effort": "Quick",
+        "notes": "Compare live check names with expectedChecks."
+      }
+    ]
+  },
+  "plan": [
+    {
+      "id": "land-1308",
+      "title": "Land PR #1308 after exact-head checks",
+      "detail": "The plan status follows the PR check gate.",
+      "dependsOn": [],
+      "horizon": "today",
+      "itemNumbers": [
+        1308
+      ],
+      "gates": [
+        {
+          "itemNumber": 1308,
+          "stage": "checks"
+        }
+      ],
+      "status": "pending"
+    },
+    {
+      "id": "clarify-1309",
+      "title": "Clarify issue #1309",
+      "detail": "The plan follows issue inventory and review state.",
+      "dependsOn": [],
+      "horizon": "later",
+      "itemNumbers": [
+        1309
+      ],
+      "gates": [
+        {
+          "itemNumber": 1309,
+          "stage": "inventory"
+        }
+      ],
+      "status": "pending"
+    }
+  ]
+}

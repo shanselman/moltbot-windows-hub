@@ -354,8 +354,20 @@ public sealed partial class ChatPage : Page
         // test flag so Axe scans the real Reactor timeline and composer,
         // not merely the disconnected page shell.
         if (Environment.GetEnvironmentVariable("OPENCLAW_ACCESSIBILITY_TEST_CHAT") == "1"
-            && Environment.GetEnvironmentVariable("OPENCLAW_TRAY_DATA_DIR") is { Length: > 0 })
+            && Environment.GetEnvironmentVariable("OPENCLAW_TRAY_DATA_DIR") is { Length: > 0 } dataDirectory)
         {
+            if (string.Equals(
+                    Environment.GetEnvironmentVariable(
+                        "OPENCLAW_ACCESSIBILITY_TEST_CHAT_FIXTURE"),
+                    AccessibilityHistoryCollisionFixture.FixtureName,
+                    StringComparison.Ordinal))
+            {
+                return _accessibilityTestProvider ??=
+                    AccessibilityHistoryCollisionFixture.Create(
+                        dataDirectory,
+                        action => DispatcherQueue.TryEnqueue(() => action()));
+            }
+
             return _accessibilityTestProvider ??= new AccessibilityChatDataProvider();
         }
 

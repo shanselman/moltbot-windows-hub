@@ -170,7 +170,7 @@ public sealed class ConnectionPageProtocolCompatibilityTests
     public void LocalizedProtocolCopy_UsesExpectedRangeAndCurrentPlaceholders()
     {
         var root = TestRepositoryPaths.GetRepositoryRoot();
-        foreach (var locale in new[] { "en-us", "fr-fr", "nl-nl", "zh-cn", "zh-tw" })
+        foreach (var locale in new[] { "en-us", "fr-fr", "nl-nl", "zh-cn", "zh-tw", "pt-br" })
         {
             var document = XDocument.Load(Path.Combine(
                 root,

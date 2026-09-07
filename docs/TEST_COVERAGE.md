@@ -130,11 +130,15 @@ separate TRX artifact:
 | `tray-tests` | Tray, SetupEngine, Tray Integration |
 | `ui-tests` | FunctionalUI, Tray UI, Axe.Windows accessibility |
 
-All three use the same repository-wide NuGet cache key. This change does not
-introduce per-lane cache keys or cross-job build artifact sharing. Tray settings
-remain isolated through `OPENCLAW_TRAY_DATA_DIR`, integration tests retain
-`OPENCLAW_RUN_INTEGRATION=1`, UI tests install WindowsAppRuntime, and every test
-project continues to publish TRX output.
+The core lane uses a dedicated runner-temp NuGet package directory and a key
+scoped to its complete transitive project graph plus the SDK, NuGet, and imported
+MSBuild manifests that affect restore. It has no fallback to the repository-wide
+cache. Tray, UI, E2E, and release lanes retain the existing repository-wide
+NuGet cache behavior. Only downloaded NuGet packages are cached; build outputs,
+test results, source, SDK installs, and Node packages remain uncached. Tray
+settings remain isolated through `OPENCLAW_TRAY_DATA_DIR`, integration tests
+retain `OPENCLAW_RUN_INTEGRATION=1`, UI tests install WindowsAppRuntime, and
+every test project continues to publish TRX output.
 
 `fast-validation` still runs for every invocation and owns repository hygiene,
 documentation, agent-skill, classifier, gate, workflow, and release-ordering
