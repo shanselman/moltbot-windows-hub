@@ -2323,10 +2323,74 @@ public class SetupStepsTests : IDisposable
         var result = await step.ExecuteAsync(ctx, CancellationToken.None);
 
         Assert.Equal(StepOutcome.FailedTerminal, result.Outcome);
+        Assert.True(result.RequiresRestart);
         Assert.Contains("restarted", result.Message, StringComparison.OrdinalIgnoreCase);
         Assert.Contains("Reboot Windows", result.Message);
         Assert.Equal(1, installCalls);
         Assert.Equal(WslViabilityKind.Installable, ctx.WslViability?.Kind);
+        Assert.Equal(4, commands.Calls.Count);
+    }
+
+    [Fact]
+    public async Task EnsureWslPlatform_PreservesRestartRequiredFromInstaller()
+    {
+        var commands = new FakeCommandRunner(args => args switch
+        {
+            ["--version"] => Ok("WSL version: 2.7.3.0\n"),
+            ["--status"] => new CommandResult(
+                1,
+                "",
+                "Error code: Wsl/WSL_E_WSL_OPTIONAL_COMPONENT_REQUIRED",
+                TimeSpan.Zero,
+                TimedOut: false),
+            _ => Fail($"unexpected args: {string.Join(' ', args)}"),
+        });
+        var ctx = CreateContext(commands: commands);
+        var installerResult = StepResult.RestartRequired("installer requires restart");
+        var step = new EnsureWslPlatformStep((_, _) => Task.FromResult(installerResult));
+
+        var result = await step.ExecuteAsync(ctx, CancellationToken.None);
+
+        Assert.Same(installerResult, result);
+        Assert.Equal(StepOutcome.FailedTerminal, result.Outcome);
+        Assert.True(result.RequiresRestart);
+        Assert.Equal("installer requires restart", result.Message);
+        Assert.Equal(2, commands.Calls.Count);
+    }
+
+    [Fact]
+    public async Task EnsureWslPlatform_RequiresRestartWhenPostInstallStatusLooksLikeFirmwareFailure()
+    {
+        var installed = false;
+        var commands = new FakeCommandRunner(args => args switch
+        {
+            ["--version"] => Ok("WSL version: 2.7.13.0\n"),
+            ["--status"] when !installed => new CommandResult(
+                1,
+                "",
+                "Error code: Wsl/WSL_E_WSL_OPTIONAL_COMPONENT_REQUIRED",
+                TimeSpan.Zero,
+                TimedOut: false),
+            ["--status"] => Ok(
+                "WSL2 is unable to start since virtualization is not enabled on this machine. "
+                + "Please ensure the 'Virtual Machine Platform' optional component is enabled "
+                + "and virtualization is turned on in your computer's firmware settings."),
+            _ => Fail($"unexpected args: {string.Join(' ', args)}"),
+        });
+        var ctx = CreateContext(commands: commands);
+        var step = new EnsureWslPlatformStep((_, _) =>
+        {
+            installed = true;
+            return Task.FromResult(StepResult.Ok("installed"));
+        });
+
+        var result = await step.ExecuteAsync(ctx, CancellationToken.None);
+
+        Assert.Equal(StepOutcome.FailedTerminal, result.Outcome);
+        Assert.True(result.RequiresRestart);
+        Assert.Contains("Reboot Windows", result.Message);
+        Assert.DoesNotContain("firmware", result.Message, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("BIOS", result.Message, StringComparison.OrdinalIgnoreCase);
         Assert.Equal(4, commands.Calls.Count);
     }
 
@@ -4790,6 +4854,19 @@ public class SetupStepsTests : IDisposable
     }
 
     [Fact]
+    public void WindowsNodeContext_IsMissingDistroResult_InspectsBothOutputStreams()
+    {
+        var result = new CommandResult(
+            -1,
+            "There is no distribution with the supplied name.",
+            "wsl: warning: ignored setting",
+            TimeSpan.Zero,
+            TimedOut: false);
+
+        Assert.True(WindowsNodeBootstrapContextStep.IsMissingDistroResult(result));
+    }
+
+    [Fact]
     public async Task WindowsNodeContext_Execute_RunsInWslAsConfiguredUserAndResolvesWorkspace()
     {
         var commands = new FakeCommandRunner(
@@ -5219,10 +5296,103 @@ public class SetupStepsTests : IDisposable
     }
 
     [Fact]
+    public async Task WindowsNodeContext_Rollback_SkipsLegacyCleanupWhenDistroIsAbsent()
+    {
+        var commands = new FakeCommandRunner(
+            arguments =>
+            {
+                Assert.Equal(["--list", "--quiet"], arguments);
+                return Ok("Ubuntu\n");
+            });
+        var ctx = CreateContext(commands: commands);
+
+        await new WindowsNodeBootstrapContextStep().RollbackAsync(ctx, CancellationToken.None);
+
+        Assert.Empty(commands.WslCalls);
+        Assert.Single(commands.Calls);
+    }
+
+    [Fact]
+    public async Task WindowsNodeContext_Rollback_SkipsLegacyCleanupWhenWslHasNoDistributions()
+    {
+        var commands = new FakeCommandRunner(
+            arguments =>
+            {
+                Assert.Equal(["--list", "--quiet"], arguments);
+                return new CommandResult(
+                    1,
+                    "",
+                    "Windows Subsystem for Linux has no installed distributions.\n" +
+                    "Use 'wsl.exe --list --online' to list available distributions and " +
+                    "'wsl.exe --install <Distro>' to install.",
+                    TimeSpan.Zero,
+                    TimedOut: false);
+            });
+        var ctx = CreateContext(commands: commands);
+
+        await new WindowsNodeBootstrapContextStep().RollbackAsync(ctx, CancellationToken.None);
+
+        Assert.Empty(commands.WslCalls);
+        Assert.Single(commands.Calls);
+    }
+
+    [Fact]
+    public async Task WindowsNodeContext_Rollback_SkipsLegacyCleanupWhenWslExeCannotStart()
+    {
+        var commands = new FakeCommandRunner(
+            _ => new CommandResult(
+                -1,
+                "",
+                @"Failed to start process 'C:\Windows\System32\wsl.exe': The system cannot find the file specified.",
+                TimeSpan.Zero,
+                TimedOut: false));
+        var ctx = CreateContext(commands: commands);
+
+        await new WindowsNodeBootstrapContextStep().RollbackAsync(ctx, CancellationToken.None);
+
+        Assert.Empty(commands.WslCalls);
+        Assert.Single(commands.Calls);
+    }
+
+    [Fact]
+    public async Task WindowsNodeContext_Rollback_FailsWhenDistroInspectionIsAmbiguous()
+    {
+        var commands = new FakeCommandRunner(_ => Fail("Access is denied."));
+        var ctx = CreateContext(commands: commands);
+
+        var error = await Assert.ThrowsAsync<InvalidOperationException>(
+            () => new WindowsNodeBootstrapContextStep().RollbackAsync(ctx, CancellationToken.None));
+
+        Assert.Contains(
+            "Could not inspect WSL distributions while cleaning legacy Windows node context",
+            error.Message);
+        Assert.Empty(commands.WslCalls);
+    }
+
+    [Fact]
+    public async Task WindowsNodeContext_Rollback_FailsWhenDistroInspectionTimesOut()
+    {
+        var commands = new FakeCommandRunner(_ => TimedOut());
+        var ctx = CreateContext(commands: commands);
+
+        var error = await Assert.ThrowsAsync<InvalidOperationException>(
+            () => new WindowsNodeBootstrapContextStep().RollbackAsync(ctx, CancellationToken.None));
+
+        Assert.Contains(
+            "Could not inspect WSL distributions while cleaning legacy Windows node context",
+            error.Message);
+        Assert.Empty(commands.WslCalls);
+    }
+
+    [Fact]
     public async Task WindowsNodeContext_Rollback_CleansLegacyEffectiveWorkspaceWithoutStateFile()
     {
         var commands = new FakeCommandRunner(
-            _ => Fail("unexpected RunAsync"),
+            arguments =>
+            {
+                Assert.Equal(["--list", "--quiet"], arguments);
+                return Ok("OpenClawGateway\n");
+            },
             (_, command, _) =>
             {
                 if (command.Contains("getent passwd"))

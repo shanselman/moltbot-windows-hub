@@ -462,12 +462,16 @@ public sealed record StepResult(
     Exception? Error = null,
     LocalAiFailureDetail? Detail = null)
 {
+    public bool RequiresRestart { get; init; }
+
     public static StepResult Ok(string? message = null) => new(StepOutcome.Success, message);
     public static StepResult Skip(string reason) => new(StepOutcome.Skipped, reason);
     public static StepResult Fail(string message, Exception? ex = null, LocalAiFailureDetail? detail = null) =>
         new(StepOutcome.Failed, message, ex, detail);
     public static StepResult Terminal(string message, Exception? ex = null, LocalAiFailureDetail? detail = null) =>
         new(StepOutcome.FailedTerminal, message, ex, detail);
+    public static StepResult RestartRequired(string message) =>
+        new(StepOutcome.FailedTerminal, message) { RequiresRestart = true };
 
     public bool IsSuccess => Outcome is StepOutcome.Success or StepOutcome.Skipped;
 }

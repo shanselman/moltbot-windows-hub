@@ -236,7 +236,7 @@ public sealed class PreflightWslStep : SetupStep
             await process.WaitForExitAsync(ct);
 
             if (process.ExitCode == 3010)
-                return StepResult.Terminal("WSL platform install requires a restart. Reboot Windows, then run setup again.");
+                return StepResult.RestartRequired("WSL platform install requires a restart. Reboot Windows, then run setup again.");
 
             if (process.ExitCode != 0)
             {
@@ -251,7 +251,7 @@ public sealed class PreflightWslStep : SetupStep
                 ct: ct);
             if (probe.ExitCode != 0 || WslViabilityInspector.LooksUnavailable(probe))
             {
-                return StepResult.Terminal(
+                return StepResult.RestartRequired(
                     "WSL platform install completed, but Windows still reports WSL unavailable. Reboot Windows, then run setup again.");
             }
 
@@ -312,9 +312,9 @@ public sealed class EnsureWslPlatformStep : SetupStep
         ctx.WslViability = viability;
         if (viability.Kind == WslViabilityKind.Ready)
             return StepResult.Ok("WSL platform installed and verified.");
-        if (viability.Kind == WslViabilityKind.Installable)
+        if (viability.Kind is WslViabilityKind.Installable or WslViabilityKind.EnvironmentBlocked)
         {
-            return StepResult.Terminal(
+            return StepResult.RestartRequired(
                 "WSL platform installation completed, but Windows must be restarted before WSL is ready. " +
                 "Reboot Windows, then run setup again.");
         }

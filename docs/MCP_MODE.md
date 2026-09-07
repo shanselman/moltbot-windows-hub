@@ -158,7 +158,7 @@ In all cases the user gets a Windows-native agent experience without OpenClaw in
 
 ### Current command surface
 
-The canonical command descriptions live in `OpenClaw.Shared\Mcp\McpToolBridge.CommandDescriptions`; `OpenClaw.WinNode.Cli.Tests\SkillMdDriftTests` keeps `src\OpenClaw.WinNode.Cli\skill.md` in sync with that documented capability surface. The live `tools/list` output may also include newly registered capabilities with fallback descriptions before prose is updated.
+The canonical command descriptions live in `OpenClaw.Shared\Mcp\McpToolBridge.CommandDescriptions`; `OpenClaw.WinNode.Cli.Tests\SkillMdDriftTests` keeps `.agents\skills\winnode\SKILL.md` in sync with that documented capability surface. The live `tools/list` output may also include newly registered capabilities with fallback descriptions before prose is updated.
 
 Gateway/node command groups currently include:
 
@@ -321,7 +321,7 @@ tool discovery plus invocation proof using `winnode` or raw MCP JSON-RPC.
 Every new Windows node command must remain first-class over local MCP. Register
 it in the capability path used by `NodeService`, update
 `McpToolBridge.CommandDescriptions`, update
-`src/OpenClaw.WinNode.Cli/skill.md`, and add focused tests. `SkillMdDriftTests`
+`.agents/skills/winnode/SKILL.md`, and add focused tests. `SkillMdDriftTests`
 guards against drift between capabilities, MCP descriptions, and `winnode` docs.
 
 PR proof for a new command should paste `winnode --list-tools` plus the command

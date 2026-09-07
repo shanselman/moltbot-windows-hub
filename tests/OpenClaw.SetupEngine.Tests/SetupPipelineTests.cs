@@ -75,6 +75,26 @@ public class SetupPipelineTests
     }
 
     [Fact]
+    public async Task RunAsync_RestartRequired_PreservesTypedTerminalReason()
+    {
+        var pipeline = new SetupPipeline([
+            new MockStep(
+                "restart",
+                (_, _) => Task.FromResult(StepResult.RestartRequired("restart Windows"))),
+        ]);
+
+        var result = await pipeline.RunAsync(CreateContext());
+        var (outcome, failedStepId, message, compatibilityFailure, detail) = result;
+
+        Assert.Equal(PipelineOutcome.Failed, outcome);
+        Assert.Equal("restart", failedStepId);
+        Assert.Equal("restart Windows", message);
+        Assert.Null(compatibilityFailure);
+        Assert.Null(detail);
+        Assert.True(result.RequiresRestart);
+    }
+
+    [Fact]
     public void BuildDefaultSteps_IncludesCurrentSetupFlow()
     {
         var steps = SetupStepFactory.BuildDefaultSteps();

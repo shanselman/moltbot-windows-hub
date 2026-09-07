@@ -26,9 +26,12 @@ public class TestWebSocketClient : WebSocketClientBase
     public Exception? LastError { get; private set; }
     public int OnDisposingCallCount { get; private set; }
     public bool AutoReconnectEnabled { get; set; } = true;
+    public TimeSpan? TestConnectAttemptTimeout { get; set; }
 
     protected override int ReceiveBufferSize => 8192;
     protected override string ClientRole => "test";
+    protected override TimeSpan ConnectAttemptTimeout =>
+        TestConnectAttemptTimeout ?? base.ConnectAttemptTimeout;
 
     public TestWebSocketClient(string gatewayUrl, string token, IOpenClawLogger? logger = null)
         : base(gatewayUrl, token, logger) { }
@@ -68,6 +71,7 @@ public class TestWebSocketClient : WebSocketClientBase
         => RaiseStatusChanged(status);
 
     public bool TestIsDisposed => IsDisposed;
+    public bool TestIsConnected => IsConnected;
     public string TestGatewayUrlForDisplay => GatewayUrlForDisplay;
     public string TestToken => _token;
     public IOpenClawLogger TestLogger => _logger;
@@ -327,6 +331,225 @@ public class WebSocketClientBaseTests
         Assert.Contains(_logger.Logs, line => line.Contains("reconnecting in 1", StringComparison.OrdinalIgnoreCase) && line.Contains("ms (attempt 1)", StringComparison.OrdinalIgnoreCase));
 
         client.Dispose();
+    }
+
+    [Fact]
+    public async Task ConnectAsync_WhenUpgradeResponseStalls_TimesOutAndRetries()
+    {
+        using var server = new ControlledUpgradeWebSocketServer(int.MaxValue);
+        using var client = new TestWebSocketClient(server.WebSocketUrl, "token", _logger)
+        {
+            TestConnectAttemptTimeout = TimeSpan.FromMilliseconds(250),
+        };
+        var statuses = new ConcurrentQueue<ConnectionStatus>();
+        client.StatusChanged += (_, status) => statuses.Enqueue(status);
+
+        await client.ConnectAsync().WaitAsync(TimeSpan.FromSeconds(2));
+        await server.FirstStalledClientClosed.WaitAsync(TimeSpan.FromSeconds(2));
+        await WaitForConditionAsync(
+            () => server.RequestCount >= 2,
+            TimeSpan.FromSeconds(3));
+
+        Assert.Equal(0, client.OnConnectedCallCount);
+        Assert.Contains(ConnectionStatus.Error, statuses);
+        Assert.True(statuses.Count(status => status == ConnectionStatus.Connecting) >= 2);
+        Assert.Contains(
+            _logger.Logs,
+            line => line.Contains(
+                "test connect timed out after",
+                StringComparison.OrdinalIgnoreCase));
+    }
+
+    [Fact]
+    public async Task ConnectAsync_DisposeDuringStalledUpgrade_IsShutdownNotTimeout()
+    {
+        using var server = new ControlledUpgradeWebSocketServer(int.MaxValue);
+        var client = new TestWebSocketClient(server.WebSocketUrl, "token", _logger)
+        {
+            TestConnectAttemptTimeout = TimeSpan.FromSeconds(10),
+        };
+        var statuses = new ConcurrentQueue<ConnectionStatus>();
+        client.StatusChanged += (_, status) => statuses.Enqueue(status);
+
+        var connect = client.ConnectAsync();
+        await server.FirstRequestReceived.WaitAsync(TimeSpan.FromSeconds(2));
+
+        client.Dispose();
+        await connect.WaitAsync(TimeSpan.FromSeconds(2));
+        await server.FirstStalledClientClosed.WaitAsync(TimeSpan.FromSeconds(2));
+        await Task.Delay(250);
+
+        Assert.DoesNotContain(ConnectionStatus.Error, statuses);
+        Assert.Equal(1, server.RequestCount);
+        Assert.DoesNotContain(
+            _logger.Logs,
+            line => line.Contains("connect timed out", StringComparison.OrdinalIgnoreCase));
+        Assert.DoesNotContain(
+            _logger.Logs,
+            line => line.Contains("reconnecting in", StringComparison.OrdinalIgnoreCase));
+    }
+
+    [Fact]
+    public async Task ConnectAsync_TimedOutRetry_DoesNotDisposeNewerConnectionDuringBackoff()
+    {
+        using var server = new ControlledUpgradeWebSocketServer(stalledUpgradeCount: 1);
+        using var client = new TestWebSocketClient(server.WebSocketUrl, "token", _logger)
+        {
+            TestConnectAttemptTimeout = TimeSpan.FromMilliseconds(250),
+        };
+        var statuses = new ConcurrentQueue<ConnectionStatus>();
+        client.StatusChanged += (_, status) => statuses.Enqueue(status);
+
+        var timedOutConnect = client.ConnectAsync();
+        await server.FirstRequestReceived.WaitAsync(TimeSpan.FromSeconds(2));
+        await timedOutConnect.WaitAsync(TimeSpan.FromSeconds(2));
+        var errorStatusesAfterTimeout =
+            statuses.Count(status => status == ConnectionStatus.Error);
+        Assert.True(errorStatusesAfterTimeout >= 1);
+
+        var currentConnect = client.ConnectAsync();
+        await server.UpgradeCompleted.WaitAsync(TimeSpan.FromSeconds(2));
+        await currentConnect.WaitAsync(TimeSpan.FromSeconds(2));
+        await Task.Delay(TimeSpan.FromMilliseconds(1500));
+
+        Assert.True(client.TestIsConnected);
+        Assert.Equal(1, client.OnConnectedCallCount);
+        Assert.Equal(2, server.RequestCount);
+        Assert.Equal(
+            errorStatusesAfterTimeout,
+            statuses.Count(status => status == ConnectionStatus.Error));
+
+        await server.SendTextAsync("current-socket-message");
+        await WaitForConditionAsync(
+            () => client.ProcessedMessages.Contains("current-socket-message"),
+            TimeSpan.FromSeconds(2));
+    }
+
+    [Fact]
+    public async Task ConnectAsync_TimedOutRetry_DoesNotReplaceNewerConnectionAfterAuthorization()
+    {
+        using var server = new ControlledUpgradeWebSocketServer(stalledUpgradeCount: 1);
+        using var client = new TestWebSocketClient(server.WebSocketUrl, "token", _logger)
+        {
+            TestConnectAttemptTimeout = TimeSpan.FromMilliseconds(250),
+        };
+        var authorizationEntered =
+            new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var releaseAuthorization =
+            new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        client.ReconnectAuthorizationAsync = async cancellationToken =>
+        {
+            authorizationEntered.TrySetResult();
+            await releaseAuthorization.Task.WaitAsync(cancellationToken);
+            return ReconnectAuthorizationResult.AllowedResult;
+        };
+
+        await client.ConnectAsync().WaitAsync(TimeSpan.FromSeconds(2));
+        await authorizationEntered.Task.WaitAsync(TimeSpan.FromSeconds(3));
+
+        var currentConnect = client.ConnectAsync();
+        await server.UpgradeCompleted.WaitAsync(TimeSpan.FromSeconds(2));
+        await currentConnect.WaitAsync(TimeSpan.FromSeconds(2));
+
+        releaseAuthorization.TrySetResult();
+        await Task.Delay(TimeSpan.FromMilliseconds(500));
+
+        Assert.True(client.TestIsConnected);
+        Assert.Equal(1, client.OnConnectedCallCount);
+        Assert.Equal(2, server.RequestCount);
+
+        await server.SendTextAsync("authorized-current-socket-message");
+        await WaitForConditionAsync(
+            () => client.ProcessedMessages.Contains("authorized-current-socket-message"),
+            TimeSpan.FromSeconds(2));
+    }
+
+    [Fact]
+    public async Task ConnectAsync_StaleAuthorizationDenial_DoesNotFailNewerConnection()
+    {
+        using var server = new ControlledUpgradeWebSocketServer(stalledUpgradeCount: 1);
+        using var client = new TestWebSocketClient(server.WebSocketUrl, "token", _logger)
+        {
+            TestConnectAttemptTimeout = TimeSpan.FromMilliseconds(250),
+        };
+        var statuses = new ConcurrentQueue<ConnectionStatus>();
+        client.StatusChanged += (_, status) => statuses.Enqueue(status);
+        var authorizationEntered =
+            new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var authorizationResult =
+            new TaskCompletionSource<ReconnectAuthorizationResult>(
+                TaskCreationOptions.RunContinuationsAsynchronously);
+        client.ReconnectAuthorizationAsync = async cancellationToken =>
+        {
+            authorizationEntered.TrySetResult();
+            return await authorizationResult.Task.WaitAsync(cancellationToken);
+        };
+
+        await client.ConnectAsync().WaitAsync(TimeSpan.FromSeconds(2));
+        await authorizationEntered.Task.WaitAsync(TimeSpan.FromSeconds(3));
+        var errorsAfterTimeout =
+            statuses.Count(status => status == ConnectionStatus.Error);
+
+        var currentConnect = client.ConnectAsync();
+        await server.UpgradeCompleted.WaitAsync(TimeSpan.FromSeconds(2));
+        await currentConnect.WaitAsync(TimeSpan.FromSeconds(2));
+
+        authorizationResult.TrySetResult(new ReconnectAuthorizationResult(
+            false,
+            GatewayErrorKind.LocalPortConflict,
+            "stale denial"));
+        await Task.Delay(TimeSpan.FromMilliseconds(500));
+
+        Assert.True(client.TestIsConnected);
+        Assert.Equal(1, client.OnConnectedCallCount);
+        Assert.Equal(2, server.RequestCount);
+        Assert.Equal(
+            errorsAfterTimeout,
+            statuses.Count(status => status == ConnectionStatus.Error));
+        Assert.DoesNotContain(
+            _logger.Logs,
+            line => line.Contains(
+                "reconnect blocked by endpoint authorization policy",
+                StringComparison.OrdinalIgnoreCase));
+
+        await server.SendTextAsync("denied-current-socket-message");
+        await WaitForConditionAsync(
+            () => client.ProcessedMessages.Contains("denied-current-socket-message"),
+            TimeSpan.FromSeconds(2));
+    }
+
+    [Fact]
+    public async Task ConnectAsync_NewerFailedAttempt_DoesNotAbandonActiveReconnectLoop()
+    {
+        using var server = new ControlledUpgradeWebSocketServer(
+            ControlledUpgradeBehavior.Stall,
+            ControlledUpgradeBehavior.Stall,
+            ControlledUpgradeBehavior.Close,
+            ControlledUpgradeBehavior.Upgrade);
+        using var client = new TestWebSocketClient(server.WebSocketUrl, "token", _logger)
+        {
+            TestConnectAttemptTimeout = TimeSpan.FromMilliseconds(250),
+        };
+
+        await client.ConnectAsync().WaitAsync(TimeSpan.FromSeconds(2));
+        await WaitForConditionAsync(
+            () => server.RequestCount >= 2,
+            TimeSpan.FromSeconds(3));
+
+        await client.ConnectAsync().WaitAsync(TimeSpan.FromSeconds(2));
+
+        await server.UpgradeCompleted.WaitAsync(TimeSpan.FromSeconds(5));
+        await WaitForConditionAsync(
+            () => client.TestIsConnected,
+            TimeSpan.FromSeconds(2));
+
+        Assert.Equal(1, client.OnConnectedCallCount);
+        Assert.Equal(4, server.RequestCount);
+
+        await server.SendTextAsync("recovered-after-newer-failure");
+        await WaitForConditionAsync(
+            () => client.ProcessedMessages.Contains("recovered-after-newer-failure"),
+            TimeSpan.FromSeconds(2));
     }
 
     [Fact]
@@ -867,6 +1090,244 @@ internal sealed class LoopbackWebSocketServer : IDisposable
         {
             listener.Stop();
         }
+    }
+}
+
+internal enum ControlledUpgradeBehavior
+{
+    Stall,
+    Close,
+    Upgrade,
+}
+
+internal sealed class ControlledUpgradeWebSocketServer : IDisposable
+{
+    private readonly TcpListener _listener;
+    private readonly CancellationTokenSource _cts = new();
+    private readonly Func<int, ControlledUpgradeBehavior> _behaviorForRequest;
+    private readonly object _connectionsLock = new();
+    private readonly List<TcpClient> _clients = new();
+    private readonly List<WebSocket> _webSockets = new();
+    private readonly TaskCompletionSource _firstRequestReceived =
+        new(TaskCreationOptions.RunContinuationsAsynchronously);
+    private readonly TaskCompletionSource _firstStalledClientClosed =
+        new(TaskCreationOptions.RunContinuationsAsynchronously);
+    private readonly TaskCompletionSource<WebSocket> _upgradeCompleted =
+        new(TaskCreationOptions.RunContinuationsAsynchronously);
+    private readonly Task _acceptLoop;
+    private int _requestCount;
+
+    public string WebSocketUrl { get; }
+    public int RequestCount => Volatile.Read(ref _requestCount);
+    public Task FirstRequestReceived => _firstRequestReceived.Task;
+    public Task FirstStalledClientClosed => _firstStalledClientClosed.Task;
+    public Task UpgradeCompleted => _upgradeCompleted.Task;
+
+    public ControlledUpgradeWebSocketServer(int stalledUpgradeCount)
+        : this(requestNumber =>
+            requestNumber <= stalledUpgradeCount
+                ? ControlledUpgradeBehavior.Stall
+                : ControlledUpgradeBehavior.Upgrade)
+    {
+    }
+
+    public ControlledUpgradeWebSocketServer(
+        params ControlledUpgradeBehavior[] behaviors)
+        : this(CreateBehaviorSelector(behaviors))
+    {
+    }
+
+    private static Func<int, ControlledUpgradeBehavior> CreateBehaviorSelector(
+        ControlledUpgradeBehavior[] behaviors)
+    {
+        if (behaviors.Length == 0)
+            throw new ArgumentException("At least one upgrade behavior is required.", nameof(behaviors));
+
+        return requestNumber =>
+            requestNumber <= behaviors.Length
+                ? behaviors[requestNumber - 1]
+                : behaviors[^1];
+    }
+
+    private ControlledUpgradeWebSocketServer(
+        Func<int, ControlledUpgradeBehavior> behaviorForRequest)
+    {
+        _behaviorForRequest = behaviorForRequest;
+        _listener = new TcpListener(IPAddress.Loopback, 0);
+        _listener.Start();
+        var port = ((IPEndPoint)_listener.LocalEndpoint).Port;
+        WebSocketUrl = $"ws://127.0.0.1:{port}/";
+        _acceptLoop = Task.Run(AcceptLoopAsync);
+    }
+
+    private async Task AcceptLoopAsync()
+    {
+        while (!_cts.Token.IsCancellationRequested)
+        {
+            TcpClient client;
+            try
+            {
+                client = await _listener.AcceptTcpClientAsync(_cts.Token);
+            }
+            catch (OperationCanceledException)
+            {
+                return;
+            }
+            catch (SocketException) when (_cts.Token.IsCancellationRequested)
+            {
+                return;
+            }
+
+            lock (_connectionsLock)
+            {
+                _clients.Add(client);
+            }
+            _ = HandleClientAsync(client);
+        }
+    }
+
+    private async Task HandleClientAsync(TcpClient client)
+    {
+        WebSocket? webSocket = null;
+        var requestNumber = 0;
+        var stalled = false;
+        try
+        {
+            var stream = client.GetStream();
+            var request = await ReadHttpHeadersAsync(stream, _cts.Token);
+            requestNumber = Interlocked.Increment(ref _requestCount);
+            if (requestNumber == 1)
+            {
+                _firstRequestReceived.TrySetResult();
+            }
+
+            var behavior = _behaviorForRequest(requestNumber);
+            if (behavior == ControlledUpgradeBehavior.Close)
+            {
+                return;
+            }
+
+            if (behavior == ControlledUpgradeBehavior.Stall)
+            {
+                stalled = true;
+                var buffer = new byte[1];
+                while (await stream.ReadAsync(buffer, _cts.Token) > 0)
+                {
+                }
+                return;
+            }
+
+            var key = request
+                .Split("\r\n", StringSplitOptions.RemoveEmptyEntries)
+                .First(line => line.StartsWith(
+                    "Sec-WebSocket-Key:",
+                    StringComparison.OrdinalIgnoreCase))
+                .Split(':', 2)[1]
+                .Trim();
+            var accept = Convert.ToBase64String(
+                SHA1.HashData(
+                    Encoding.ASCII.GetBytes(
+                        $"{key}258EAFA5-E914-47DA-95CA-C5AB0DC85B11")));
+            var response = Encoding.ASCII.GetBytes(
+                "HTTP/1.1 101 Switching Protocols\r\n" +
+                "Upgrade: websocket\r\n" +
+                "Connection: Upgrade\r\n" +
+                $"Sec-WebSocket-Accept: {accept}\r\n\r\n");
+            await stream.WriteAsync(response, _cts.Token);
+
+            webSocket = WebSocket.CreateFromStream(
+                stream,
+                isServer: true,
+                subProtocol: null,
+                keepAliveInterval: TimeSpan.FromSeconds(30));
+            lock (_connectionsLock)
+            {
+                _webSockets.Add(webSocket);
+            }
+            _upgradeCompleted.TrySetResult(webSocket);
+            await Task.Delay(Timeout.InfiniteTimeSpan, _cts.Token);
+        }
+        catch (OperationCanceledException)
+        {
+        }
+        catch (IOException)
+        {
+        }
+        catch (SocketException)
+        {
+        }
+        catch (ObjectDisposedException)
+        {
+        }
+        finally
+        {
+            if (requestNumber == 1 && stalled)
+            {
+                _firstStalledClientClosed.TrySetResult();
+            }
+
+            try { webSocket?.Dispose(); } catch { }
+            try { client.Dispose(); } catch { }
+        }
+    }
+
+    private static async Task<string> ReadHttpHeadersAsync(
+        NetworkStream stream,
+        CancellationToken cancellationToken)
+    {
+        const int maxHeaderBytes = 16 * 1024;
+        var bytes = new List<byte>();
+        var next = new byte[1];
+        while (bytes.Count < maxHeaderBytes)
+        {
+            var read = await stream.ReadAsync(next, cancellationToken);
+            if (read == 0)
+                throw new EndOfStreamException("WebSocket handshake ended before the HTTP headers.");
+
+            bytes.Add(next[0]);
+            var count = bytes.Count;
+            if (count >= 4 &&
+                bytes[count - 4] == '\r' &&
+                bytes[count - 3] == '\n' &&
+                bytes[count - 2] == '\r' &&
+                bytes[count - 1] == '\n')
+            {
+                return Encoding.ASCII.GetString(bytes.ToArray());
+            }
+        }
+
+        throw new InvalidOperationException("WebSocket handshake headers exceeded the test limit.");
+    }
+
+    public async Task SendTextAsync(
+        string message,
+        CancellationToken cancellationToken = default)
+    {
+        var socket = await _upgradeCompleted.Task.WaitAsync(cancellationToken);
+        await socket.SendAsync(
+            Encoding.UTF8.GetBytes(message),
+            WebSocketMessageType.Text,
+            endOfMessage: true,
+            cancellationToken);
+    }
+
+    public void Dispose()
+    {
+        _cts.Cancel();
+        try { _listener.Stop(); } catch { }
+        lock (_connectionsLock)
+        {
+            foreach (var socket in _webSockets)
+            {
+                try { socket.Dispose(); } catch { }
+            }
+            foreach (var client in _clients)
+            {
+                try { client.Dispose(); } catch { }
+            }
+        }
+        try { _acceptLoop.Wait(TimeSpan.FromSeconds(1)); } catch { }
+        _cts.Dispose();
     }
 }
 

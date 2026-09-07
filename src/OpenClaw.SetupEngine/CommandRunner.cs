@@ -124,6 +124,16 @@ public sealed class CommandRunner : ICommandRunner
                 psi.Environment[key] = value;
         }
 
+        if (IsWslExecutable(executable))
+        {
+            // Redirected wsl.exe output defaults to UTF-16LE unless WSL_UTF8=1.
+            // Force the documented UTF-8 mode so every WSL invocation has one
+            // deterministic redirected-output encoding.
+            psi.Environment["WSL_UTF8"] = "1";
+            psi.StandardOutputEncoding = Encoding.UTF8;
+            psi.StandardErrorEncoding = Encoding.UTF8;
+        }
+
         using var process = new Process { StartInfo = psi };
         var stdout = new BoundedOutputBuffer(MaxCapturedStreamChars);
         var stderr = new BoundedOutputBuffer(MaxCapturedStreamChars);
@@ -241,6 +251,9 @@ public sealed class CommandRunner : ICommandRunner
 
         return remaining < s_outputDrainCap ? remaining : s_outputDrainCap;
     }
+
+    internal static bool IsWslExecutable(string executable) =>
+        string.Equals(Path.GetFileName(executable), "wsl.exe", StringComparison.OrdinalIgnoreCase);
 
     /// <summary>
     /// Run a command inside a WSL distro.
