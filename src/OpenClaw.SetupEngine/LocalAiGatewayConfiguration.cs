@@ -195,6 +195,9 @@ public sealed class ConfigureLocalAiGatewayStep : SetupStep
         if (ctx.LocalAiGatewayPriorState is not { } prior)
             return;
 
+        if (ctx.LocalAiRecoveryProviderTransition)
+            ctx.LocalAiRecoveryReceiptRollbackAllowed = false;
+
         CommandResult currentResult = await CaptureStateAsync(ctx, ct);
         if (currentResult.ExitCode != 0 || currentResult.TimedOut)
         {
@@ -230,6 +233,7 @@ public sealed class ConfigureLocalAiGatewayStep : SetupStep
             (!current.PrimaryModelExisted ||
                 JsonEquals(current.PrimaryModelJson!, prior.PrimaryModelJson!)))
         {
+            ctx.LocalAiRecoveryReceiptRollbackAllowed = true;
             return;
         }
 
@@ -273,6 +277,8 @@ public sealed class ConfigureLocalAiGatewayStep : SetupStep
                 ctx.Logger.Warn("Restoring the previous Local AI gateway settings failed.");
                 return;
             }
+            if (recoveryOriginal is not null)
+                ctx.LocalAiRecoveryReceiptRollbackAllowed = true;
         }
 
         var unset = new List<string>(2);
