@@ -33,7 +33,9 @@
           Command="&quot;$(OpenClawVsWherePath)&quot; -latest -products * -requires Microsoft.VisualStudio.Component.VC.Redist.14.Latest -property installationPath"
           ConsoleToMSBuild="true"
           IgnoreExitCode="true"
-          StandardOutputImportance="low">
+          IgnoreStandardErrorWarningFormat="true"
+          StandardOutputImportance="low"
+          StandardErrorImportance="low">
       <Output TaskParameter="ConsoleOutput" PropertyName="OpenClawVsInstallRoot" />
     </Exec>
 
@@ -46,7 +48,9 @@
       version the install treats as current. Using it keeps the glob to one
       version directory even when an install carries several (for example a
       14.29 v142 redist beside the current one). The wildcard fallback keeps
-      installs without that file working.
+      installs without that file working, and installs whose current version
+      directory lacks this architecture (an ARM64 redist that only exists
+      under an older version, for example).
 
       The Microsoft.VC*.CRT folder name carries the toolset major version
       (Microsoft.VC143.CRT for VS 2022, Microsoft.VC145.CRT for VS 18); there is
@@ -56,7 +60,7 @@
     <PropertyGroup Condition="'$(OpenClawVsInstallRoot)' != ''">
       <_OpenClawVCRedistVersionFile>$(OpenClawVsInstallRoot)\VC\Auxiliary\Build\Microsoft.VCRedistVersion.default.txt</_OpenClawVCRedistVersionFile>
       <OpenClawVCRedistVersion Condition="Exists('$(_OpenClawVCRedistVersionFile)')">$([System.IO.File]::ReadAllText('$(_OpenClawVCRedistVersionFile)').Trim())</OpenClawVCRedistVersion>
-      <OpenClawVCRedistVersion Condition="'$(OpenClawVCRedistVersion)' == '' or !Exists('$(OpenClawVsInstallRoot)\VC\Redist\MSVC\$(OpenClawVCRedistVersion)')">*</OpenClawVCRedistVersion>
+      <OpenClawVCRedistVersion Condition="'$(OpenClawVCRedistVersion)' == '' or !Exists('$(OpenClawVsInstallRoot)\VC\Redist\MSVC\$(OpenClawVCRedistVersion)\$(OpenClawVCRuntimeArch)')">*</OpenClawVCRedistVersion>
       <OpenClawVCRedistCrtDir>$(OpenClawVsInstallRoot)\VC\Redist\MSVC\$(OpenClawVCRedistVersion)\$(OpenClawVCRuntimeArch)\Microsoft.VC*.CRT\</OpenClawVCRedistCrtDir>
     </PropertyGroup>
 

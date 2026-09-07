@@ -114,7 +114,7 @@ public sealed class NativeSpeechStackRuntimeTests
         try
         {
             var handle = LoadLibraryExW(library, IntPtr.Zero, LoadLibrarySearchDllLoadDir | LoadLibrarySearchDefaultDirs);
-            var error = Marshal.GetLastWin32Error();
+            var error = Marshal.GetLastPInvokeError();
             if (handle == IntPtr.Zero)
             {
                 var msvcp = Path.Combine(runtimeDirectory, "msvcp140.dll");
@@ -138,10 +138,18 @@ public sealed class NativeSpeechStackRuntimeTests
 
     private static string? FindOnnxRuntime(string baseDirectory)
     {
+        // A RID-specific build places the native asset at the root. A no-RID
+        // build copies every runtimes/<rid>/native folder, so pick the one that
+        // matches this process rather than the first one that exists.
+        var rid = RuntimeInformation.ProcessArchitecture switch
+        {
+            Architecture.Arm64 => "win-arm64",
+            _ => "win-x64",
+        };
         var candidates = new[]
         {
             Path.Combine(baseDirectory, "onnxruntime.dll"),
-            Path.Combine(baseDirectory, "runtimes", "win-x64", "native", "onnxruntime.dll"),
+            Path.Combine(baseDirectory, "runtimes", rid, "native", "onnxruntime.dll"),
         };
         return candidates.FirstOrDefault(File.Exists);
     }

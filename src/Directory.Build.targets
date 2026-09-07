@@ -1,6 +1,6 @@
 <Project>
 
-  <Import Project="$(MSBuildThisFileDirectory)..\Directory.Build.targets" />
+  <Import Project="..\Directory.Build.targets" />
 
   <!--
     App-local Visual C++ runtime for the tray and the other src projects.
