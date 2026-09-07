@@ -226,7 +226,8 @@ public sealed partial class ProgressPage : Page
                     config.LogPath,
                     errorMsg,
                     result.CompatibilityFailure,
-                    result.Detail);
+                    result.Detail,
+                    restartRequired: result.RequiresRestart);
             }
         }
         catch (OperationCanceledException) when (cts.IsCancellationRequested)

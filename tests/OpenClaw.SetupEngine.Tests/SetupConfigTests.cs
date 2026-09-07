@@ -654,6 +654,20 @@ public class SetupConfigTests : IDisposable
     }
 
     [Fact]
+    public void StepResult_RestartRequired_IsTypedTerminal()
+    {
+        var result = StepResult.RestartRequired("restart Windows");
+        var (outcome, message, error, detail) = result;
+
+        Assert.False(result.IsSuccess);
+        Assert.Equal(StepOutcome.FailedTerminal, outcome);
+        Assert.Equal("restart Windows", message);
+        Assert.Null(error);
+        Assert.Null(detail);
+        Assert.True(result.RequiresRestart);
+    }
+
+    [Fact]
     public void PipelineResult_ExitCodes()
     {
         Assert.Equal(0, new PipelineResult(PipelineOutcome.Success).ExitCode);
