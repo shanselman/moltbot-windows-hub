@@ -26,6 +26,7 @@ internal interface IWindowManager
     void ShowHub(string? navigateTo = null, bool activate = true);
     void ShowConnectionStatus();
     Task ShowOnboardingAsync();
+    Task ShowLocalAiSetupAsync();
     Task ShowGatewayWizardAsync();
     void CloseSetup();
     void ApplyThemeToOpenWindows();

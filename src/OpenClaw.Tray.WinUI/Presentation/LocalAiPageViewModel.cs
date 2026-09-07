@@ -188,7 +188,7 @@ internal sealed class LocalAiPageViewModel : INavigationAware, IDisposable, INot
     public Task<bool> StopAsync() => RunRuntimeActionAsync(CanStop, _runtime.StopAsync);
     public Task<bool> RestartAsync() => RunRuntimeActionAsync(CanRestart, _runtime.RestartAsync);
     public bool OpenLogs() => RunCommand(CanOpenLogs, _appCommands.OpenLocalAiLogs);
-    public bool RetrySetup() => RunCommand(CanRetrySetup, _appCommands.ShowOnboarding);
+    public bool RetrySetup() => RunCommand(CanRetrySetup, _appCommands.ShowLocalAiSetup);
     public bool ChangeModel() => RunCommand(CanChangeModel, _appCommands.ShowOnboarding);
     public bool RepairConnection() => RunCommand(CanRepairConnection, _appCommands.Reconnect);
     public bool OpenChat() => RunCommand(CanOpenChat, _appCommands.ShowChat);

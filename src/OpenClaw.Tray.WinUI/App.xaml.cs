@@ -3916,6 +3916,7 @@ public partial class App : Application, OpenClawTray.Services.IAppCommands, IPer
     void IAppCommands.ShowChat() => ShowChatWindow();
     void IAppCommands.CheckForUpdates() => _ = _updateCoordinator!.CheckForUpdatesUserInitiatedAsync();
     void IAppCommands.ShowOnboarding() => _ = ShowOnboardingAsync();
+    void IAppCommands.ShowLocalAiSetup() => _ = _windowManager?.ShowLocalAiSetupAsync();
     void IAppCommands.OpenLocalAiLogs() =>
         OpenFolder(new LocalAiPaths(AppIdentity.ResolveSetupLocalDataDirectory()).LogsDirectory, "Local AI logs");
     void IAppCommands.ShowGatewayWizard() => _ = ShowGatewayWizardAsync();

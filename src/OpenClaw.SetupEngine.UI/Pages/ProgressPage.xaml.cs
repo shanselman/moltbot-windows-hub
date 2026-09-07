@@ -14,6 +14,7 @@ namespace OpenClaw.SetupEngine.UI.Pages;
 internal sealed record ProgressPageArgs(
     SetupConfig Config,
     bool ShowMilestoneOnly,
+    bool LocalAiRecoveryOnly,
     string DataDir,
     string LocalDataDir);
 
@@ -29,6 +30,8 @@ public sealed partial class ProgressPage : Page
     private string _dataDir = null!;
     private string _localDataDir = null!;
     private Uri? _tailscaleAuthorizationUri;
+    private HashSet<string> _activeStepIds = [];
+    private bool _localAiRecoveryOnly;
     private const int MaxLogLines = 200;
 
     internal bool IsPipelineRunning => _runCts != null && !_pipelineFinished;
@@ -50,7 +53,7 @@ public sealed partial class ProgressPage : Page
         ("local-ai-wsl", "Verify Local AI access", ["verify-local-ai-wsl"]),
         ("tailscale-auth", "Connect Tailscale", ["install-tailscale", "authorize-tailscale"]),
         ("configure", "Configure gateway", ["configure-gateway", "configure-local-ai-gateway", "install-service"]),
-        ("start", "Start gateway", ["start-gateway", "mint-token"]),
+        ("start", "Start gateway", ["start-gateway", "restart-gateway", "mint-token"]),
         ("tailscale-serve", "Publish with Tailscale", ["finalize-tailscale-serve"]),
         ("pairing", "Pair device", ["pair-operator", "pair-node", "verify-e2e"]),
         ("finish", "Finish setup", ["run-wizard", "start-keepalive"]),
@@ -68,6 +71,10 @@ public sealed partial class ProgressPage : Page
         _config = args?.Config ?? e.Parameter as SetupConfig ?? new SetupConfig();
         _dataDir = args?.DataDir ?? SetupContext.ResolveDataDir();
         _localDataDir = args?.LocalDataDir ?? SetupContext.ResolveLocalDataDir();
+        _localAiRecoveryOnly = args?.LocalAiRecoveryOnly == true;
+        _activeStepIds = BuildSteps(_config, _localAiRecoveryOnly)
+            .Select(step => step.Id)
+            .ToHashSet(StringComparer.Ordinal);
         TitleText.Text = _config.LocalAi.Enabled ? "Setting up OpenClaw and Local AI" : "Setting up OpenClaw";
         SubtitleText.Text = _config.LocalAi.Enabled
             ? "Preparing the gateway and Local AI"
@@ -140,7 +147,8 @@ public sealed partial class ProgressPage : Page
                 showDetailProgress: groupId is "local-ai-engine" or "local-ai-model");
             _rows[groupId] = row;
             StepsPanel.Children.Add(row.Element);
-            if (_config?.LocalAi.Enabled != true && IsLocalAiOnlyGroup(stepIds))
+            if (!_activeStepIds.Overlaps(stepIds) ||
+                (_config?.LocalAi.Enabled != true && IsLocalAiOnlyGroup(stepIds)))
                 row.Element.Visibility = Visibility.Collapsed;
         }
     }
@@ -188,7 +196,7 @@ public sealed partial class ProgressPage : Page
             ctx.ExternalAuthorizationPresenter = new ProgressAuthorizationPresenter(DispatcherQueue, ShowTailscaleAuthorization);
             ctx.DetailProgress = new DirectProgress<SetupDetailProgressEvent>(OnDetailProgress);
 
-            var steps = BuildSteps(config);
+            var steps = BuildSteps(config, _localAiRecoveryOnly);
             _pipeline = new SetupPipeline(steps);
             _pipeline.StepProgress += OnStepProgress;
 
@@ -298,7 +306,7 @@ public sealed partial class ProgressPage : Page
                 _completedSteps.Add(e.StepId);
 
                 // If all steps in this group are done, mark group done
-                if (group.StepIds.All(id => _completedSteps.Contains(id)))
+                if (group.StepIds.Where(_activeStepIds.Contains).All(id => _completedSteps.Contains(id)))
                     row.SetStatus(StepStatus.Done);
             }
         });
@@ -379,8 +387,10 @@ public sealed partial class ProgressPage : Page
         MilestoneStatusText.Text = "Another setup task is still active. Wait for it to finish, then start OpenClaw onboard.";
     }
 
-    private static List<SetupStep> BuildSteps(SetupConfig config)
-        => SetupStepFactory.BuildDefaultSteps()
+    private static List<SetupStep> BuildSteps(SetupConfig config, bool localAiRecoveryOnly = false)
+        => (localAiRecoveryOnly
+                ? SetupStepFactory.BuildLocalAiRecoverySteps()
+                : SetupStepFactory.BuildDefaultSteps())
             .Where(step => step is not RunGatewayWizardStep)
             .Where(step => config.SkipWizard || step is not WindowsNodeBootstrapContextStep)
             .ToList();

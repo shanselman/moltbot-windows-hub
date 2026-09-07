@@ -147,6 +147,106 @@ public class SetupPipelineTests
     }
 
     [Fact]
+    public void BuildLocalAiRecoverySteps_PreservesExistingWslGateway()
+    {
+        var steps = SetupStepFactory.BuildLocalAiRecoverySteps();
+
+        Assert.DoesNotContain(steps, step => step is ValidateDistroInstallPathStep);
+        Assert.Equal(2, steps.Count(step => step is ValidateLocalAiRecoveryGatewayStep));
+        Assert.Contains(steps, step => step is PreserveLocalAiRecoveryGatewayStep);
+        Assert.DoesNotContain(steps, step => step is CleanupStaleDistroStep);
+        Assert.DoesNotContain(steps, step => step is CleanupStaleGatewayStep);
+        Assert.DoesNotContain(steps, step => step is CreateWslInstanceStep);
+        Assert.DoesNotContain(steps, step => step is ConfigureWslInstanceStep);
+        Assert.DoesNotContain(steps, step => step is InstallCliStep);
+        Assert.Contains(steps, step => step is AcquireLocalAiRuntimeStep);
+        Assert.Contains(steps, step => step is AcquireLocalAiModelStep);
+        Assert.Contains(steps, step => step is VerifyLocalAiWslStep);
+        Assert.IsType<ConfigureLocalAiGatewayStep>(steps[^2]);
+        Assert.IsType<RestartGatewayStep>(steps[^1]);
+        Assert.True(
+            steps.FindIndex(step => step is ValidateLocalAiRecoveryGatewayStep) <
+            steps.FindIndex(step => step is AcquireLocalAiRuntimeStep));
+        Assert.True(
+            steps.FindIndex(step => step is PreserveLocalAiRecoveryGatewayStep) <
+            steps.FindIndex(step => step is ConfigureLocalAiWslNetworkingStep));
+        Assert.IsType<ValidateLocalAiRecoveryGatewayStep>(
+            steps[steps.FindIndex(step => step is ConfigureLocalAiWslNetworkingStep) - 1]);
+    }
+
+    [Fact]
+    public async Task ValidateLocalAiRecoveryGateway_MissingDistro_BlocksBeforeRecovery()
+    {
+        var context = CreateContext(LocalAiRecoveryConfig());
+        var step = new ValidateLocalAiRecoveryGatewayStep(
+            (_, _, _, _) => ExistingLocalAiGateway(hasDistro: false, appOwned: false),
+            _ => [ManagedGatewayRecord()]);
+
+        var result = await step.ExecuteAsync(context, CancellationToken.None);
+
+        Assert.Equal(StepOutcome.FailedTerminal, result.Outcome);
+        Assert.Contains("run full setup", result.Message, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public async Task ValidateLocalAiRecoveryGateway_AppOwnedDistro_AllowsRecovery()
+    {
+        var context = CreateContext(LocalAiRecoveryConfig());
+        var step = new ValidateLocalAiRecoveryGatewayStep(
+            (_, _, _, _) => ExistingLocalAiGateway(hasDistro: true, appOwned: true),
+            _ => [ManagedGatewayRecord()]);
+
+        var result = await step.ExecuteAsync(context, CancellationToken.None);
+
+        Assert.Equal(StepOutcome.Success, result.Outcome);
+    }
+
+    [Fact]
+    public async Task ValidateLocalAiRecoveryGateway_OwnerDrift_BlocksBeforeRecovery()
+    {
+        var context = CreateContext(LocalAiRecoveryConfig());
+        var step = new ValidateLocalAiRecoveryGatewayStep(
+            (_, _, _, _) => ExistingLocalAiGateway(hasDistro: true, appOwned: true),
+            _ => [ManagedGatewayRecord() with { Id = "replacement-gateway" }]);
+
+        var result = await step.ExecuteAsync(context, CancellationToken.None);
+
+        Assert.Equal(StepOutcome.FailedTerminal, result.Outcome);
+        Assert.Contains("owner changed", result.Message, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public async Task PreserveLocalAiRecoveryGateway_RestartsAfterWslShutdown()
+    {
+        var context = CreateContext(LocalAiRecoveryConfig());
+        context.LocalAiRecoveryStoppedWsl = true;
+        var restartCalls = 0;
+        var step = new PreserveLocalAiRecoveryGatewayStep((_, _) =>
+        {
+            restartCalls++;
+            return Task.FromResult(StepResult.Ok("restarted"));
+        });
+
+        await step.RollbackAsync(context, CancellationToken.None);
+
+        Assert.Equal(1, restartCalls);
+        Assert.False(context.LocalAiRecoveryStoppedWsl);
+    }
+
+    [Fact]
+    public async Task RestartGatewayStep_FailureArmsRecoveryRollbackRestart()
+    {
+        var context = CreateContext(LocalAiRecoveryConfig());
+        var step = new RestartGatewayStep((_, _) =>
+            Task.FromResult(StepResult.Fail("restart failed")));
+
+        StepResult result = await step.ExecuteAsync(context, CancellationToken.None);
+
+        Assert.Equal(StepOutcome.Failed, result.Outcome);
+        Assert.True(context.LocalAiRecoveryStoppedWsl);
+    }
+
+    [Fact]
     public void LocalAiDisabled_SkipsEveryLocalAiMutation()
     {
         var ctx = CreateContext(new SetupConfig
@@ -174,6 +274,36 @@ public class SetupPipelineTests
         Assert.False(steps.Single(step => step is PreflightWslStep).CanSkip(ctx));
         Assert.False(steps.Single(step => step is EnsureWslPlatformStep).CanSkip(ctx));
     }
+
+    private static ExistingConfigDetector.ExistingConfig ExistingLocalAiGateway(
+        bool hasDistro,
+        bool appOwned) =>
+        new(
+            HasLocalGateway: true,
+            LocalGatewayId: "gateway-id",
+            LocalGatewayUrl: "ws://127.0.0.1:18789",
+            HasDistro: hasDistro,
+            HasDistroDataDirectory: hasDistro,
+            DistroIsAppOwned: appOwned,
+            DistroName: hasDistro ? "OpenClawGateway" : null,
+            HasIdentityFiles: true,
+            PreservedGatewayCount: 0,
+            PreservedGatewayNames: []);
+
+    private static SetupConfig LocalAiRecoveryConfig() => new()
+    {
+        DistroName = "OpenClawGateway",
+        GatewayPort = 18789,
+        LocalAiRecoveryGatewayId = "gateway-id",
+    };
+
+    private static OpenClaw.Connection.GatewayRecord ManagedGatewayRecord() => new()
+    {
+        Id = "gateway-id",
+        Url = "ws://127.0.0.1:18789",
+        IsLocal = true,
+        SetupManagedDistroName = "OpenClawGateway",
+    };
 
     [Theory]
     [InlineData(false)]

@@ -107,15 +107,9 @@ internal static class WslKeepAlivePolicy
     }
 
     public static bool IsSetupManagedLocalRecord(GatewayRecord record)
-    {
-        if (record.SshTunnel is not null)
-            return false;
-
-        if (GatewayRecordEditing.ResolveManagedDistroName(record) is not null)
-            return record.IsLocal || LocalGatewayUrlClassifier.IsLocalGatewayUrl(record.Url);
-
-        return IsLegacyDefaultSetupManagedLocalRecord(record);
-    }
+        => GatewayRecordEditing.IsSetupManagedLocalRecord(record) ||
+           (record.SshTunnel is null &&
+            IsLegacyDefaultSetupManagedLocalRecord(record));
 
     public static bool IsSameSetupManagedGateway(
         GatewayRecord expected,

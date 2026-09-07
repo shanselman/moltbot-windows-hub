@@ -161,6 +161,8 @@ public sealed class ConfigureLocalAiWslNetworkingStep : SetupStep
 
         try
         {
+            if (!string.IsNullOrWhiteSpace(ctx.Config.LocalAiRecoveryGatewayId))
+                ctx.LocalAiRecoveryStoppedWsl = true;
             CommandResult shutdown = await ShutdownWslAsync(ctx, ct);
             if (shutdown.ExitCode != 0 || shutdown.TimedOut)
             {
@@ -196,6 +198,8 @@ public sealed class ConfigureLocalAiWslNetworkingStep : SetupStep
                 CommandResult shutdown = await ShutdownWslAsync(ctx, ct);
                 if (shutdown.ExitCode != 0 || shutdown.TimedOut)
                     throw new InvalidOperationException("WSL could not be stopped to apply the restored configuration.");
+                if (!string.IsNullOrWhiteSpace(ctx.Config.LocalAiRecoveryGatewayId))
+                    ctx.LocalAiRecoveryStoppedWsl = true;
                 return;
             default:
                 throw new InvalidOperationException($"Unknown WSL configuration restore result: {restore}.");

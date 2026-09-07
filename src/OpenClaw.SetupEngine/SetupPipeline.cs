@@ -51,6 +51,29 @@ public static class SetupStepFactory
         new WindowsNodeBootstrapContextStep(),
     ];
 
+    public static List<SetupStep> BuildLocalAiRecoverySteps() =>
+    [
+        new PreflightOsStep(),
+        new ValidateLocalAiRecoveryGatewayStep(),
+        new PreserveLocalAiRecoveryGatewayStep(),
+        new PreflightLocalAiHardwareStep(),
+        new PreflightWslStep(),
+        new EnsureWslPlatformStep(reusePreflightResult: true),
+        new ReconcileLocalAiInstallationStep(),
+        new AcquireLocalAiRuntimeStep(),
+        new AcquireLocalAiModelStep(),
+        new PersistLocalAiManifestStep(),
+        new StartLocalAiRuntimeStep(),
+        new CaptureLocalAiGpuBaselineStep(),
+        new VerifyLocalAiInferenceStep(),
+        new VerifyLocalAiGpuLoadStep(),
+        new ValidateLocalAiRecoveryGatewayStep(finalCheck: true),
+        new ConfigureLocalAiWslNetworkingStep(),
+        new VerifyLocalAiWslStep(),
+        new ConfigureLocalAiGatewayStep(),
+        new RestartGatewayStep(),
+    ];
+
     public static List<SetupStep> BuildDefaultSteps()
     {
         return

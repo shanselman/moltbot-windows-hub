@@ -19,6 +19,62 @@ internal interface ILocalAiGatewayDistroResolver
     LocalAiGatewayDistroResolution Resolve();
 }
 
+internal enum LocalAiSetupRoute
+{
+    Recovery,
+    Provision,
+    Blocked,
+}
+
+internal sealed record LocalAiRecoveryTarget(
+    string GatewayId,
+    string DistroName,
+    int GatewayPort);
+
+internal sealed record LocalAiSetupResolution(
+    LocalAiSetupRoute Route,
+    LocalAiRecoveryTarget? RecoveryTarget = null);
+
+internal static class LocalAiSetupRoutePolicy
+{
+    public static LocalAiSetupResolution Decide(
+        IReadOnlyList<GatewayRecord> owners,
+        bool hasLocalGateway,
+        string? localGatewayId,
+        bool hasDistro,
+        bool hasDistroDataDirectory,
+        bool distroIsAppOwned)
+    {
+        if (owners.Count == 1)
+        {
+            var owner = owners[0];
+            if (hasLocalGateway &&
+                string.Equals(localGatewayId, owners[0].Id, StringComparison.Ordinal) &&
+                hasDistro &&
+                distroIsAppOwned &&
+                Uri.TryCreate(owner.Url, UriKind.Absolute, out var uri) &&
+                uri.Port is > 0 and <= 65535)
+            {
+                return new(
+                    LocalAiSetupRoute.Recovery,
+                    new LocalAiRecoveryTarget(
+                        owner.Id,
+                        GatewayRecordEditing.ResolveManagedDistroName(owner)!.Trim(),
+                        uri.Port));
+            }
+
+            return new(LocalAiSetupRoute.Blocked);
+        }
+
+        return new(owners.Count == 0 &&
+            !hasLocalGateway &&
+            !hasDistro &&
+            !hasDistroDataDirectory
+                ? LocalAiSetupRoute.Provision
+                : LocalAiSetupRoute.Blocked);
+    }
+}
+
 /// <summary>
 /// Pins the singleton Local AI installation to the one explicitly setup-managed
 /// local WSL gateway in the loaded registry. Every resolution revalidates the
@@ -87,11 +143,12 @@ internal sealed class LocalAiGatewayDistroResolver : ILocalAiGatewayDistroResolv
         return LocalAiGatewayDistroResolution.Resolved(_distroName);
     }
 
-    private static IReadOnlyList<GatewayRecord> FindOwners(IEnumerable<GatewayRecord> records) =>
+    internal static IReadOnlyList<GatewayRecord> FindOwners(IEnumerable<GatewayRecord> records) =>
         records
             .Where(record =>
-                WslKeepAlivePolicy.IsSetupManagedLocalRecord(record) &&
+                GatewayRecordEditing.IsSetupManagedLocalRecord(record) &&
                 !string.IsNullOrWhiteSpace(record.Id) &&
-                !string.IsNullOrWhiteSpace(record.SetupManagedDistroName))
+                !string.IsNullOrWhiteSpace(
+                    GatewayRecordEditing.ResolveManagedDistroName(record)))
             .ToArray();
 }

@@ -113,7 +113,7 @@ public static class GatewayRecordEditing
         return result;
     }
 
-    internal static bool AreEquivalentLoopbackEndpoints(string? left, string? right)
+    public static bool AreEquivalentLoopbackEndpoints(string? left, string? right)
     {
         if (!Uri.TryCreate(left, UriKind.Absolute, out var leftUri) ||
             !Uri.TryCreate(right, UriKind.Absolute, out var rightUri) ||
@@ -179,6 +179,16 @@ public static class GatewayRecordEditing
         }
 
         return distro;
+    }
+
+    public static bool IsSetupManagedLocalRecord(GatewayRecord record)
+    {
+        if (record.SshTunnel is not null)
+            return false;
+
+        return ResolveManagedDistroName(record) is not null &&
+            (record.IsLocal ||
+             OpenClaw.Shared.LocalGatewayUrlClassifier.IsLocalGatewayUrl(record.Url));
     }
 
     private static string? ParseLegacyManagedDistroName(string? friendlyName)

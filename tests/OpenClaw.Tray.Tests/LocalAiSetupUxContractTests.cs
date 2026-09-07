@@ -570,9 +570,11 @@ public sealed class LocalAiSetupUxContractTests
         // on the toggle being off, or requires a fully resolved, eligible, consented state.
         string primaryButtonMethod = ExtractMethod(source, "private void UpdatePrimaryButtonState");
         Assert.DoesNotContain("_localAiAvailability", primaryButtonMethod);
-        Assert.Contains("LocalAiToggle.IsOn != true ||", primaryButtonMethod);
         Assert.Contains(
-            "(_localAiSelectionEligible &&\r\n             (!_localAiNetworkingConsentRequired || LocalAiNetworkingConsentCheckBox.IsChecked == true));",
+            "(!_localAiRecoveryOnly && LocalAiToggle.IsOn != true) ||",
+            primaryButtonMethod);
+        Assert.Contains(
+            "(LocalAiToggle.IsOn == true &&\r\n             _localAiSelectionEligible &&\r\n             (!_localAiNetworkingConsentRequired || LocalAiNetworkingConsentCheckBox.IsChecked == true));",
             primaryButtonMethod);
     }
 

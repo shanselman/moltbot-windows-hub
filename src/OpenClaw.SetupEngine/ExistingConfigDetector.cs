@@ -25,14 +25,19 @@ public sealed class ExistingConfigDetector
     public static ExistingConfig Detect(
         string dataDir,
         string targetDistroName,
-        string? localDataDir = null)
+        string? localDataDir = null,
+        string? expectedLocalGatewayId = null)
     {
         localDataDir ??= SetupContext.ResolveLocalDataDir();
         var registry = new GatewayRegistry(dataDir);
         registry.Load();
         var all = registry.GetAll();
 
-        var localRecord = all.FirstOrDefault(r => r.IsLocal && r.SshTunnel == null);
+        var localRecord = string.IsNullOrWhiteSpace(expectedLocalGatewayId)
+            ? all.FirstOrDefault(r => r.IsLocal && r.SshTunnel == null)
+            : all.FirstOrDefault(r =>
+                string.Equals(r.Id, expectedLocalGatewayId, StringComparison.Ordinal) &&
+                GatewayRecordEditing.IsSetupManagedLocalRecord(r));
         var preserved = all.Where(r => !r.IsLocal || r.SshTunnel != null).ToList();
 
         var logger = new SetupLogger(filePath: null, LogLevel.Warn);
