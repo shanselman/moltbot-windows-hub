@@ -1,5 +1,3 @@
-using System.Net;
-using System.Net.Sockets;
 using System.Text.Json;
 using System.Text.RegularExpressions;
 using OpenClaw.E2ETests;
@@ -193,21 +191,23 @@ public class SetupAndConnectTests
 
         var proofLogPath = Path.Combine(_fixture.ArtifactDir, "service-owned-gateway-start.jsonl");
         var config = SetupConfig.LoadFromFile(_fixture.ConfigPath);
-        using var logger = new SetupLogger(proofLogPath, LogLevel.Trace);
-        using var journal = new TransactionJournal(filePath: null, logger);
-        var context = new SetupContext(
-            config,
-            logger,
-            journal,
-            new CommandRunner(logger),
-            CancellationToken.None,
-            _fixture.DataDir,
-            _fixture.LocalAppDataRoot)
+        StepResult result;
+        using (var logger = new SetupLogger(proofLogPath, LogLevel.Trace))
+        using (var journal = new TransactionJournal(filePath: null, logger))
         {
-            DistroName = _fixture.DistroName,
-        };
-
-        var result = await new StartGatewayStep().ExecuteAsync(context, CancellationToken.None);
+            var context = new SetupContext(
+                config,
+                logger,
+                journal,
+                new CommandRunner(logger),
+                CancellationToken.None,
+                _fixture.DataDir,
+                _fixture.LocalAppDataRoot)
+            {
+                DistroName = _fixture.DistroName,
+            };
+            result = await new StartGatewayStep().ExecuteAsync(context, CancellationToken.None);
+        }
 
         Assert.True(result.IsSuccess, result.Message);
         var proofLog = await File.ReadAllTextAsync(proofLogPath);
@@ -221,12 +221,17 @@ public class SetupAndConnectTests
     public async Task FullSetup_ForeignWslListener_IsRejectedBeforeGatewayStart()
     {
         var config = SetupConfig.LoadFromFile(_fixture.ConfigPath);
-        var port = GetFreeTcpPort();
         var nodePath = $"/home/{config.Wsl.User}/.openclaw/tools/node/bin/node";
+        var proofId = Guid.NewGuid().ToString("N");
+        var portPath = $"/tmp/openclaw-foreign-listener-{proofId}.port";
+        var logPath = $"/tmp/openclaw-foreign-listener-{proofId}.log";
+        var nodeScript =
+            $"const fs=require(\"fs\"),net=require(\"net\");const server=net.createServer();" +
+            $"server.listen(0,\"127.0.0.1\",()=>fs.writeFileSync(\"{portPath}\",String(server.address().port)))";
         var start = await _fixture.RunInWslAsync(
             $"""
-            nohup '{nodePath}' -e 'require("net").createServer().listen({port}, "127.0.0.1")' \
-              >/tmp/openclaw-foreign-listener-{port}.log 2>&1 </dev/null &
+            rm -f '{portPath}' '{logPath}'
+            nohup '{nodePath}' -e '{nodeScript}' >'{logPath}' 2>&1 </dev/null &
             echo $!
             """,
             TimeSpan.FromSeconds(15),
@@ -236,6 +241,28 @@ public class SetupAndConnectTests
 
         try
         {
+            string? publishedPort = null;
+            for (var attempt = 0; attempt < 50; attempt++)
+            {
+                var portResult = await _fixture.RunInWslAsync(
+                    $"cat '{portPath}' 2>/dev/null || true",
+                    TimeSpan.FromSeconds(15));
+                if (int.TryParse(portResult.Stdout.Trim(), out _))
+                {
+                    publishedPort = portResult.Stdout.Trim();
+                    break;
+                }
+                await Task.Delay(100);
+            }
+            if (!int.TryParse(publishedPort, out var port))
+            {
+                var startupLog = await _fixture.RunInWslAsync(
+                    $"cat '{logPath}' 2>/dev/null || true",
+                    TimeSpan.FromSeconds(15));
+                Assert.Fail($"Foreign listener did not publish a port. Log: {startupLog.Stdout} {startupLog.Stderr}");
+                return;
+            }
+
             OpenClaw.SetupEngine.CommandResult? listeners = null;
             for (var attempt = 0; attempt < 20; attempt++)
             {
@@ -279,16 +306,9 @@ public class SetupAndConnectTests
         finally
         {
             _ = await _fixture.RunInWslAsync(
-                $"kill {foreignPid} 2>/dev/null || true",
+                $"kill {foreignPid} 2>/dev/null || true; rm -f '{portPath}' '{logPath}'",
                 TimeSpan.FromSeconds(15));
         }
-    }
-
-    private static int GetFreeTcpPort()
-    {
-        using var listener = new TcpListener(IPAddress.Loopback, 0);
-        listener.Start();
-        return ((IPEndPoint)listener.LocalEndpoint).Port;
     }
 
     private static string ResolveNodeCommandsAllowKey()
