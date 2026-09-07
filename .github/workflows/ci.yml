@@ -538,6 +538,7 @@ jobs:
     timeout-minutes: 45
     env:
       OPENCLAW_REPO_ROOT: ${{ github.workspace }}
+      OPENCLAW_E2E_GATEWAY_VERSION: 2026.6.11
     steps:
     - uses: actions/checkout@v7
       with:
@@ -592,6 +593,7 @@ jobs:
     timeout-minutes: 25
     env:
       OPENCLAW_REPO_ROOT: ${{ github.workspace }}
+      OPENCLAW_E2E_GATEWAY_VERSION: 2026.6.11
     steps:
     - uses: actions/checkout@v7
       with:
@@ -646,6 +648,7 @@ jobs:
     timeout-minutes: 25
     env:
       OPENCLAW_REPO_ROOT: ${{ github.workspace }}
+      OPENCLAW_E2E_GATEWAY_VERSION: 2026.6.11
     steps:
     - uses: actions/checkout@v7
       with:
