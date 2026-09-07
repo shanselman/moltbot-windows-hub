@@ -23,7 +23,11 @@ public class CommandRunnerTests
                 result = await runner.RunAsync(
                     WslConstants.WslExePath,
                     ["--version"],
-                    TimeSpan.FromSeconds(15));
+                    TimeSpan.FromSeconds(15),
+                    environment: new Dictionary<string, string>
+                    {
+                        ["WSL_UTF8"] = "0",
+                    });
             }
 
             var output = result.Stdout + result.Stderr;

@@ -126,9 +126,9 @@ public sealed class CommandRunner : ICommandRunner
 
         if (IsWslExecutable(executable))
         {
-            // wsl.exe management commands default to UTF-16LE, while distro
-            // commands emit UTF-8. Force the documented UTF-8 mode so every WSL
-            // invocation has one deterministic redirected-output encoding.
+            // Redirected wsl.exe output defaults to UTF-16LE unless WSL_UTF8=1.
+            // Force the documented UTF-8 mode so every WSL invocation has one
+            // deterministic redirected-output encoding.
             psi.Environment["WSL_UTF8"] = "1";
             psi.StandardOutputEncoding = Encoding.UTF8;
             psi.StandardErrorEncoding = Encoding.UTF8;
