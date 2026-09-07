@@ -7,6 +7,61 @@ public class CommandRunnerTests
     private static readonly string s_largeStdin = new('x', 8 * 1024 * 1024);
 
     [Fact]
+    public async Task RunAsync_WslVersion_DecodesOutputBeforeLogging()
+    {
+        if (!OperatingSystem.IsWindows() || !File.Exists(WslConstants.WslExePath))
+            return;
+
+        var logPath = Path.Combine(Path.GetTempPath(), $"openclaw-wsl-output-{Guid.NewGuid():N}.jsonl");
+
+        try
+        {
+            CommandResult result;
+            using (var logger = new SetupLogger(logPath, LogLevel.Trace))
+            {
+                var runner = new CommandRunner(logger);
+                result = await runner.RunAsync(
+                    WslConstants.WslExePath,
+                    ["--version"],
+                    TimeSpan.FromSeconds(15),
+                    environment: new Dictionary<string, string>
+                    {
+                        ["WSL_UTF8"] = "0",
+                    });
+            }
+
+            var output = result.Stdout + result.Stderr;
+            Assert.NotEmpty(output);
+            Assert.Contains("WSL version", output, StringComparison.OrdinalIgnoreCase);
+            Assert.DoesNotContain('\0', output);
+
+            var jsonl = await File.ReadAllTextAsync(logPath);
+            Assert.DoesNotContain("\\u0000", jsonl, StringComparison.OrdinalIgnoreCase);
+        }
+        finally
+        {
+            File.Delete(logPath);
+        }
+    }
+
+    [Theory]
+    [InlineData("wsl.exe")]
+    [InlineData(@"C:\Windows\System32\WSL.EXE")]
+    public void IsWslExecutable_WslPath_ReturnsTrue(string executable)
+    {
+        Assert.True(CommandRunner.IsWslExecutable(executable));
+    }
+
+    [Theory]
+    [InlineData("wsl")]
+    [InlineData("powershell.exe")]
+    [InlineData("")]
+    public void IsWslExecutable_OtherPath_ReturnsFalse(string executable)
+    {
+        Assert.False(CommandRunner.IsWslExecutable(executable));
+    }
+
+    [Fact]
     public async Task RunAsync_LargeStdinWriteObeysTimeout()
     {
         var runner = CreateRunner();
