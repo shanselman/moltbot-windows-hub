@@ -142,11 +142,67 @@ public class CommandRunnerTests
         var (executable, arguments) = ExitsLeavingPipeHolderCommand();
         var stopwatch = Stopwatch.StartNew();
 
-        var result = await runner.RunAsync(executable, arguments, TimeSpan.FromSeconds(30));
+        var result = await runner.RunAsyncAllowingInheritedPipeHandleEscape(
+            executable,
+            arguments,
+            TimeSpan.FromSeconds(30));
 
         Assert.False(result.TimedOut);
         Assert.Equal(0, result.ExitCode);
         Assert.InRange(stopwatch.Elapsed, TimeSpan.Zero, TimeSpan.FromSeconds(5));
+    }
+
+    [Fact]
+    public async Task WaitForOutputDrainAsync_WaitsPastCommandDeadlineOnNormalExit()
+    {
+        var outputClosed = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var wait = CommandRunner.WaitForOutputDrainAsync(
+            outputClosed.Task,
+            TimeSpan.FromMilliseconds(100),
+            TimeSpan.Zero,
+            timedOut: false,
+            allowInheritedPipeHandleEscape: false);
+
+        var completed = await Task.WhenAny(wait, Task.Delay(TimeSpan.FromMilliseconds(250)));
+        Assert.NotSame(wait, completed);
+
+        outputClosed.SetResult();
+        await wait;
+    }
+
+    [Fact]
+    public async Task WaitForOutputDrainAsync_CancellationInterruptsNormalPostExitDrain()
+    {
+        var outputClosed = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        using var cancellation = new CancellationTokenSource(TimeSpan.FromMilliseconds(100));
+
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() =>
+            CommandRunner.WaitForOutputDrainAsync(
+                outputClosed.Task,
+                TimeSpan.FromSeconds(30),
+                TimeSpan.Zero,
+                timedOut: false,
+                allowInheritedPipeHandleEscape: false,
+                cancellation.Token));
+    }
+
+    [Fact]
+    public async Task RunAsync_DrainsHighVolumeStdoutAndStderrThroughTrailingMarkers()
+    {
+        const int lineCount = 8_000;
+        var (executable, arguments) = HighVolumeOutputCommand(lineCount);
+
+        var result = await CreateRunner().RunAsync(
+            executable,
+            arguments,
+            TimeSpan.FromSeconds(30));
+
+        Assert.False(result.TimedOut);
+        Assert.Equal(0, result.ExitCode);
+        Assert.Equal(lineCount, CountLinesStartingWith(result.Stdout, "stdout-"));
+        Assert.Equal(lineCount, CountLinesStartingWith(result.Stderr, "stderr-"));
+        Assert.EndsWith($"STDOUT_MARKER{Environment.NewLine}", result.Stdout, StringComparison.Ordinal);
+        Assert.EndsWith($"STDERR_MARKER{Environment.NewLine}", result.Stderr, StringComparison.Ordinal);
     }
 
     [Theory]
@@ -180,6 +236,32 @@ public class CommandRunnerTests
         => OperatingSystem.IsWindows()
             ? ("cmd.exe", ["/d", "/s", "/c", "ping 127.0.0.1 -n 30 >nul"])
             : ("/bin/sh", ["-c", "sleep 30"]);
+
+    private static (string Executable, string[] Arguments) HighVolumeOutputCommand(int lineCount)
+    {
+        if (!OperatingSystem.IsWindows())
+        {
+            return ("/bin/sh",
+            [
+                "-c",
+                "i=0; while [ $i -lt " + lineCount + " ]; do printf 'stdout-%s\\n' \"$i\"; i=$((i+1)); done; " +
+                "printf 'STDOUT_MARKER\\n'; " +
+                "i=0; while [ $i -lt " + lineCount + " ]; do printf 'stderr-%s\\n' \"$i\" >&2; i=$((i+1)); done; " +
+                "printf 'STDERR_MARKER\\n' >&2"
+            ]);
+        }
+
+        var script =
+            $"for ($i = 0; $i -lt {lineCount}; $i++) {{ [Console]::Out.WriteLine(\"stdout-$i\") }}; " +
+            "[Console]::Out.WriteLine(\"STDOUT_MARKER\"); " +
+            $"for ($i = 0; $i -lt {lineCount}; $i++) {{ [Console]::Error.WriteLine(\"stderr-$i\") }}; " +
+            "[Console]::Error.WriteLine(\"STDERR_MARKER\")";
+        return ("powershell.exe", ["-NoProfile", "-NonInteractive", "-Command", script]);
+    }
+
+    private static int CountLinesStartingWith(string value, string prefix) =>
+        value.Split(Environment.NewLine, StringSplitOptions.RemoveEmptyEntries)
+            .Count(line => line.StartsWith(prefix, StringComparison.Ordinal));
 
     private static (string Executable, string[] Arguments) CopyStdinCommand(string path)
     {

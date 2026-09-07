@@ -178,7 +178,7 @@ public sealed class WindowsNodeBootstrapContextStep : SetupStep
         var distro = ctx.DistroName;
         if (string.IsNullOrWhiteSpace(distro))
             return null;
-        var registered = await ctx.Commands.RunAsync(
+        var registered = await ctx.Commands.RunAsyncAllowingInheritedPipeHandleEscape(
             WslConstants.WslExePath,
             ["--list", "--quiet"],
             TimeSpan.FromSeconds(15),
