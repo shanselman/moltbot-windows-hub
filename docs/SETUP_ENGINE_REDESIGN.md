@@ -200,6 +200,14 @@ Executed sequentially. Each step is a small class (30–120 lines) in its own fi
 | 23 | `WindowsNodeBootstrapContextStep` | Inject Windows-node context into the WSL workspace `AGENTS.md` |
 | 24 | `StartKeepaliveStep` | Background WSL keepalive to prevent VM shutdown |
 
+The Windows port preflight requires a free port before installation. Installing
+the gateway service can start it immediately, so the subsequent WSL port check
+accepts listeners only when every reported owner PID matches the installed
+`openclaw-gateway.service` systemd `MainPID` in the configured distro. A process
+name such as `node` or `openclaw` alone is insufficient. Conflicts retain the
+port-in-use error and include owning process names when available. Missing
+listener ownership or a failed listener inspection does not bypass the check.
+
 ### Step Base Class
 
 ```csharp
