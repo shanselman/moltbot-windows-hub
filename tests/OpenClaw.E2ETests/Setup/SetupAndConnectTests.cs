@@ -279,21 +279,23 @@ public class SetupAndConnectTests
 
             config.GatewayPort = port;
             var proofLogPath = Path.Combine(_fixture.ArtifactDir, "foreign-gateway-listener.jsonl");
-            using var logger = new SetupLogger(proofLogPath, LogLevel.Trace);
-            using var journal = new TransactionJournal(filePath: null, logger);
-            var context = new SetupContext(
-                config,
-                logger,
-                journal,
-                new CommandRunner(logger),
-                CancellationToken.None,
-                _fixture.DataDir,
-                _fixture.LocalAppDataRoot)
+            StepResult result;
+            using (var logger = new SetupLogger(proofLogPath, LogLevel.Trace))
+            using (var journal = new TransactionJournal(filePath: null, logger))
             {
-                DistroName = _fixture.DistroName,
-            };
-
-            var result = await new StartGatewayStep().ExecuteAsync(context, CancellationToken.None);
+                var context = new SetupContext(
+                    config,
+                    logger,
+                    journal,
+                    new CommandRunner(logger),
+                    CancellationToken.None,
+                    _fixture.DataDir,
+                    _fixture.LocalAppDataRoot)
+                {
+                    DistroName = _fixture.DistroName,
+                };
+                result = await new StartGatewayStep().ExecuteAsync(context, CancellationToken.None);
+            }
 
             Assert.False(result.IsSuccess);
             Assert.Contains($"Port {port} is already in use by another process.", result.Message);
