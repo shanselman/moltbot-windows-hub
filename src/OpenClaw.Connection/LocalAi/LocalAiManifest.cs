@@ -1,6 +1,7 @@
 using System.Collections.Immutable;
 using System.Text.Json;
 using System.Text.Json.Serialization;
+using OpenClaw.Shared.Inference.Catalog;
 
 namespace OpenClaw.Connection.LocalAi;
 
@@ -158,6 +159,10 @@ public sealed record LocalAiInstallManifest
     /// </summary>
     public string? GatewayFallbackModel { get; init; }
     public required int ContextLength { get; init; }
+    public KvCachePrecision KeyCachePrecision { get; init; } = KvCachePrecision.F16;
+    public KvCachePrecision ValueCachePrecision { get; init; } = KvCachePrecision.F16;
+    public KvCachePrecision DraftKeyCachePrecision { get; init; } = KvCachePrecision.F16;
+    public KvCachePrecision DraftValueCachePrecision { get; init; } = KvCachePrecision.F16;
     public DateTimeOffset InstalledAtUtc { get; init; } = DateTimeOffset.UtcNow;
 }
 
@@ -213,11 +218,18 @@ public static class LocalAiGatewayModelPolicy
 /// <summary>Persists the installation manifest with same-directory atomic replacement.</summary>
 public sealed class LocalAiManifestStore
 {
-    private static readonly JsonSerializerOptions JsonOptions = new(JsonSerializerDefaults.Web)
+    private static readonly JsonSerializerOptions JsonOptions = CreateJsonOptions();
+
+    private static JsonSerializerOptions CreateJsonOptions()
     {
-        WriteIndented = true,
-        UnmappedMemberHandling = JsonUnmappedMemberHandling.Disallow,
-    };
+        var options = new JsonSerializerOptions(JsonSerializerDefaults.Web)
+        {
+            WriteIndented = true,
+            UnmappedMemberHandling = JsonUnmappedMemberHandling.Disallow,
+        };
+        options.Converters.Add(new JsonStringEnumConverter(JsonNamingPolicy.SnakeCaseLower, allowIntegerValues: false));
+        return options;
+    }
 
     private readonly LocalAiPaths _paths;
 
@@ -330,6 +342,13 @@ public sealed class LocalAiManifestStore
         }
         if (manifest.ContextLength <= 0)
             throw new InvalidDataException("The local AI manifest context length must be positive.");
+        if (!Enum.IsDefined(manifest.KeyCachePrecision) ||
+            !Enum.IsDefined(manifest.ValueCachePrecision) ||
+            !Enum.IsDefined(manifest.DraftKeyCachePrecision) ||
+            !Enum.IsDefined(manifest.DraftValueCachePrecision))
+        {
+            throw new InvalidDataException("The local AI manifest KV cache precision is unsupported.");
+        }
 
         if (manifest.RuntimeAssets.IsDefaultOrEmpty)
             throw new InvalidDataException("The local AI manifest must record at least one runtime asset receipt.");

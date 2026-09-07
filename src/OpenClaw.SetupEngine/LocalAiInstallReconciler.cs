@@ -60,12 +60,16 @@ internal sealed class LocalAiInstallReconciler
         ArgumentException.ThrowIfNullOrWhiteSpace(selectedGpuId);
 
         var paths = new LocalAiPaths(localDataDirectory);
-        LocalAiResolvedInstall? install = await new LocalAiManifestStore(paths)
+        var manifestStore = new LocalAiManifestStore(paths);
+        LocalAiResolvedInstall? install = await manifestStore
             .LoadAsync(cancellationToken)
             .ConfigureAwait(false);
         if (install is null)
             return LocalAiReconcileResult.NotInstalled;
 
+        bool migrateLegacyGpuId =
+            !string.Equals(install.Manifest.SelectedGpuId, selectedGpuId, StringComparison.Ordinal) &&
+            GpuIdsMatch(install.Manifest.SelectedGpuId, selectedGpuId);
         ValidateRecipeMatch(install, plan, selectedGpuId, localDataDirectory);
 
         LlamaRuntimeInspection inspection = await _runtimeInspector
@@ -83,6 +87,16 @@ internal sealed class LocalAiInstallReconciler
         {
             throw new InvalidDataException(
                 "The managed Local AI model no longer matches its pinned size and SHA-256 digest.");
+        }
+
+        if (migrateLegacyGpuId)
+        {
+            LocalAiInstallManifest migratedManifest = install.Manifest with
+            {
+                SelectedGpuId = selectedGpuId,
+            };
+            await manifestStore.SaveAsync(migratedManifest, cancellationToken).ConfigureAwait(false);
+            install = manifestStore.ResolveAndValidate(migratedManifest);
         }
 
         IReadOnlyList<LocalAiVerifiedArchive> verifiedArchives = install.Manifest.RuntimeAssets
@@ -119,7 +133,12 @@ internal sealed class LocalAiInstallReconciler
             !string.Equals(manifest.Architecture, expectedArchitecture, StringComparison.Ordinal) ||
             !string.Equals(manifest.RuntimeId, plan.Runtime.Id, StringComparison.Ordinal) ||
             !string.Equals(manifest.ModelCatalogId, plan.Model.Id, StringComparison.Ordinal) ||
-            !string.Equals(manifest.SelectedGpuId, selectedGpuId, StringComparison.Ordinal))
+            manifest.ContextLength != plan.Profile.ContextTokens ||
+            manifest.KeyCachePrecision != plan.Profile.KeyCachePrecision ||
+            manifest.ValueCachePrecision != plan.Profile.ValueCachePrecision ||
+            manifest.DraftKeyCachePrecision != plan.Profile.DraftKeyCachePrecision ||
+            manifest.DraftValueCachePrecision != plan.Profile.DraftValueCachePrecision ||
+            !GpuIdsMatch(manifest.SelectedGpuId, selectedGpuId))
         {
             throw new InvalidDataException(
                 "The existing managed Local AI installation does not match the selected runtime, GPU, and model recipe.");
@@ -163,4 +182,9 @@ internal sealed class LocalAiInstallReconciler
                     : error);
         }
     }
+
+    private static bool GpuIdsMatch(string persistedGpuId, string selectedGpuId) =>
+        string.Equals(persistedGpuId, selectedGpuId, StringComparison.Ordinal) ||
+        persistedGpuId.StartsWith("cuda:", StringComparison.Ordinal) &&
+        string.Equals(persistedGpuId["cuda:".Length..], selectedGpuId, StringComparison.Ordinal);
 }

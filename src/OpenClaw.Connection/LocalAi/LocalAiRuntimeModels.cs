@@ -1,3 +1,5 @@
+using OpenClaw.Shared.Inference.Catalog;
+
 namespace OpenClaw.Connection.LocalAi;
 
 public enum LocalAiRuntimeState
@@ -85,7 +87,12 @@ public sealed record LocalAiRuntimeSnapshot(
     int? ProcessId,
     DateTimeOffset? ProcessStartedAtUtc,
     string? Detail,
-    DateTimeOffset UpdatedAtUtc)
+    DateTimeOffset UpdatedAtUtc,
+    int? ContextLength = null,
+    KvCachePrecision? KeyCachePrecision = null,
+    KvCachePrecision? ValueCachePrecision = null,
+    KvCachePrecision? DraftKeyCachePrecision = null,
+    KvCachePrecision? DraftValueCachePrecision = null)
 {
     public static LocalAiRuntimeSnapshot Initial(Uri endpoint, DateTimeOffset now) =>
         new(

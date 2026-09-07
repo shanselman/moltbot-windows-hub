@@ -30,10 +30,10 @@ public static class LlamaServerRouterConfiguration
         LlamaRuntimeVariant runtime = LlamaRuntimeCatalog.Variants.SingleOrDefault(
             candidate => string.Equals(candidate.Id, manifest.RuntimeId, StringComparison.Ordinal))
             ?? throw new InvalidDataException("The managed llama-server runtime is no longer qualified.");
-        LocalModelInfo model = LocalModelCatalog.Find(manifest.ModelCatalogId)
+        LocalModelInfo model = LocalModelCatalog.FindInstalled(manifest.ModelCatalogId)
             ?? throw new InvalidDataException("The managed local AI model is no longer qualified.");
 
-        ValidateQualifiedReceipt(manifest, runtime, model);
+        LocalInferenceRunProfile profile = ValidateQualifiedReceipt(manifest, runtime, model);
 
         string presetPath = paths.ResolveContainedPath(
             Path.GetRelativePath(paths.RootDirectory, paths.RouterPresetPath),
@@ -58,11 +58,11 @@ public static class LlamaServerRouterConfiguration
                 .WithComparers(StringComparer.OrdinalIgnoreCase)
                 .Add("CUDA_VISIBLE_DEVICES", manifest.SelectedGpuId),
             presetPath,
-            BuildPreset(model, install.ModelPath),
+            BuildPreset(model, profile, install.ModelPath),
             model.Id);
     }
 
-    private static void ValidateQualifiedReceipt(
+    private static LocalInferenceRunProfile ValidateQualifiedReceipt(
         LocalAiInstallManifest manifest,
         LlamaRuntimeVariant runtime,
         LocalModelInfo model)
@@ -78,11 +78,20 @@ public static class LlamaServerRouterConfiguration
             throw new InvalidDataException("The managed local AI architecture and runtime receipt do not match.");
         }
         if (!string.Equals(manifest.EngineVersion, LlamaRuntimeCatalog.ReleaseTag, StringComparison.Ordinal) ||
-            !string.Equals(manifest.ModelAlias, model.Id, StringComparison.Ordinal) ||
-            manifest.ContextLength != model.Recipe.ContextTokens)
+            !string.Equals(manifest.ModelAlias, model.Id, StringComparison.Ordinal))
         {
             throw new InvalidDataException("The managed local AI model recipe receipt does not match the qualified catalog.");
         }
+
+        LocalInferenceRunProfile profile = LocalModelCatalog.FindProfile(
+            model,
+            manifest.ContextLength,
+            manifest.KeyCachePrecision,
+            manifest.ValueCachePrecision,
+            manifest.DraftKeyCachePrecision,
+            manifest.DraftValueCachePrecision)
+            ?? throw new InvalidDataException(
+                "The managed local AI context and KV cache receipt do not match a qualified catalog profile.");
 
         if (manifest.RuntimeAssets.Length != runtime.Artifacts.Count ||
             runtime.Artifacts.Any(artifact => !manifest.RuntimeAssets.Any(receipt =>
@@ -103,9 +112,14 @@ public static class LlamaServerRouterConfiguration
         {
             throw new InvalidDataException("The managed model artifact receipt does not match the qualified catalog.");
         }
+
+        return profile;
     }
 
-    private static string BuildPreset(LocalModelInfo model, string modelPath)
+    private static string BuildPreset(
+        LocalModelInfo model,
+        LocalInferenceRunProfile profile,
+        string modelPath)
     {
         if (modelPath.IndexOfAny(['\r', '\n']) >= 0)
             throw new InvalidDataException("The managed model path cannot be represented safely in a llama-server preset.");
@@ -118,11 +132,13 @@ public static class LlamaServerRouterConfiguration
         preset.Append('[').Append(model.Id).AppendLine("]");
         preset.Append("model = ").AppendLine(modelPath);
         preset.AppendLine("load-on-startup = false");
-        preset.Append("ctx-size = ").AppendLine(Invariant(recipe.ContextTokens));
+        preset.Append("ctx-size = ").AppendLine(Invariant(profile.ContextTokens));
         preset.Append("n-predict = ").AppendLine(Invariant(LocalAiGatewayProviderDefinition.MaximumOutputTokens));
         preset.Append("parallel = ").AppendLine(Invariant(recipe.ParallelRequests));
-        preset.AppendLine("cache-type-k = f16");
-        preset.AppendLine("cache-type-v = f16");
+        preset.Append("cache-type-k = ").AppendLine(LocalModelCatalog.ToLlamaServerCacheType(profile.KeyCachePrecision));
+        preset.Append("cache-type-v = ").AppendLine(LocalModelCatalog.ToLlamaServerCacheType(profile.ValueCachePrecision));
+        preset.Append("cache-type-k-draft = ").AppendLine(LocalModelCatalog.ToLlamaServerCacheType(profile.DraftKeyCachePrecision));
+        preset.Append("cache-type-v-draft = ").AppendLine(LocalModelCatalog.ToLlamaServerCacheType(profile.DraftValueCachePrecision));
         preset.Append("batch-size = ").AppendLine(Invariant(recipe.BatchTokens));
         preset.Append("ubatch-size = ").AppendLine(Invariant(recipe.MicroBatchTokens));
         preset.AppendLine("flash-attn = on");

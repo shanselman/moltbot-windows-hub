@@ -65,5 +65,5 @@ public static class LocalInferenceEligibilityDiagnostics
             LocalInferenceEligibility.MinimumNvidiaDriverVersion.ToString());
     }
 
-    private static double ToGigabytes(long bytes) => bytes / 1_000_000_000d;
+    private static double ToGigabytes(long bytes) => bytes / (1024d * 1024d * 1024d);
 }

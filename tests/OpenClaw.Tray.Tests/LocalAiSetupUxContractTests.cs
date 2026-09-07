@@ -5,7 +5,7 @@ namespace OpenClaw.Tray.Tests;
 public sealed class LocalAiSetupUxContractTests
 {
     [Fact]
-    public void WelcomePage_ShowsLocalAiAsIconBadgeBesideRecommended()
+    public void WelcomePage_ShowsLocalAiCompatibilityDetails()
     {
         string root = TestRepositoryPaths.GetRepositoryRoot();
         string xaml = File.ReadAllText(Path.Combine(
@@ -20,54 +20,56 @@ public sealed class LocalAiSetupUxContractTests
             "OpenClaw.SetupEngine.UI",
             "Pages",
             "WelcomePage.xaml.cs"));
-        string badge = ExtractElement(xaml, "LocalAiAvailabilityBadge", "</Border>");
-
-        Assert.Contains("WelcomeLocalAiAvailable", badge);
-        Assert.Contains("Glyph=\"&#xE950;\"", badge);
-        Assert.Contains("Local AI available", badge);
-        Assert.Contains("AutomationProperties.AccessibilityView=\"Raw\"", badge);
-        AssertInOrder(xaml, "Text=\"Recommended\"", "x:Name=\"LocalAiAvailabilityBadge\"");
-        Assert.DoesNotContain("LocalAiAvailabilityPanel", xaml);
-        Assert.DoesNotContain("LocalAiAvailabilityText", xaml);
+        Assert.Contains("WelcomeLocalAiAvailable", xaml);
+        Assert.Contains("Glyph=\"&#xE73E;\"", xaml);
+        Assert.Contains("x:Uid=\"Onboarding_Welcome_LocalAiAvailableBadge\"", xaml);
+        Assert.Contains("Local AI supported", xaml);
+        Assert.Contains("AutomationProperties.AccessibilityView=\"Raw\"", xaml);
+        AssertInOrder(
+            xaml,
+            "Text=\"Recommended\"",
+            "x:Name=\"LocalAiAvailabilityPanel\"",
+            "x:Name=\"LocalAiAvailabilityText\"");
+        Assert.DoesNotContain("LocalAiAvailabilityBadge", xaml);
+        Assert.Contains("SetupLocalization.Format(", source);
+        Assert.Contains("\"Onboarding_Welcome_LocalAiAvailabilityDetail\"", source);
         Assert.DoesNotContain("detected. Install a local gateway", source);
         Assert.Contains("AutomationProperties.SetName(", source);
     }
 
     /// <summary>
-    /// The Welcome-page badge text and the accessible name it appends when Local AI is
-    /// available must route through SetupLocalization (not hardcoded English), sharing one
-    /// resw entry between the x:Uid-bound visual text and the code-behind accessible name.
+    /// The Welcome-page compatibility panel keeps the localized accessible-name announcement
+    /// used when Local AI becomes available.
     /// </summary>
     [Fact]
-    public void WelcomePage_LocalAiAvailableBadgeAndAccessibleName_AreLocalizedInEverySupportedLocale()
+    public void WelcomePage_LocalAiCompatibilityPanel_IsLocalizedInEverySupportedLocale()
     {
         string root = TestRepositoryPaths.GetRepositoryRoot();
         string xaml = File.ReadAllText(Path.Combine(
             root, "src", "OpenClaw.SetupEngine.UI", "Pages", "WelcomePage.xaml"));
         string source = File.ReadAllText(Path.Combine(
             root, "src", "OpenClaw.SetupEngine.UI", "Pages", "WelcomePage.xaml.cs"));
-        string badge = ExtractElement(xaml, "LocalAiAvailabilityBadge", "</Border>");
-
-        Assert.Contains("x:Uid=\"Onboarding_Welcome_LocalAiAvailableBadge\"", badge);
+        Assert.Contains("x:Name=\"LocalAiAvailabilityPanel\"", xaml);
         Assert.Contains(
             "SetupLocalization.GetString(\"Onboarding_Welcome_LocalAiAvailableBadge.Text\")", source);
         Assert.Contains("AutomationProperties.GetName(InstallChoice)", source);
 
-        foreach (string locale in new[] { "en-us", "fr-fr", "nl-nl", "zh-cn", "zh-tw" })
+        foreach (string locale in new[] { "en-us", "fr-fr", "nl-nl", "zh-cn", "zh-tw", "pt-br" })
         {
             string resources = File.ReadAllText(Path.Combine(
                 root, "src", "OpenClaw.Tray.WinUI", "Strings", locale, "Resources.resw"));
             Assert.Contains("\"Onboarding_Welcome_LocalAiAvailableBadge.Text\"", resources);
+            Assert.Contains("\"Onboarding_Welcome_LocalAiAvailabilityDetail\"", resources);
         }
     }
 
     /// <summary>
-    /// The Welcome-page badge/accessible name must reflect whether this hardware can run
+    /// The Welcome-page compatibility panel/accessible name must reflect whether this hardware can run
     /// Local AI at all, not whether the currently configured model is still valid. A stale or
-    /// removed SelectedModelId must not hide the badge for an otherwise-capable device.
+    /// removed SelectedModelId must not hide the panel for an otherwise-capable device.
     /// </summary>
     [Fact]
-    public void WelcomePage_LocalAiBadge_GatesOnDeviceEligibilityNotSelectedModel()
+    public void WelcomePage_LocalAiCompatibilityPanel_GatesOnDeviceEligibilityNotSelectedModel()
     {
         string root = TestRepositoryPaths.GetRepositoryRoot();
         string source = File.ReadAllText(Path.Combine(
@@ -95,6 +97,7 @@ public sealed class LocalAiSetupUxContractTests
             "Pages",
             "CapabilitiesPage.xaml.cs"));
         string infoBar = ExtractElement(xaml, "LocalAiUnavailablePanel", "</InfoBar>");
+        string networkingInfoBar = ExtractElement(xaml, "LocalAiNetworkingConsentPanel", "</InfoBar>");
 
         Assert.Contains("Title=\"Local AI is not available\"", xaml);
         Assert.Contains("Severity=\"Informational\"", xaml);
@@ -143,9 +146,25 @@ public sealed class LocalAiSetupUxContractTests
         Assert.Contains("LocalAiToggle.IsEnabled = isAvailable", source);
         Assert.Contains("LocalAiModelSelector.IsEnabled = isAvailable", source);
         Assert.Contains("LocalAiNetworkingConsentCheckBox.IsEnabled = isAvailable", source);
+        Assert.Contains("Title=\"WSL networking change required\"", networkingInfoBar);
+        // Enabling Local AI must never imply consent on its own: the user has to
+        // affirmatively accept the global .wslconfig rewrite and one-time WSL shutdown.
+        Assert.Contains("<CheckBox", networkingInfoBar);
+        Assert.Contains("LocalAiNetworkingConsentCheckBox", networkingInfoBar);
+        Assert.DoesNotContain("config.LocalAi.WslMirroredNetworkingConsent = config.LocalAi.Enabled", source);
+        Assert.DoesNotContain("config.LocalAi.WslMirroredNetworkingConsent = true", source);
+        Assert.Contains(
+            "config.LocalAi.WslMirroredNetworkingConsent =\r\n            config.LocalAi.Enabled &&\r\n" +
+            "            _localAiNetworkingConsentRequired &&\r\n" +
+            "            LocalAiNetworkingConsentCheckBox.IsChecked == true;",
+            source);
+        Assert.Contains("bytes / (1024d * 1024d * 1024d)", source);
+        Assert.Contains("GiB", source);
+        Assert.Contains("loads on first request", source);
+        Assert.DoesNotContain("full CUDA offload", source);
+        Assert.DoesNotContain("LocalAiSettingsDetailText", xaml);
         Assert.Contains("SetLocalAiOptionAvailability(isAvailable: false)", source);
         Assert.Contains("SetLocalAiOptionAvailability(isAvailable: true)", source);
-
         string checkingMethod = ExtractMethod(source, "private void ShowLocalAiAvailabilityChecking");
         Assert.Contains("LocalAiToggle.IsOn = _config!.LocalAi.Enabled;", checkingMethod);
         Assert.DoesNotContain("_config!.LocalAi.Enabled = false;", checkingMethod);
@@ -157,6 +176,38 @@ public sealed class LocalAiSetupUxContractTests
         Assert.Contains("LocalAiToggle.IsOn = _config!.LocalAi.Enabled;", probeUnknownMethod);
         Assert.DoesNotContain("_config!.LocalAi.Enabled = false;", probeUnknownMethod);
         Assert.DoesNotContain("_config.SkipWizard = _skipWizardWithoutLocalAi;", probeUnknownMethod);
+
+        Assert.Contains("Text=\"Local AI\"", xaml);
+        Assert.Contains(
+            "Install Local AI and an optimized model.",
+            xaml);
+        Assert.DoesNotContain("Local AI on this PC", xaml);
+        Assert.DoesNotContain("Downloads begin only after", xaml);
+    }
+
+    /// <summary>
+    /// CapabilitiesPage.xaml.cs overwrites InstallDistroTitleText/InstallDistroDetailText at
+    /// runtime with SetupReviewSummaryBuilder's DistroTitle/DistroDescription
+    /// (src/OpenClaw.SetupEngine/SetupReviewSummary.cs), so the XAML values below are only a
+    /// design-time placeholder. A prior revision of this PR updated only the XAML text without
+    /// updating the builder, so the app kept rendering the old copy despite the source diff
+    /// looking correct. This pins the placeholder text so it stays a visible, reviewable
+    /// reminder to keep both in sync; SetupConfigTests.SetupReviewSummary_DistroTitleAndDescription_MatchSimplifiedReviewCopy
+    /// pins the runtime/builder side to the same literal values.
+    /// </summary>
+    [Fact]
+    public void CapabilitiesReview_InstallDistroCard_UsesSimplifiedCopy()
+    {
+        string root = TestRepositoryPaths.GetRepositoryRoot();
+        string xaml = File.ReadAllText(Path.Combine(
+            root, "src", "OpenClaw.SetupEngine.UI", "Pages", "CapabilitiesPage.xaml"));
+
+        Assert.Contains(
+            "<TextBlock x:Name=\"InstallDistroTitleText\" Text=\"Install Ubuntu 24.04 in WSL\"",
+            xaml);
+        Assert.Contains("Text=\"Creates a separate OpenClawGateway instance. Uses several GB.\"", xaml);
+        Assert.DoesNotContain("Install an isolated", xaml);
+        Assert.DoesNotContain("Separate from any Linux distributions you already have", xaml);
     }
 
     /// <summary>
@@ -205,7 +256,7 @@ public sealed class LocalAiSetupUxContractTests
 
         Assert.Contains("x:Uid=\"Onboarding_LocalAi_RecheckAvailabilityButton\"", xaml);
 
-        foreach (string locale in new[] { "en-us", "fr-fr", "nl-nl", "zh-cn", "zh-tw" })
+        foreach (string locale in new[] { "en-us", "fr-fr", "nl-nl", "zh-cn", "zh-tw", "pt-br" })
         {
             string resources = File.ReadAllText(Path.Combine(
                 root,
@@ -279,7 +330,7 @@ public sealed class LocalAiSetupUxContractTests
             "Onboarding_LocalAi_UnavailableDetailsDialogTitle",
             "Onboarding_LocalAi_UnavailableDetailsDialogClose",
         ];
-        foreach (string locale in new[] { "en-us", "fr-fr", "nl-nl", "zh-cn", "zh-tw" })
+        foreach (string locale in new[] { "en-us", "fr-fr", "nl-nl", "zh-cn", "zh-tw", "pt-br" })
         {
             string resources = File.ReadAllText(Path.Combine(
                 root, "src", "OpenClaw.Tray.WinUI", "Strings", locale, "Resources.resw"));
@@ -344,7 +395,7 @@ public sealed class LocalAiSetupUxContractTests
 
         // A thrown probe failure and a successful-but-incomplete read both resolve to
         // HardwareFactsIncomplete: one shared message, no separate "probe failure" key.
-        foreach (string locale in new[] { "en-us", "fr-fr", "nl-nl", "zh-cn", "zh-tw" })
+        foreach (string locale in new[] { "en-us", "fr-fr", "nl-nl", "zh-cn", "zh-tw", "pt-br" })
         {
             string resources = File.ReadAllText(Path.Combine(
                 root, "src", "OpenClaw.Tray.WinUI", "Strings", locale, "Resources.resw"));
@@ -453,7 +504,7 @@ public sealed class LocalAiSetupUxContractTests
             "LocalAiPage_CheckingMessage",
             "LocalAiPage_UnavailableProbeTitle",
         ];
-        foreach (string locale in new[] { "en-us", "fr-fr", "nl-nl", "zh-cn", "zh-tw" })
+        foreach (string locale in new[] { "en-us", "fr-fr", "nl-nl", "zh-cn", "zh-tw", "pt-br" })
         {
             string resources = File.ReadAllText(Path.Combine(
                 root, "src", "OpenClaw.Tray.WinUI", "Strings", locale, "Resources.resw"));

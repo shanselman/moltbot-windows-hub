@@ -1640,6 +1640,7 @@ public class SetupStepsTests : IDisposable
             IsLocal = true,
             SetupManagedDistroName = ctx.DistroName,
         });
+        registry.SetActive("local-gw-with-identity");
         registry.Save();
 
         // Create an identity directory
@@ -1650,7 +1651,171 @@ public class SetupStepsTests : IDisposable
         var step = new CleanupStaleGatewayStep();
         await step.ExecuteAsync(ctx, CancellationToken.None);
 
+        var reloaded = new GatewayRegistry(_tempDir);
+        reloaded.Load();
+        Assert.Null(reloaded.GetById("local-gw-with-identity"));
+        Assert.Null(reloaded.ActiveGatewayId);
         Assert.False(Directory.Exists(identityDir));
+    }
+
+    [Fact]
+    public async Task CleanupStaleGateway_MixedRecords_RemovesAllManagedDuplicatesAndPreservesProtectedRecords()
+    {
+        var ctx = CreateContext();
+        var gatewayUrl = ctx.GatewayUrl!;
+        var registry = new GatewayRegistry(_tempDir);
+        registry.Load();
+
+        var preservedRecords = new[]
+        {
+            new GatewayRecord
+            {
+                Id = "00-unmanaged-active",
+                Url = gatewayUrl,
+                FriendlyName = "Manual localhost",
+                IsLocal = true,
+            },
+            new GatewayRecord
+            {
+                Id = "01-other-distro",
+                Url = "ws://127.0.0.1:18789",
+                IsLocal = true,
+                SetupManagedDistroName = "ProtectedGateway",
+            },
+            new GatewayRecord
+            {
+                Id = "02-remote",
+                Url = gatewayUrl,
+                IsLocal = false,
+                SetupManagedDistroName = ctx.DistroName,
+            },
+            new GatewayRecord
+            {
+                Id = "03-ssh-tunneled",
+                Url = gatewayUrl,
+                IsLocal = true,
+                SetupManagedDistroName = ctx.DistroName,
+                SshTunnel = new SshTunnelConfig("user", "remote.host", 18789, 18789),
+            },
+            new GatewayRecord
+            {
+                Id = "04-non-equivalent",
+                Url = "ws://localhost:18790",
+                IsLocal = true,
+                SetupManagedDistroName = ctx.DistroName,
+            },
+        };
+        var staleRecords = new[]
+        {
+            new GatewayRecord
+            {
+                Id = "10-managed-localhost",
+                Url = gatewayUrl,
+                IsLocal = true,
+                SetupManagedDistroName = ctx.DistroName,
+            },
+            new GatewayRecord
+            {
+                Id = "20-managed-loopback-alias",
+                Url = "http://127.0.0.1:18789",
+                IsLocal = true,
+                SetupManagedDistroName = ctx.DistroName,
+            },
+        };
+
+        foreach (var record in preservedRecords.Concat(staleRecords))
+        {
+            registry.AddOrUpdate(record);
+            var identityDir = registry.GetIdentityDirectory(record.Id);
+            Directory.CreateDirectory(identityDir);
+            File.WriteAllText(Path.Combine(identityDir, "identity.marker"), record.Id);
+        }
+        registry.SetActive(preservedRecords[0].Id);
+        registry.Save();
+
+        var result = await new CleanupStaleGatewayStep().ExecuteAsync(ctx, CancellationToken.None);
+
+        Assert.True(result.IsSuccess);
+        var reloaded = new GatewayRegistry(_tempDir);
+        reloaded.Load();
+        Assert.Equal(
+            preservedRecords.Select(record => record.Id),
+            reloaded.GetAll().Select(record => record.Id));
+        Assert.Equal(preservedRecords[0].Id, reloaded.ActiveGatewayId);
+        foreach (var record in preservedRecords)
+        {
+            Assert.Equal(
+                record.Id,
+                File.ReadAllText(Path.Combine(
+                    reloaded.GetIdentityDirectory(record.Id),
+                    "identity.marker")));
+        }
+        foreach (var record in staleRecords)
+            Assert.False(Directory.Exists(reloaded.GetIdentityDirectory(record.Id)));
+    }
+
+    [Fact]
+    public async Task CleanupStaleGateway_IdentityDeleteFailure_RestoresOnlyFailedRecordForRetry()
+    {
+        var ctx = CreateContext();
+        var registry = new GatewayRegistry(_tempDir);
+        registry.Load();
+        foreach (var id in new[] { "blocked-managed", "clean-managed" })
+        {
+            registry.AddOrUpdate(new GatewayRecord
+            {
+                Id = id,
+                Url = ctx.GatewayUrl!,
+                IsLocal = true,
+                SetupManagedDistroName = ctx.DistroName,
+            });
+            var identityDir = registry.GetIdentityDirectory(id);
+            Directory.CreateDirectory(identityDir);
+            File.WriteAllText(Path.Combine(identityDir, "identity.marker"), id);
+        }
+        registry.SetActive("blocked-managed");
+        registry.Save();
+
+        var blockedIdentityPath = Path.Combine(
+            registry.GetIdentityDirectory("blocked-managed"),
+            "identity.marker");
+        await using (File.Open(
+            blockedIdentityPath,
+            FileMode.Open,
+            FileAccess.Read,
+            FileShare.None))
+        {
+            var error = await Assert.ThrowsAsync<AggregateException>(
+                () => new CleanupStaleGatewayStep().ExecuteAsync(
+                    ctx,
+                    CancellationToken.None));
+
+            Assert.Contains(
+                "registry records were restored",
+                error.Message,
+                StringComparison.Ordinal);
+            var afterFailure = new GatewayRegistry(_tempDir);
+            afterFailure.Load();
+            Assert.NotNull(afterFailure.GetById("blocked-managed"));
+            Assert.Null(afterFailure.GetById("clean-managed"));
+            Assert.Equal("blocked-managed", afterFailure.ActiveGatewayId);
+            Assert.True(Directory.Exists(
+                afterFailure.GetIdentityDirectory("blocked-managed")));
+            Assert.False(Directory.Exists(
+                afterFailure.GetIdentityDirectory("clean-managed")));
+        }
+
+        var retry = await new CleanupStaleGatewayStep().ExecuteAsync(
+            ctx,
+            CancellationToken.None);
+
+        Assert.True(retry.IsSuccess);
+        var afterRetry = new GatewayRegistry(_tempDir);
+        afterRetry.Load();
+        Assert.Empty(afterRetry.GetAll());
+        Assert.Null(afterRetry.ActiveGatewayId);
+        Assert.False(Directory.Exists(
+            afterRetry.GetIdentityDirectory("blocked-managed")));
     }
 
     [Fact]
@@ -2235,6 +2400,89 @@ public class SetupStepsTests : IDisposable
     }
 
     [Fact]
+    public async Task WslPipeline_ReusesPreflightResultBeforeInstallingMissingPlatform()
+    {
+        var installed = false;
+        var commands = new FakeCommandRunner(args => args switch
+        {
+            ["--version"] when !installed => new CommandResult(
+                1,
+                "",
+                "Windows Subsystem for Linux is not installed. See https://aka.ms/wslinstall",
+                TimeSpan.Zero,
+                TimedOut: false),
+            ["--version"] => Ok("WSL version: 2.7.3.0\n"),
+            ["--status"] => Ok("Default Version: 2\n"),
+            _ => Fail($"unexpected args: {string.Join(' ', args)}"),
+        });
+        var ctx = CreateContext(commands: commands);
+        var ensure = new EnsureWslPlatformStep(
+            (_, _) =>
+            {
+                installed = true;
+                return Task.FromResult(StepResult.Ok("installed"));
+            },
+            reusePreflightResult: true);
+        var pipeline = new SetupPipeline([new PreflightWslStep(), ensure]);
+
+        var result = await pipeline.RunAsync(ctx);
+
+        Assert.Equal(PipelineOutcome.Success, result.Outcome);
+        Assert.Equal(2, commands.Calls.Count(call => call.Arguments is ["--version"]));
+        Assert.Single(commands.Calls, call => call.Arguments is ["--status"]);
+    }
+
+    [Fact]
+    public async Task WslPipeline_ReusesReadyPreflightResultWithoutReinspection()
+    {
+        var installCalls = 0;
+        var commands = new FakeCommandRunner(args => args switch
+        {
+            ["--version"] => Ok("WSL version: 2.7.3.0\n"),
+            ["--status"] => Ok("Default Version: 2\n"),
+            _ => Fail($"unexpected args: {string.Join(' ', args)}"),
+        });
+        var ctx = CreateContext(commands: commands);
+        var ensure = new EnsureWslPlatformStep(
+            (_, _) =>
+            {
+                installCalls++;
+                return Task.FromResult(StepResult.Ok("installed"));
+            },
+            reusePreflightResult: true);
+        var pipeline = new SetupPipeline([new PreflightWslStep(), ensure]);
+
+        var result = await pipeline.RunAsync(ctx);
+
+        Assert.Equal(PipelineOutcome.Success, result.Outcome);
+        Assert.Equal(0, installCalls);
+        Assert.Single(commands.Calls, call => call.Arguments is ["--version"]);
+        Assert.Single(commands.Calls, call => call.Arguments is ["--status"]);
+    }
+
+    [Fact]
+    public async Task WslPipeline_BoundsHungVersionInspectionToOneProbe()
+    {
+        var commands = new FakeCommandRunner(args => args is ["--version"]
+            ? new CommandResult(-1, "", "", TimeSpan.FromSeconds(5), TimedOut: true)
+            : Fail($"unexpected args: {string.Join(' ', args)}"));
+        var ctx = CreateContext(commands: commands);
+        var pipeline = new SetupPipeline(
+            [
+                new PreflightWslStep(),
+                new EnsureWslPlatformStep(
+                    (_, _) => Task.FromResult(StepResult.Ok("installed")),
+                    reusePreflightResult: true),
+            ]);
+
+        var result = await pipeline.RunAsync(ctx);
+
+        Assert.Equal(PipelineOutcome.Failed, result.Outcome);
+        Assert.Equal("preflight-wsl", result.FailedStepId);
+        Assert.Single(commands.Calls, call => call.Arguments is ["--version"]);
+    }
+
+    [Fact]
     public async Task EnsureWslPlatform_InstallsOnlyAfterReadOnlyPreflight()
     {
         var installed = false;
@@ -2265,6 +2513,162 @@ public class SetupStepsTests : IDisposable
         Assert.Equal(1, installCalls);
         Assert.Equal(WslViabilityKind.Ready, ctx.WslViability?.Kind);
         Assert.Equal(3, commands.Calls.Count);
+    }
+
+    [Fact]
+    public async Task EnsureWslPlatform_StandaloneIgnoresCachedReadyResult()
+    {
+        var installed = false;
+        var installCalls = 0;
+        var commands = new FakeCommandRunner(args => args switch
+        {
+            ["--version"] when !installed => new CommandResult(
+                1,
+                "",
+                "Windows Subsystem for Linux is not installed. See https://aka.ms/wslinstall",
+                TimeSpan.Zero,
+                TimedOut: false),
+            ["--version"] => Ok("WSL version: 2.7.3.0\n"),
+            ["--status"] => Ok("Default Version: 2\n"),
+            _ => Fail($"unexpected args: {string.Join(' ', args)}"),
+        });
+        var ctx = CreateContext(commands: commands);
+        ctx.WslViability = new WslViabilityResult(
+            WslViabilityKind.Ready,
+            "stale ready",
+            string.Empty);
+        var step = new EnsureWslPlatformStep((_, _) =>
+        {
+            installCalls++;
+            installed = true;
+            return Task.FromResult(StepResult.Ok("installed"));
+        });
+
+        var result = await step.ExecuteAsync(ctx, CancellationToken.None);
+
+        Assert.Equal(StepOutcome.Success, result.Outcome);
+        Assert.Equal(1, installCalls);
+        Assert.Equal(3, commands.Calls.Count);
+        Assert.Equal(WslViabilityKind.Ready, ctx.WslViability?.Kind);
+    }
+
+    [Fact]
+    public async Task EnsureWslPlatform_StandaloneIgnoresCachedInstallableResult()
+    {
+        var installCalls = 0;
+        var commands = new FakeCommandRunner(args => args switch
+        {
+            ["--version"] => Ok("WSL version: 2.7.3.0\n"),
+            ["--status"] => Ok("Default Version: 2\n"),
+            _ => Fail($"unexpected args: {string.Join(' ', args)}"),
+        });
+        var ctx = CreateContext(commands: commands);
+        ctx.WslViability = new WslViabilityResult(
+            WslViabilityKind.Installable,
+            "stale missing",
+            string.Empty);
+        var step = new EnsureWslPlatformStep((_, _) =>
+        {
+            installCalls++;
+            return Task.FromResult(StepResult.Ok("installed"));
+        });
+
+        var result = await step.ExecuteAsync(ctx, CancellationToken.None);
+
+        Assert.Equal(StepOutcome.Success, result.Outcome);
+        Assert.Equal(0, installCalls);
+        Assert.Equal(2, commands.Calls.Count);
+        Assert.Equal(WslViabilityKind.Ready, ctx.WslViability?.Kind);
+    }
+
+    [Fact]
+    public async Task PreflightWsl_ClearsCachedResultBeforeCanceledInspection()
+    {
+        var commands = new FakeCommandRunner(
+            _ => Ok(),
+            runWithCancellation: (_, _, _, cancellationToken) =>
+                throw new OperationCanceledException(cancellationToken));
+        var ctx = CreateContext(commands: commands);
+        ctx.WslViability = new WslViabilityResult(
+            WslViabilityKind.Ready,
+            "stale ready",
+            string.Empty);
+
+        await Assert.ThrowsAsync<OperationCanceledException>(
+            () => new PreflightWslStep().ExecuteAsync(ctx, CancellationToken.None));
+
+        Assert.Null(ctx.WslViability);
+    }
+
+    [Fact]
+    public async Task EnsureWslPlatform_StandaloneClearsCachedResultBeforeCanceledInspection()
+    {
+        var commands = new FakeCommandRunner(
+            _ => Ok(),
+            runWithCancellation: (_, _, _, cancellationToken) =>
+                throw new OperationCanceledException(cancellationToken));
+        var ctx = CreateContext(commands: commands);
+        ctx.WslViability = new WslViabilityResult(
+            WslViabilityKind.Ready,
+            "stale ready",
+            string.Empty);
+
+        await Assert.ThrowsAsync<OperationCanceledException>(
+            () => new EnsureWslPlatformStep().ExecuteAsync(ctx, CancellationToken.None));
+
+        Assert.Null(ctx.WslViability);
+    }
+
+    [Fact]
+    public async Task EnsureWslPlatform_ClearsPreflightResultBeforeCanceledInstallation()
+    {
+        var commands = new FakeCommandRunner(_ =>
+            Fail("The cached same-run preflight result should be reused."));
+        var ctx = CreateContext(commands: commands);
+        ctx.WslViability = new WslViabilityResult(
+            WslViabilityKind.Installable,
+            "current-run missing",
+            string.Empty);
+        using var cts = new CancellationTokenSource();
+        var step = new EnsureWslPlatformStep(
+            (_, cancellationToken) =>
+            {
+                cts.Cancel();
+                throw new OperationCanceledException(cancellationToken);
+            },
+            reusePreflightResult: true);
+
+        await Assert.ThrowsAsync<OperationCanceledException>(
+            () => step.ExecuteAsync(ctx, cts.Token));
+        Assert.Null(ctx.WslViability);
+    }
+
+    [Fact]
+    public async Task EnsureWslPlatform_ClearsPreflightResultBeforeCanceledPostInstallInspection()
+    {
+        var commands = new FakeCommandRunner(
+            _ => Ok(),
+            runWithCancellation: (_, _, _, cancellationToken) =>
+            {
+                throw new OperationCanceledException(cancellationToken);
+            });
+        var ctx = CreateContext(commands: commands);
+        ctx.WslViability = new WslViabilityResult(
+            WslViabilityKind.Installable,
+            "current-run missing",
+            string.Empty);
+        using var cts = new CancellationTokenSource();
+        var step = new EnsureWslPlatformStep(
+            (_, _) =>
+            {
+                cts.Cancel();
+                return Task.FromResult(StepResult.Ok("installed"));
+            },
+            reusePreflightResult: true);
+
+        await Assert.ThrowsAsync<OperationCanceledException>(
+            () => step.ExecuteAsync(ctx, cts.Token));
+        Assert.Null(ctx.WslViability);
     }
 
     [Fact]
@@ -2378,10 +2782,74 @@ public class SetupStepsTests : IDisposable
         var result = await step.ExecuteAsync(ctx, CancellationToken.None);
 
         Assert.Equal(StepOutcome.FailedTerminal, result.Outcome);
+        Assert.True(result.RequiresRestart);
         Assert.Contains("restarted", result.Message, StringComparison.OrdinalIgnoreCase);
         Assert.Contains("Reboot Windows", result.Message);
         Assert.Equal(1, installCalls);
         Assert.Equal(WslViabilityKind.Installable, ctx.WslViability?.Kind);
+        Assert.Equal(4, commands.Calls.Count);
+    }
+
+    [Fact]
+    public async Task EnsureWslPlatform_PreservesRestartRequiredFromInstaller()
+    {
+        var commands = new FakeCommandRunner(args => args switch
+        {
+            ["--version"] => Ok("WSL version: 2.7.3.0\n"),
+            ["--status"] => new CommandResult(
+                1,
+                "",
+                "Error code: Wsl/WSL_E_WSL_OPTIONAL_COMPONENT_REQUIRED",
+                TimeSpan.Zero,
+                TimedOut: false),
+            _ => Fail($"unexpected args: {string.Join(' ', args)}"),
+        });
+        var ctx = CreateContext(commands: commands);
+        var installerResult = StepResult.RestartRequired("installer requires restart");
+        var step = new EnsureWslPlatformStep((_, _) => Task.FromResult(installerResult));
+
+        var result = await step.ExecuteAsync(ctx, CancellationToken.None);
+
+        Assert.Same(installerResult, result);
+        Assert.Equal(StepOutcome.FailedTerminal, result.Outcome);
+        Assert.True(result.RequiresRestart);
+        Assert.Equal("installer requires restart", result.Message);
+        Assert.Equal(2, commands.Calls.Count);
+    }
+
+    [Fact]
+    public async Task EnsureWslPlatform_RequiresRestartWhenPostInstallStatusLooksLikeFirmwareFailure()
+    {
+        var installed = false;
+        var commands = new FakeCommandRunner(args => args switch
+        {
+            ["--version"] => Ok("WSL version: 2.7.13.0\n"),
+            ["--status"] when !installed => new CommandResult(
+                1,
+                "",
+                "Error code: Wsl/WSL_E_WSL_OPTIONAL_COMPONENT_REQUIRED",
+                TimeSpan.Zero,
+                TimedOut: false),
+            ["--status"] => Ok(
+                "WSL2 is unable to start since virtualization is not enabled on this machine. "
+                + "Please ensure the 'Virtual Machine Platform' optional component is enabled "
+                + "and virtualization is turned on in your computer's firmware settings."),
+            _ => Fail($"unexpected args: {string.Join(' ', args)}"),
+        });
+        var ctx = CreateContext(commands: commands);
+        var step = new EnsureWslPlatformStep((_, _) =>
+        {
+            installed = true;
+            return Task.FromResult(StepResult.Ok("installed"));
+        });
+
+        var result = await step.ExecuteAsync(ctx, CancellationToken.None);
+
+        Assert.Equal(StepOutcome.FailedTerminal, result.Outcome);
+        Assert.True(result.RequiresRestart);
+        Assert.Contains("Reboot Windows", result.Message);
+        Assert.DoesNotContain("firmware", result.Message, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("BIOS", result.Message, StringComparison.OrdinalIgnoreCase);
         Assert.Equal(4, commands.Calls.Count);
     }
 
@@ -4845,6 +5313,19 @@ public class SetupStepsTests : IDisposable
     }
 
     [Fact]
+    public void WindowsNodeContext_IsMissingDistroResult_InspectsBothOutputStreams()
+    {
+        var result = new CommandResult(
+            -1,
+            "There is no distribution with the supplied name.",
+            "wsl: warning: ignored setting",
+            TimeSpan.Zero,
+            TimedOut: false);
+
+        Assert.True(WindowsNodeBootstrapContextStep.IsMissingDistroResult(result));
+    }
+
+    [Fact]
     public async Task WindowsNodeContext_Execute_RunsInWslAsConfiguredUserAndResolvesWorkspace()
     {
         var commands = new FakeCommandRunner(
@@ -5274,10 +5755,103 @@ public class SetupStepsTests : IDisposable
     }
 
     [Fact]
+    public async Task WindowsNodeContext_Rollback_SkipsLegacyCleanupWhenDistroIsAbsent()
+    {
+        var commands = new FakeCommandRunner(
+            arguments =>
+            {
+                Assert.Equal(["--list", "--quiet"], arguments);
+                return Ok("Ubuntu\n");
+            });
+        var ctx = CreateContext(commands: commands);
+
+        await new WindowsNodeBootstrapContextStep().RollbackAsync(ctx, CancellationToken.None);
+
+        Assert.Empty(commands.WslCalls);
+        Assert.Single(commands.Calls);
+    }
+
+    [Fact]
+    public async Task WindowsNodeContext_Rollback_SkipsLegacyCleanupWhenWslHasNoDistributions()
+    {
+        var commands = new FakeCommandRunner(
+            arguments =>
+            {
+                Assert.Equal(["--list", "--quiet"], arguments);
+                return new CommandResult(
+                    1,
+                    "",
+                    "Windows Subsystem for Linux has no installed distributions.\n" +
+                    "Use 'wsl.exe --list --online' to list available distributions and " +
+                    "'wsl.exe --install <Distro>' to install.",
+                    TimeSpan.Zero,
+                    TimedOut: false);
+            });
+        var ctx = CreateContext(commands: commands);
+
+        await new WindowsNodeBootstrapContextStep().RollbackAsync(ctx, CancellationToken.None);
+
+        Assert.Empty(commands.WslCalls);
+        Assert.Single(commands.Calls);
+    }
+
+    [Fact]
+    public async Task WindowsNodeContext_Rollback_SkipsLegacyCleanupWhenWslExeCannotStart()
+    {
+        var commands = new FakeCommandRunner(
+            _ => new CommandResult(
+                -1,
+                "",
+                @"Failed to start process 'C:\Windows\System32\wsl.exe': The system cannot find the file specified.",
+                TimeSpan.Zero,
+                TimedOut: false));
+        var ctx = CreateContext(commands: commands);
+
+        await new WindowsNodeBootstrapContextStep().RollbackAsync(ctx, CancellationToken.None);
+
+        Assert.Empty(commands.WslCalls);
+        Assert.Single(commands.Calls);
+    }
+
+    [Fact]
+    public async Task WindowsNodeContext_Rollback_FailsWhenDistroInspectionIsAmbiguous()
+    {
+        var commands = new FakeCommandRunner(_ => Fail("Access is denied."));
+        var ctx = CreateContext(commands: commands);
+
+        var error = await Assert.ThrowsAsync<InvalidOperationException>(
+            () => new WindowsNodeBootstrapContextStep().RollbackAsync(ctx, CancellationToken.None));
+
+        Assert.Contains(
+            "Could not inspect WSL distributions while cleaning legacy Windows node context",
+            error.Message);
+        Assert.Empty(commands.WslCalls);
+    }
+
+    [Fact]
+    public async Task WindowsNodeContext_Rollback_FailsWhenDistroInspectionTimesOut()
+    {
+        var commands = new FakeCommandRunner(_ => TimedOut());
+        var ctx = CreateContext(commands: commands);
+
+        var error = await Assert.ThrowsAsync<InvalidOperationException>(
+            () => new WindowsNodeBootstrapContextStep().RollbackAsync(ctx, CancellationToken.None));
+
+        Assert.Contains(
+            "Could not inspect WSL distributions while cleaning legacy Windows node context",
+            error.Message);
+        Assert.Empty(commands.WslCalls);
+    }
+
+    [Fact]
     public async Task WindowsNodeContext_Rollback_CleansLegacyEffectiveWorkspaceWithoutStateFile()
     {
         var commands = new FakeCommandRunner(
-            _ => Fail("unexpected RunAsync"),
+            arguments =>
+            {
+                Assert.Equal(["--list", "--quiet"], arguments);
+                return Ok("OpenClawGateway\n");
+            },
             (_, command, _) =>
             {
                 if (command.Contains("getent passwd"))

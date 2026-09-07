@@ -1,6 +1,5 @@
 using System.Diagnostics;
 using System.Globalization;
-using System.Text;
 using System.Text.RegularExpressions;
 using OpenClaw.Connection.LocalAi;
 using OpenClaw.Shared.Inference;
@@ -15,11 +14,13 @@ internal sealed record LocalAiGpuLoadEvidence(
     int TotalLayers,
     long TotalGpuVisibleBytes,
     long FreeGpuVisibleBytesBeforeLoad,
-    long FreeGpuVisibleBytesAfterLoad,
+    long? FreeGpuVisibleBytesAfterLoad,
     long? CudaModelBufferBytes)
 {
-    public long UsedGpuVisibleBytesAfterLoad => TotalGpuVisibleBytes - FreeGpuVisibleBytesAfterLoad;
-    public long LoadDeltaBytes => FreeGpuVisibleBytesBeforeLoad - FreeGpuVisibleBytesAfterLoad;
+    public long? UsedGpuVisibleBytesAfterLoad =>
+        FreeGpuVisibleBytesAfterLoad is { } freeBytes ? TotalGpuVisibleBytes - freeBytes : null;
+    public long? LoadDeltaBytes =>
+        FreeGpuVisibleBytesAfterLoad is { } freeBytes ? FreeGpuVisibleBytesBeforeLoad - freeBytes : null;
 }
 
 internal interface ILocalAiGpuEvidenceProbe
@@ -34,11 +35,10 @@ internal interface ILocalAiGpuEvidenceProbe
 
 internal sealed partial class WindowsLocalAiGpuEvidenceProbe : ILocalAiGpuEvidenceProbe
 {
-    private const int MaximumLogBytes = 2 * 1024 * 1024;
     private readonly IHostHardwareProbe _hardwareProbe;
 
     public WindowsLocalAiGpuEvidenceProbe()
-        : this(new NvmlHostHardwareProbe())
+        : this(new CudaHostHardwareProbe())
     {
     }
 
@@ -58,14 +58,11 @@ internal sealed partial class WindowsLocalAiGpuEvidenceProbe : ILocalAiGpuEviden
 
         string cudaModule = FindCudaModule(processId);
         LocalAiGpuLogEvidence logEvidence = await ReadGpuLoadEvidenceAsync(paths, cancellationToken);
-        HostHardwareInfo current = _hardwareProbe.Probe();
-        GpuInfo before = FindGpu(baseline, selectedGpuId);
-        GpuInfo after = FindGpu(current, selectedGpuId);
-        if (before.GpuVisibleMemoryBytes is not > 0 || before.FreeGpuVisibleMemoryBytes is not >= 0 ||
-            after.GpuVisibleMemoryBytes != before.GpuVisibleMemoryBytes || after.FreeGpuVisibleMemoryBytes is not >= 0)
-        {
-            throw new InvalidDataException("The selected GPU memory evidence was incomplete or changed during model loading.");
-        }
+        (long totalBytes, long freeBeforeBytes, long? freeAfterBytes) = ResolveGpuMemoryEvidence(
+            selectedGpuId,
+            baseline,
+            logEvidence,
+            _hardwareProbe.Probe);
 
         return new LocalAiGpuLoadEvidence(
             processId,
@@ -73,10 +70,41 @@ internal sealed partial class WindowsLocalAiGpuEvidenceProbe : ILocalAiGpuEviden
             cudaModule,
             logEvidence.OffloadedLayers,
             logEvidence.TotalLayers,
+            totalBytes,
+            freeBeforeBytes,
+            freeAfterBytes,
+            logEvidence.CudaModelBufferBytes);
+    }
+
+    internal static (long TotalBytes, long FreeBeforeBytes, long? FreeAfterBytes) ResolveGpuMemoryEvidence(
+        string selectedGpuId,
+        HostHardwareInfo baseline,
+        LocalAiGpuLogEvidence logEvidence,
+        Func<HostHardwareInfo> currentProbe)
+    {
+        GpuInfo before = FindGpu(baseline, selectedGpuId);
+        if (before.GpuVisibleMemoryBytes is not > 0 || before.FreeGpuVisibleMemoryBytes is not >= 0)
+            throw new InvalidDataException("The selected GPU baseline memory evidence was incomplete.");
+
+        if (logEvidence.CudaModelBufferBytes is > 0)
+        {
+            return (
+                before.GpuVisibleMemoryBytes.Value,
+                before.FreeGpuVisibleMemoryBytes.Value,
+                null);
+        }
+
+        GpuInfo after = FindGpu(currentProbe(), selectedGpuId);
+        if (after.GpuVisibleMemoryBytes != before.GpuVisibleMemoryBytes ||
+            after.FreeGpuVisibleMemoryBytes is not >= 0)
+        {
+            throw new InvalidDataException("The selected GPU memory evidence was incomplete or changed during model loading.");
+        }
+
+        return (
             after.GpuVisibleMemoryBytes.Value,
             before.FreeGpuVisibleMemoryBytes.Value,
-            after.FreeGpuVisibleMemoryBytes.Value,
-            logEvidence.CudaModelBufferBytes);
+            after.FreeGpuVisibleMemoryBytes.Value);
     }
 
     internal static (int Offloaded, int Total) ParseFullOffloadEvidence(string log)
@@ -135,8 +163,8 @@ internal sealed partial class WindowsLocalAiGpuEvidenceProbe : ILocalAiGpuEviden
         do
         {
             cancellationToken.ThrowIfCancellationRequested();
-            string log = await ReadLogTailAsync(paths.StandardOutputLogPath, cancellationToken) + "\n" +
-                await ReadLogTailAsync(paths.StandardErrorLogPath, cancellationToken);
+            string log = await LocalAiLogTail.ReadCombinedTailAsync(
+                paths, LocalAiLogTail.GpuEvidenceTailBytes, cancellationToken);
             try
             {
                 return ParseGpuLoadEvidence(log);
@@ -149,27 +177,6 @@ internal sealed partial class WindowsLocalAiGpuEvidenceProbe : ILocalAiGpuEviden
         }
         while (DateTimeOffset.UtcNow < deadline);
         throw lastFailure ?? new InvalidDataException("llama-server GPU offload evidence was unavailable.");
-    }
-
-    private static async Task<string> ReadLogTailAsync(string path, CancellationToken cancellationToken)
-    {
-        if (!File.Exists(path))
-            return string.Empty;
-        await using var stream = new FileStream(
-            path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete,
-            16 * 1024, FileOptions.Asynchronous | FileOptions.SequentialScan);
-        long count = Math.Min(stream.Length, MaximumLogBytes);
-        stream.Seek(-count, SeekOrigin.End);
-        var bytes = new byte[checked((int)count)];
-        int read = 0;
-        while (read < bytes.Length)
-        {
-            int next = await stream.ReadAsync(bytes.AsMemory(read), cancellationToken);
-            if (next == 0)
-                break;
-            read += next;
-        }
-        return Encoding.UTF8.GetString(bytes, 0, read);
     }
 
     private static GpuInfo FindGpu(HostHardwareInfo hardware, string selectedGpuId) =>
@@ -210,7 +217,7 @@ internal sealed record LocalAiGpuLogEvidence(
 public sealed class CaptureLocalAiGpuBaselineStep : SetupStep
 {
     private readonly IHostHardwareProbe _probe;
-    public CaptureLocalAiGpuBaselineStep() : this(new NvmlHostHardwareProbe()) { }
+    public CaptureLocalAiGpuBaselineStep() : this(new CudaHostHardwareProbe()) { }
     internal CaptureLocalAiGpuBaselineStep(IHostHardwareProbe probe) =>
         _probe = probe ?? throw new ArgumentNullException(nameof(probe));
 
@@ -340,8 +347,11 @@ public sealed class VerifyLocalAiGpuLoadStep : SetupStep
         }
         ctx.LocalAiResolvedInstall = restartedInstall;
 
+        string memoryEvidence = evidence!.LoadDeltaBytes is { } loadDeltaBytes
+            ? $"{loadDeltaBytes} bytes of allocator-reported load growth"
+            : $"{evidence.CudaModelBufferBytes.GetValueOrDefault()} bytes in CUDA model buffers";
         return StepResult.Ok(
-            $"Verified {evidence!.OffloadedLayers}/{evidence.TotalLayers} GPU layers and {evidence.LoadDeltaBytes} bytes of load growth; on-demand loading remains enabled.");
+            $"Verified {evidence.OffloadedLayers}/{evidence.TotalLayers} GPU layers and {memoryEvidence}; on-demand loading remains enabled.");
     }
 
     private static Task<LocalAiResolvedInstall?> LoadResolvedInstallAsync(
@@ -357,7 +367,7 @@ public sealed class VerifyLocalAiGpuLoadStep : SetupStep
         if (minimumDeltaBytes <= 0 || evidence.OffloadedLayers != evidence.TotalLayers)
             return false;
 
-        if (evidence.LoadDeltaBytes >= minimumDeltaBytes)
+        if (evidence.LoadDeltaBytes is { } loadDeltaBytes && loadDeltaBytes >= minimumDeltaBytes)
             return true;
 
         return evidence.CudaModelBufferBytes is { } cudaModelBufferBytes &&

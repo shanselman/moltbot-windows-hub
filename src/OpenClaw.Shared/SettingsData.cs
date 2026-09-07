@@ -53,6 +53,18 @@ public record class SettingsData
     public bool CameraRecordingConsentGiven { get; set; } = false;
     public bool NodeLocationEnabled { get; set; } = true;
     public bool LocationConsentGiven { get; set; } = false;
+    /// <summary>
+    /// Maximum time (ms) to wait for a human response to a screen/camera/location
+    /// capture consent prompt before failing closed (treating the capture as
+    /// denied). Protects unattended or non-interactive callers - a local MCP
+    /// HTTP client, an automated agent, a hosted test - from hanging forever on
+    /// a consent window nobody can answer. Never auto-grants: a timeout always
+    /// resolves to denial, the same fail-closed direction Windows' own secure
+    /// desktop consent prompts (UAC) take when nobody responds. A real user who
+    /// takes longer than this to decide can simply retry; the prompt reappears.
+    /// Default 120000ms (2 minutes).
+    /// </summary>
+    public int CaptureConsentTimeoutMs { get; set; } = 120_000;
     public bool NodeBrowserProxyEnabled { get; set; } = true;
 
     /// <summary>

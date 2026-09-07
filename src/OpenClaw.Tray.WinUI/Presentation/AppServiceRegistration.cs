@@ -43,7 +43,7 @@ internal static class AppServiceRegistration
         // its Saved-event subscription during shutdown.
         services.AddSingleton<ISettingsStore, SettingsStore>();
         services.AddSingleton<IPermissionsPageRuntimeSource, PermissionsPageRuntimeSource>();
-        services.AddSingleton<IHostHardwareProbe, NvmlHostHardwareProbe>();
+        services.AddSingleton<IHostHardwareProbe, CudaHostHardwareProbe>();
 
         // Container-owned navigation lifetime manager (disposed with the root provider).
         services.AddSingleton<NavigationScopeManager>();

@@ -91,7 +91,7 @@ public sealed class ReleaseSigningWorkflowTests
         Assert.Contains("/DvcRedist=vc_redist.arm64.exe", workflow);
         Assert.DoesNotContain("copy vc_redist.x64.exe publish-x64", workflow);
         Assert.DoesNotContain("copy vc_redist.x64.exe publish-arm64", workflow);
-        Assert.Contains("OpenClawTray-${{ needs.test.outputs.semVer }}-win-arm64.zip", workflow);
+        Assert.Contains("OpenClawTray-${{ needs.metadata.outputs.semVer }}-win-arm64.zip", workflow);
         Assert.Contains("AfterInstall: InstallVCRuntime", installer);
         Assert.Contains("Exec(", installer);
         Assert.Contains("ResultCode = 3010", installer);
@@ -120,7 +120,7 @@ public sealed class ReleaseSigningWorkflowTests
         var workflow = File.ReadAllText(Path.Combine(TestRepositoryPaths.GetRepositoryRoot(), ".github", "workflows", "ci.yml"));
 
         Assert.Contains("if: false # MSIX distribution is paused; ship Inno setup and portable ZIP artifacts only.", workflow);
-        Assert.Contains("needs: [repo-hygiene, test, e2etests, build]", workflow);
+        Assert.Contains("needs: [change-classification, metadata, build-x64, build-arm64, ci-gate]", workflow);
         Assert.DoesNotContain("Download win-x64 MSIX artifact", workflow);
         Assert.DoesNotContain("Download win-arm64 MSIX artifact", workflow);
         Assert.DoesNotContain("Sign Release MSIX Packages", workflow);

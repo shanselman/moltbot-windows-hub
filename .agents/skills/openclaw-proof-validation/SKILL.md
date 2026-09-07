@@ -66,7 +66,7 @@ $token = Get-Content $tokenPath -Raw
 
 1. Register the command in the same `INodeCapability` path used by the gateway node.
 2. Add/update `McpToolBridge.CommandDescriptions`.
-3. Update `src/OpenClaw.WinNode.Cli/skill.md` with input shape, output shape, side effects, permissions, and examples.
+3. Update `.agents/skills/winnode/SKILL.md` with input shape, output shape, side effects, permissions, and examples.
 4. Add/update capability, MCP bridge, `winnode`, and UI/gateway tests as applicable.
 5. Prove discovery and invocation with `winnode` or raw MCP JSON-RPC.
 6. Prove the gateway path when the behavior is gateway-mediated and a gateway is available.

@@ -8,6 +8,7 @@ using OpenClaw.Shared;
 using OpenClaw.Shared.Inference;
 using OpenClaw.Shared.Inference.Catalog;
 using OpenClaw.SetupEngine.UI;
+using System.ComponentModel;
 using System.Diagnostics;
 
 namespace OpenClaw.SetupEngine.UI.Pages;
@@ -30,12 +31,13 @@ public sealed partial class CapabilitiesPage : Page
     private bool _localAiNetworkingConsentRequired;
     private HostHardwareInfo? _localAiHardware;
     private string? _localAiRecommendedModelId;
-    private long? _localAiSelectedGpuCapacityBytes;
     private WslGlobalConfigStatus? _localAiNetworkingStatus;
     private string _localAiUnavailableReason = string.Empty;
     private readonly LocalAiSetupAvailabilityCoordinator _localAiAvailability = new();
     private bool _treatBundledAllOnAsPlaceholder;
     private bool _forceLocalAiNetworkingConsent;
+    private CancellationTokenSource? _tailscaleStatusCancellation;
+    private int _tailscaleStatusGeneration;
     private int _step = 1;
 
     // Capability profiles preset only runtime-gated settings. Device info/status
@@ -121,6 +123,7 @@ public sealed partial class CapabilitiesPage : Page
     protected override void OnNavigatedFrom(NavigationEventArgs e)
     {
         _localAiAvailability.CancelCurrent();
+        CancelTailscaleStatusProbe();
         if (_setupWindow is not null)
         {
             _setupWindow.Activated -= SetupWindow_Activated;
@@ -279,7 +282,7 @@ public sealed partial class CapabilitiesPage : Page
         SetupWindow? setupWindow = _setupWindow;
         Task<HostHardwareInfo> hardwareTask = setupWindow is not null
             ? setupWindow.GetLocalAiHardwareAsync(forceRefresh: refreshHardwareProbe)
-            : Task.Run(() => new NvmlHostHardwareProbe().Probe());
+            : Task.Run(() => new CudaHostHardwareProbe().Probe());
 
         string? hardwareReason = null;
         LocalInferenceEligibilityResult? eligibility = null;
@@ -297,7 +300,7 @@ public sealed partial class CapabilitiesPage : Page
             LocalInferenceEligibilityResult deviceEligibility = LocalInferenceEligibility.Evaluate(_localAiHardware);
             if (deviceEligibility.FailureCode == LocalInferenceEligibilityFailureCode.HardwareFactsIncomplete)
             {
-                // Incomplete facts (a partial/transient NVML read) are inconclusive, not a
+                // Incomplete facts (a partial/transient CUDA read) are inconclusive, not a
                 // definitive "this device cannot run Local AI". Report it the same way as a
                 // thrown probe failure so recheck stays available instead of the option being
                 // permanently disabled.
@@ -310,12 +313,9 @@ public sealed partial class CapabilitiesPage : Page
                 }
                 return;
             }
-            _localAiSelectedGpuCapacityBytes = deviceEligibility.DetectedTotalMemoryBytes;
-            _localAiRecommendedModelId = LocalModelCatalog.Models
-                .OrderByDescending(model => model.Weights.SizeBytes)
-                .FirstOrDefault(model =>
-                    _localAiSelectedGpuCapacityBytes is { } capacityBytes &&
-                    LocalInferenceEligibility.GetRequiredMemoryBytes(model) <= capacityBytes)?.Id;
+            _localAiRecommendedModelId = deviceEligibility.CanInstall
+                ? deviceEligibility.Plan?.Model.Id
+                : null;
 
             if (!deviceEligibility.CanInstall || deviceEligibility.Plan is null || deviceEligibility.SelectedGpu is null)
             {
@@ -401,6 +401,7 @@ public sealed partial class CapabilitiesPage : Page
         SetLocalAiOptionAvailability(isAvailable: true);
         _localAiSelectionEligible = eligibility.Status == LocalInferenceEligibilityStatus.Eligible;
         _config!.LocalAi.SelectedModelId ??= eligibility.Plan!.Model.Id;
+        _config.LocalAi.SelectedProfileId = eligibility.Plan!.Profile.Id;
         PopulateLocalAiModels();
         _suppressLocalAiToggle = true;
         LocalAiToggle.IsOn = _config!.LocalAi.Enabled;
@@ -630,22 +631,25 @@ public sealed partial class CapabilitiesPage : Page
         _suppressLocalAiSelection = true;
         LocalAiModelSelector.Items.Clear();
         int selectedIndex = 0;
-        LocalModelInfo[] fittingModels = LocalModelCatalog.Models
-            .Where(model =>
-                _localAiSelectedGpuCapacityBytes is { } capacityBytes &&
-                LocalInferenceEligibility.GetRequiredMemoryBytes(model) <= capacityBytes)
+        (LocalModelInfo Model, LocalInferencePlan Plan)[] fittingModels = LocalModelCatalog.Models
+            .Select(model => (Model: model, Eligibility: LocalInferenceEligibility.Evaluate(_localAiHardware!, model.Id)))
+            .Where(candidate => candidate.Eligibility.CanInstall && candidate.Eligibility.Plan is not null)
+            .Select(candidate => (candidate.Model, candidate.Eligibility.Plan!))
             .ToArray();
         for (int index = 0; index < fittingModels.Length; index++)
         {
-            LocalModelInfo model = fittingModels[index];
+            (LocalModelInfo model, LocalInferencePlan plan) = fittingModels[index];
             bool isRecommended = string.Equals(
                 _localAiRecommendedModelId,
                 model.Id,
                 StringComparison.OrdinalIgnoreCase);
             LocalAiModelSelector.Items.Add(new ComboBoxItem
             {
-                Content = $"{model.DisplayName} ({FormatSize(model.Weights.SizeBytes)})" +
-                    (isRecommended ? " - Recommended" : string.Empty),
+                Content = $"{SetupReviewSummaryBuilder.DisplayModelName(model)} " +
+                    $"({FormatSize(model.Weights.SizeBytes)}, " +
+                    $"{FormatContext(plan.Profile.ContextTokens)}, " +
+                    $"{LocalModelCatalog.ToDisplayCacheType(plan.Profile.KeyCachePrecision)} KV)" +
+                    (isRecommended ? " (Recommended)" : string.Empty),
                 Tag = model.Id,
             });
             string? selectedModelId = _config!.LocalAi.SelectedModelId ?? _localAiRecommendedModelId;
@@ -731,30 +735,32 @@ public sealed partial class CapabilitiesPage : Page
         if (eligibility.Plan is not { } plan || eligibility.SelectedGpu is not { } gpu)
         {
             _localAiSelectionEligible = false;
+            _config!.LocalAi.SelectedProfileId = null;
             LocalAiHardwareStatusText.Text = "This model is not qualified for the detected hardware.";
             UpdatePrimaryButtonState();
             return;
         }
 
         _localAiSelectionEligible = eligibility.Status == LocalInferenceEligibilityStatus.Eligible;
+        _config!.LocalAi.SelectedProfileId = plan.Profile.Id;
         LocalAiHardwareStatusText.Text = eligibility.Status switch
         {
             LocalInferenceEligibilityStatus.Eligible =>
-                $"Detected {gpu.Name} with {FormatOptionalSize(eligibility.DetectedTotalMemoryBytes)}. " +
-                $"The selected model requires {FormatSize(eligibility.RequiredTotalMemoryBytes)}.",
+                $"{FormatMemorySize(eligibility.RequiredTotalMemoryBytes)} required · " +
+                $"{FormatOptionalMemorySize(eligibility.DetectedTotalMemoryBytes)} CUDA-visible on {gpu.Name}",
             LocalInferenceEligibilityStatus.EligibleButBusy =>
-                $"Detected {gpu.Name}, but only {FormatOptionalSize(eligibility.AvailableFreeMemoryBytes)} of " +
-                $"{FormatSize(eligibility.RequiredFreeMemoryBytes)} required GPU memory is currently free. " +
+                $"Detected {gpu.Name}, but only {FormatOptionalMemorySize(eligibility.AvailableFreeMemoryBytes)} of " +
+                $"{FormatMemorySize(eligibility.RequiredFreeMemoryBytes)} required GPU memory is currently free. " +
                 "Close GPU applications and retry setup.",
             _ => DescribeLocalAiUnavailable(eligibility),
         };
         LocalAiEngineDetailText.Text =
             "llama-server for Windows; " +
-            $"{FormatSize(plan.Runtime.Artifacts.Sum(artifact => artifact.SizeBytes))} verified download";
+            $"{FormatSize(plan.Runtime.Artifacts.Sum(artifact => artifact.SizeBytes))} verified download; " +
+            "loads on first request";
         LocalAiModelDetailText.Text =
-            $"{plan.Model.DisplayName}, {FormatSize(plan.Model.Weights.SizeBytes)} from Hugging Face";
-        LocalAiSettingsDetailText.Text =
-            $"{plan.Model.Recipe.ContextTokens / 1024}K context, FP16 KV cache, full CUDA offload, loads on first request";
+            $"{SetupReviewSummaryBuilder.DisplayModelName(plan.Model)}, " +
+            $"{FormatSize(plan.Model.Weights.SizeBytes)} from Hugging Face";
         UpdatePrimaryButtonState();
     }
 
@@ -783,8 +789,18 @@ public sealed partial class CapabilitiesPage : Page
     private static string FormatSize(long bytes) =>
         $"{bytes / 1_000_000_000d:0.#} GB";
 
-    private static string FormatOptionalSize(long? bytes) =>
-        bytes is { } value ? FormatSize(value) : "an unknown amount";
+    private static string FormatMemorySize(long bytes) =>
+        $"{bytes / (1024d * 1024d * 1024d):0.#} GiB";
+
+    private static string FormatOptionalMemorySize(long? bytes) =>
+        bytes is { } value ? FormatMemorySize(value) : "an unknown amount";
+
+    private static string FormatContext(int tokens) =>
+        tokens % 1024 == 0
+            ? $"{tokens / 1024}K"
+            : tokens % 1000 == 0
+                ? $"{tokens / 1000}K"
+                : $"{tokens:N0} tokens";
 
     private void TailscaleToggle_Toggled(object sender, RoutedEventArgs e)
     {
@@ -814,36 +830,50 @@ public sealed partial class CapabilitiesPage : Page
 
     private void UpdateTailscaleOptions()
     {
+        CancelTailscaleStatusProbe();
         var enabled = TailscaleToggle.IsOn == true;
         TailscaleOptions.Visibility = enabled ? Visibility.Visible : Visibility.Collapsed;
         TailscaleAuthKeyBox.Visibility = enabled && TailscaleAuthModeSelector.SelectedIndex == 1
             ? Visibility.Visible
             : Visibility.Collapsed;
-        if (enabled)
-            _ = RefreshWindowsTailscaleStatusAsync();
+        if (!enabled)
+            return;
+
+        var cancellation = new CancellationTokenSource();
+        _tailscaleStatusCancellation = cancellation;
+        _ = RefreshWindowsTailscaleStatusAsync(
+            _tailscaleStatusGeneration,
+            cancellation);
     }
 
-    private async Task RefreshWindowsTailscaleStatusAsync()
+    private async Task RefreshWindowsTailscaleStatusAsync(
+        int generation,
+        CancellationTokenSource cancellation)
     {
         TailscaleStatusText.Text = "Checking Windows Tailscale…";
         try
         {
             var path = PreflightWindowsTailscaleStep.ResolveWindowsTailscaleCliPath();
-            var result = await Task.Run(() =>
+            var psi = new ProcessStartInfo
             {
-                var psi = new ProcessStartInfo(path, "status --json")
-                {
-                    RedirectStandardOutput = true,
-                    RedirectStandardError = true,
-                    UseShellExecute = false,
-                    CreateNoWindow = true,
-                };
-                using var process = Process.Start(psi);
-                if (process is null) return (ExitCode: -1, Output: string.Empty);
-                var output = process.StandardOutput.ReadToEnd();
-                process.WaitForExit(5000);
-                return (ExitCode: process.ExitCode, Output: output);
-            });
+                FileName = path,
+                RedirectStandardOutput = true,
+                RedirectStandardError = true,
+                UseShellExecute = false,
+                CreateNoWindow = true,
+            };
+            psi.ArgumentList.Add("status");
+            psi.ArgumentList.Add("--json");
+            psi.ArgumentList.Add("--peers=false");
+            var result = await Task.Run(
+                () => BoundedProcessOutput.ReadAsync(
+                    psi,
+                    BoundedProcessOutput.DefaultTimeoutMs,
+                    cancellation.Token),
+                cancellation.Token);
+            if (!IsCurrentTailscaleStatusProbe(generation, cancellation))
+                return;
+
             string? dnsName = null;
             string? tailnetDnsSuffix = null;
             if (result.ExitCode == 0 &&
@@ -862,8 +892,22 @@ public sealed partial class CapabilitiesPage : Page
                 ApplySetupReviewSummary(_config);
             }
         }
-        catch
+        catch (OperationCanceledException) when (cancellation.IsCancellationRequested)
         {
+        }
+        catch (Exception ex) when (
+            ex is Win32Exception or
+                IOException or
+                InvalidOperationException or
+                NotSupportedException or
+                AggregateException or
+                UnauthorizedAccessException)
+        {
+            if (!IsCurrentTailscaleStatusProbe(generation, cancellation))
+                return;
+
+            Trace.WriteLine(
+                $"CapabilitiesPage: Windows Tailscale status probe failed ({ex.GetType().Name}).");
             TailscaleStatusText.Text = "Windows Tailscale must be installed and signed in before setup can continue.";
             if (_config is not null && TailscaleToggle.IsOn == true)
             {
@@ -871,7 +915,28 @@ public sealed partial class CapabilitiesPage : Page
                 ApplySetupReviewSummary(_config);
             }
         }
+        finally
+        {
+            if (ReferenceEquals(_tailscaleStatusCancellation, cancellation))
+                _tailscaleStatusCancellation = null;
+            cancellation.Dispose();
+        }
     }
+
+    private void CancelTailscaleStatusProbe()
+    {
+        _tailscaleStatusGeneration++;
+        var cancellation = _tailscaleStatusCancellation;
+        _tailscaleStatusCancellation = null;
+        cancellation?.Cancel();
+    }
+
+    private bool IsCurrentTailscaleStatusProbe(
+        int generation,
+        CancellationTokenSource cancellation) =>
+        generation == _tailscaleStatusGeneration &&
+        ReferenceEquals(_tailscaleStatusCancellation, cancellation) &&
+        !cancellation.IsCancellationRequested;
 
     private string ProfileSummary()
     {

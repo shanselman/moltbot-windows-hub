@@ -56,6 +56,17 @@ internal static class LogFileLauncher
                 return;
             }
 
+            // Callers may pass a directory (the Local AI log folder) rather than a single file;
+            // opening its parent would show the wrong place.
+            if (Directory.Exists(realPath))
+            {
+                Process.Start(new ProcessStartInfo("explorer.exe", $"\"{realPath}\"")
+                {
+                    UseShellExecute = true,
+                });
+                return;
+            }
+
             var dir = Path.GetDirectoryName(realPath);
             if (!string.IsNullOrWhiteSpace(dir) && Directory.Exists(dir))
             {

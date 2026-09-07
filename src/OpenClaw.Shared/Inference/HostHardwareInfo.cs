@@ -32,17 +32,17 @@ public enum GpuVendor
 /// </param>
 /// <param name="FreeGpuVisibleMemoryBytes">Currently free CUDA-visible memory, or null when unknown.</param>
 /// <param name="SharedGpuMemoryBytes">
-/// GPU-addressable shared system memory reported by DXGI, or null when unknown.
+/// Legacy shared-memory field. CUDA-only probing leaves this null.
 /// This is not general available system RAM.
 /// </param>
 /// <param name="FreeSharedGpuMemoryBytes">
-/// Currently available shared GPU memory reported by DXGI, or null when unknown.
+/// Legacy shared-memory field. CUDA-only probing leaves this null.
 /// </param>
 /// <param name="DriverVersion">Display driver version, when known.</param>
 /// <param name="CudaMajorVersion">
 /// Major version of the CUDA driver API the display driver supports, when known.
 /// </param>
-/// <param name="StableId">A driver-provided stable adapter identifier, such as an NVML UUID.</param>
+/// <param name="StableId">A CUDA driver-provided stable adapter identifier.</param>
 public sealed record GpuInfo(
     GpuVendor Vendor,
     string Name,

@@ -142,6 +142,9 @@ public sealed class LocalAiConfig
 {
     public bool Enabled { get; set; }
     public string? SelectedModelId { get; set; }
+    /// <summary>Runtime-only effective profile selected from detected GPU capacity.</summary>
+    [JsonIgnore]
+    public string? SelectedProfileId { get; set; }
     /// <summary>Managed llama-server port. Zero selects a free loopback port during setup.</summary>
     public int Port { get; set; }
     public bool WslMirroredNetworkingConsent { get; set; }
@@ -446,12 +449,29 @@ public sealed class ConsoleExternalAuthorizationPresenter : IExternalAuthorizati
 
 public enum StepOutcome { Success, Skipped, Failed, FailedTerminal }
 
-public sealed record StepResult(StepOutcome Outcome, string? Message = null, Exception? Error = null)
+/// <summary>
+/// Root-cause evidence for a Local AI failure. The step message reports what OpenClaw observed
+/// (an HTTP status, a timeout); these are llama-server's own words about why, plus the directory
+/// holding its logs — which is not the setup log directory the UI otherwise links to.
+/// </summary>
+public sealed record LocalAiFailureDetail(IReadOnlyList<string> Diagnostics, string LogDirectory);
+
+public sealed record StepResult(
+    StepOutcome Outcome,
+    string? Message = null,
+    Exception? Error = null,
+    LocalAiFailureDetail? Detail = null)
 {
+    public bool RequiresRestart { get; init; }
+
     public static StepResult Ok(string? message = null) => new(StepOutcome.Success, message);
     public static StepResult Skip(string reason) => new(StepOutcome.Skipped, reason);
-    public static StepResult Fail(string message, Exception? ex = null) => new(StepOutcome.Failed, message, ex);
-    public static StepResult Terminal(string message, Exception? ex = null) => new(StepOutcome.FailedTerminal, message, ex);
+    public static StepResult Fail(string message, Exception? ex = null, LocalAiFailureDetail? detail = null) =>
+        new(StepOutcome.Failed, message, ex, detail);
+    public static StepResult Terminal(string message, Exception? ex = null, LocalAiFailureDetail? detail = null) =>
+        new(StepOutcome.FailedTerminal, message, ex, detail);
+    public static StepResult RestartRequired(string message) =>
+        new(StepOutcome.FailedTerminal, message) { RequiresRestart = true };
 
     public bool IsSuccess => Outcome is StepOutcome.Success or StepOutcome.Skipped;
 }

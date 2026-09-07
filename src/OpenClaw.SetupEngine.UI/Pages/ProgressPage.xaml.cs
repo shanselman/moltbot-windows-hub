@@ -36,24 +36,24 @@ public sealed partial class ProgressPage : Page
     // Map pipeline step IDs to display groups (N:1)
     private static readonly (string GroupId, string DisplayName, string[] StepIds)[] StepGroups =
     [
-        ("preflight", "Check system and Local AI compatibility", ["validate-distro-path", "preflight-os", "preflight-local-ai-hardware", "preflight-wsl", "preflight-windows-tailscale"]),
-        ("wsl-platform", "Prepare and verify WSL platform", ["ensure-wsl-platform"]),
-        ("local-ai-engine", "Install verified llama-server", ["acquire-local-ai-runtime"]),
-        ("local-ai-model", "Download verified model from Hugging Face", ["acquire-local-ai-model"]),
+        ("preflight", "Check compatibility", ["validate-distro-path", "preflight-os", "preflight-local-ai-hardware", "preflight-wsl", "preflight-windows-tailscale"]),
+        ("wsl-platform", "Prepare WSL", ["ensure-wsl-platform"]),
+        ("local-ai-engine", "Install Local AI", ["acquire-local-ai-runtime"]),
+        ("local-ai-model", "Download AI model", ["acquire-local-ai-model"]),
         ("local-ai-verify", "Verify Local AI", ["persist-local-ai-manifest", "start-local-ai-runtime", "capture-local-ai-gpu-baseline", "verify-local-ai-inference", "verify-local-ai-gpu-load"]),
-        ("wsl-networking", "Configure WSL access to Local AI", ["configure-local-ai-wsl-networking"]),
-        ("cleanup", "Removing existing gateway", ["cleanup-distro", "cleanup-gateway"]),
-        ("port", "Checking gateway port", ["preflight-port"]),
-        ("wsl-create", "Installing clean WSL gateway", ["wsl-create"]),
-        ("wsl-configure", "Configuring instance", ["wsl-configure", "validate-wsl-lockdown"]),
-        ("install-cli", "Installing OpenClaw", ["install-cli"]),
-        ("local-ai-wsl", "Verify WSL access to Local AI", ["verify-local-ai-wsl"]),
-        ("tailscale-auth", "Connecting Tailscale", ["install-tailscale", "authorize-tailscale"]),
-        ("configure", "Preparing gateway", ["configure-gateway", "configure-local-ai-gateway", "install-service"]),
-        ("start", "Starting gateway", ["start-gateway", "mint-token"]),
-        ("tailscale-serve", "Publishing on Tailscale", ["finalize-tailscale-serve"]),
-        ("pairing", "Pairing device", ["pair-operator", "pair-node", "verify-e2e"]),
-        ("finish", "Finishing setup", ["run-wizard", "start-keepalive"]),
+        ("wsl-networking", "Connect WSL to Local AI", ["configure-local-ai-wsl-networking"]),
+        ("cleanup", "Remove existing gateway", ["cleanup-distro", "cleanup-gateway"]),
+        ("port", "Check gateway port", ["preflight-port"]),
+        ("wsl-create", "Install WSL gateway", ["wsl-create"]),
+        ("wsl-configure", "Configure WSL", ["wsl-configure", "validate-wsl-lockdown"]),
+        ("install-cli", "Install OpenClaw", ["install-cli"]),
+        ("local-ai-wsl", "Verify Local AI access", ["verify-local-ai-wsl"]),
+        ("tailscale-auth", "Connect Tailscale", ["install-tailscale", "authorize-tailscale"]),
+        ("configure", "Configure gateway", ["configure-gateway", "configure-local-ai-gateway", "install-service"]),
+        ("start", "Start gateway", ["start-gateway", "mint-token"]),
+        ("tailscale-serve", "Publish with Tailscale", ["finalize-tailscale-serve"]),
+        ("pairing", "Pair device", ["pair-operator", "pair-node", "verify-e2e"]),
+        ("finish", "Finish setup", ["run-wizard", "start-keepalive"]),
     ];
 
     public ProgressPage()
@@ -70,7 +70,7 @@ public sealed partial class ProgressPage : Page
         _localDataDir = args?.LocalDataDir ?? SetupContext.ResolveLocalDataDir();
         TitleText.Text = _config.LocalAi.Enabled ? "Setting up OpenClaw and Local AI" : "Setting up OpenClaw";
         SubtitleText.Text = _config.LocalAi.Enabled
-            ? $"Creating {_config.DistroName}, installing llama-server, and preparing the selected model"
+            ? "Preparing the gateway and Local AI"
             : $"Creating {_config.DistroName} WSL instance";
 
         BuildStepRows();
@@ -106,8 +106,8 @@ public sealed partial class ProgressPage : Page
             SetupPreview.RequestedPage == "progress-local-ai";
         TitleText.Text = localAiPreview ? "Setting up OpenClaw and Local AI" : "Setting up OpenClaw";
         SubtitleText.Text = localAiPreview
-            ? "Downloading the selected Hugging Face model: about 18 minutes left"
-            : "Creating OpenClawGateway WSL instance: about 4 minutes left";
+            ? "Downloading the AI model. About 18 minutes left."
+            : "Creating the WSL gateway. About 4 minutes left.";
         var ids = StepGroups.Select(g => g.GroupId).ToArray();
         int previewRunningIndex = Array.IndexOf(
             ids,
@@ -121,7 +121,7 @@ public sealed partial class ProgressPage : Page
                 row.SetStatus(status);
         }
         if (localAiPreview && _rows.TryGetValue("local-ai-model", out var modelRow))
-            modelRow.SetDetail("Downloading Qwen3.6-35B-A3B-UD-Q4_K_M.gguf", 8_701_231_104, 22_663_387_424, SetupDetailProgressUnit.Bytes);
+            modelRow.SetDetail("Downloading Qwen3.8-27B-UD-Q4_K_M.gguf", 6_322_405_376, 16_464_440_224, SetupDetailProgressUnit.Bytes);
         LogText.Text =
             "[12:04:01] [info] Windows 11 26100 · WSL 2 present\n" +
             "[12:04:03] [info] port 127.0.0.1:18789 available\n" +
@@ -225,7 +225,9 @@ public sealed partial class ProgressPage : Page
                     sw.Elapsed,
                     config.LogPath,
                     errorMsg,
-                    result.CompatibilityFailure);
+                    result.CompatibilityFailure,
+                    result.Detail,
+                    restartRequired: result.RequiresRestart);
             }
         }
         catch (OperationCanceledException) when (cts.IsCancellationRequested)

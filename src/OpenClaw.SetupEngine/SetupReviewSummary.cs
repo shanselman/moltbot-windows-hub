@@ -63,6 +63,8 @@ public static class SetupReviewSummaryBuilder
                 release.IsCustomInstaller ? null : GatewayReleasePolicy.NodeVersion);
         LocalModelInfo localAiModel =
             LocalModelCatalog.Find(config.LocalAi.SelectedModelId) ?? LocalModelCatalog.Default;
+        LocalInferenceRunProfile? localAiProfile =
+            LocalModelCatalog.FindProfile(localAiModel, config.LocalAi.SelectedProfileId);
         string[] localAiCommands = config.LocalAi.Enabled
             ?
             [
@@ -75,8 +77,8 @@ public static class SetupReviewSummaryBuilder
             : [];
 
         var summary = new SetupReviewSummary(
-            DistroTitle: $"Install an isolated {baseDistro} instance",
-            DistroDescription: $"WSL distro \"{distroName}\" at {installPath}. Separate from any Linux distributions you already have. Disk use grows dynamically and is typically several GB.",
+            DistroTitle: $"Install {baseDistro.Replace('-', ' ')} in WSL",
+            DistroDescription: $"Creates a separate {distroName} instance. Uses several GB.",
             InstallerDescription: installerDescription,
             InstallerBadge: installerBadge,
             GatewayDescription: gatewayDescription,
@@ -104,13 +106,47 @@ public static class SetupReviewSummaryBuilder
         {
             LocalAiEnabled = config.LocalAi.Enabled,
             LocalAiTitle = config.LocalAi.Enabled
-                ? $"Local AI verified with {localAiModel.DisplayName}"
+                ? $"{DisplayModelName(localAiModel)} installed"
                 : null,
             LocalAiDescription = config.LocalAi.Enabled
-                ? "llama-server · " +
-                    $"{localAiModel.Recipe.ContextTokens / 1024}K context · FP16 KV · full CUDA offload · loads on first request"
+                ? localAiProfile is null
+                    ? "llama-server for Windows · loads on first request · " +
+                        "context and KV profile selected from detected GPU"
+                    : "llama-server for Windows · loads on first request · " +
+                        $"{FormatContext(localAiProfile.ContextTokens)} context · " +
+                        $"{FormatKvCache(localAiProfile)}"
                 : null,
         };
+    }
+
+    public static string DisplayModelName(LocalModelInfo model)
+    {
+        string displayName = model.DisplayName;
+        int detailStart = displayName.IndexOf(" (", StringComparison.Ordinal);
+        if (detailStart >= 0)
+            displayName = displayName[..detailStart];
+        if (displayName.StartsWith("Qwen", StringComparison.Ordinal) &&
+            displayName.Length > 4 && char.IsDigit(displayName[4]))
+        {
+            displayName = displayName.Insert(4, " ");
+        }
+        return displayName;
+    }
+
+    private static string FormatContext(int tokens) =>
+        tokens % 1024 == 0
+            ? $"{tokens / 1024}K"
+            : tokens % 1000 == 0
+                ? $"{tokens / 1000}K"
+                : $"{tokens:N0} tokens";
+
+    private static string FormatKvCache(LocalInferenceRunProfile profile)
+    {
+        string target = LocalModelCatalog.ToDisplayCacheType(profile.KeyCachePrecision);
+        string draft = LocalModelCatalog.ToDisplayCacheType(profile.DraftKeyCachePrecision);
+        return target == draft
+            ? $"{target} target and MTP draft KV"
+            : $"{target} target KV and {draft} MTP draft KV";
     }
 
     private static string Display(string? value, string fallback)

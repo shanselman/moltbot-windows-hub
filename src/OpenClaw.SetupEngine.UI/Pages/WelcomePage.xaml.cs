@@ -71,10 +71,13 @@ public sealed partial class WelcomePage : Page
         if (!eligibility.CanInstall || eligibility.SelectedGpu is null)
             return;
 
-        LocalAiAvailabilityBadge.Visibility = Visibility.Visible;
+        LocalAiAvailabilityText.Text = SetupLocalization.Format(
+            "Onboarding_Welcome_LocalAiAvailabilityDetail",
+            eligibility.SelectedGpu.Name);
+        LocalAiAvailabilityPanel.Visibility = Visibility.Visible;
         // Capture the control's base accessible name once, so repeated detections (e.g. the
         // page is re-loaded after navigating back) rebuild the announcement from the same
-        // starting point instead of appending the badge suffix again on every call.
+        // starting point instead of appending the availability suffix again on every call.
         _installChoiceBaseAutomationName ??= AutomationProperties.GetName(InstallChoice);
         AutomationProperties.SetName(
             InstallChoice,

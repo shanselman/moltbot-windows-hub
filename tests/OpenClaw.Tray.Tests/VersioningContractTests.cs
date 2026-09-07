@@ -56,6 +56,72 @@ public sealed class VersioningContractTests
     }
 
     [Fact]
+    public void DailyAlphaRelease_IsChangeGatedAndDispatchesTheValidatedReleasePipeline()
+    {
+        var repoRoot = TestRepositoryPaths.GetRepositoryRoot();
+        var dailyWorkflow = File.ReadAllText(Path.Combine(
+            repoRoot,
+            ".github",
+            "workflows",
+            "daily-alpha-release.yml"));
+        var releaseWorkflow = File.ReadAllText(Path.Combine(
+            repoRoot,
+            ".github",
+            "workflows",
+            "ci.yml"));
+
+        Assert.Contains("cron: '0 21 * * *'", dailyWorkflow);
+        Assert.Contains("cron: '0 22 * * *'", dailyWorkflow);
+        Assert.DoesNotContain("timezone:", dailyWorkflow);
+        Assert.Contains("TZ=America/Los_Angeles date +%z", dailyWorkflow);
+        Assert.Contains("-0700) expected_schedule='0 21 * * *'", dailyWorkflow);
+        Assert.Contains("-0800) expected_schedule='0 22 * * *'", dailyWorkflow);
+        Assert.Contains("SCHEDULE: ${{ github.event.schedule }}", dailyWorkflow);
+        Assert.Contains("steps.pacific_schedule.outputs.run == 'true'", dailyWorkflow);
+        Assert.Contains("actions: write", dailyWorkflow);
+        Assert.Contains("contents: write", dailyWorkflow);
+        Assert.Contains(
+            "uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1",
+            dailyWorkflow);
+        Assert.Contains(
+            "uses: gittools/actions/gitversion/setup@7417b1089e2c7de93510f1901d656ddf60bb024f # v4.7.0",
+            dailyWorkflow);
+        Assert.Contains(
+            "uses: gittools/actions/gitversion/execute@7417b1089e2c7de93510f1901d656ddf60bb024f # v4.7.0",
+            dailyWorkflow);
+        Assert.DoesNotContain("uses: actions/checkout@v", dailyWorkflow);
+        Assert.DoesNotContain("uses: gittools/actions/gitversion/setup@v", dailyWorkflow);
+        Assert.DoesNotContain("uses: gittools/actions/gitversion/execute@v", dailyWorkflow);
+        Assert.Contains("ref: ${{ github.event.repository.default_branch }}", dailyWorkflow);
+        Assert.DoesNotContain("workflow_dispatch:", dailyWorkflow);
+        Assert.Contains("head_non_alpha_tag", dailyWorkflow);
+        Assert.Contains("published_head_tag", dailyWorkflow);
+        Assert.Contains("Deferring alpha release because main already has unpublished non-alpha tag", dailyWorkflow);
+        Assert.Contains("steps.previous_release.outputs.changed == 'true'", dailyWorkflow);
+        Assert.Contains("versionSpec: '6.8.x'", dailyWorkflow);
+        Assert.Contains("-alpha\\.[0-9]+", dailyWorkflow);
+        Assert.Contains("latest_alpha_tag", dailyWorkflow);
+        Assert.Contains("git tag --merged HEAD", dailyWorkflow);
+        Assert.Contains("sort -V", dailyWorkflow);
+        Assert.Contains("which is not newer than", dailyWorkflow);
+        Assert.Contains("git push origin \"refs/tags/$tag\"", dailyWorkflow);
+        Assert.Contains("gh workflow run ci.yml --ref \"$ALPHA_TAG\"", dailyWorkflow);
+        Assert.Contains("workflow_dispatch:", releaseWorkflow);
+        Assert.Contains("uses: softprops/action-gh-release@v3", releaseWorkflow);
+        Assert.Contains("prerelease: ${{ needs.metadata.outputs.isPrerelease }}", releaseWorkflow);
+        Assert.Contains(
+            "if: needs.metadata.outputs.isPrerelease == 'true' && contains(github.ref_name, '-alpha.')",
+            releaseWorkflow);
+        Assert.Contains("Retain alpha releases for 30 days", releaseWorkflow);
+        Assert.Contains("now - (30 * 24 * 60 * 60)", releaseWorkflow);
+        Assert.Contains("retaining its Git tag", releaseWorkflow);
+        Assert.Contains("for attempt in 1 2 3", releaseWorkflow);
+        Assert.Contains("if gh api --method DELETE", releaseWorkflow);
+        Assert.Contains("will retry after the next alpha publication", releaseWorkflow);
+        Assert.Contains("gh api --method DELETE", releaseWorkflow);
+    }
+
+    [Fact]
     public void ReleaseWorkflow_TreatsNumericCorrectionsAsStableExactVersions()
     {
         var repoRoot = TestRepositoryPaths.GetRepositoryRoot();
@@ -66,7 +132,7 @@ public sealed class VersioningContractTests
         Assert.Contains("versionSpec: '6.8.x'", workflow);
         Assert.DoesNotContain("versionSpec: '6.4.x'", workflow);
         Assert.Contains(
-            "'^(?<base>(?:0|[1-9]\\d*)\\.(?:0|[1-9]\\d*)\\.(?:0|[1-9]\\d*))-(?<revision>[1-9]\\d*)$'",
+            "'^(?<base>(?:0|[1-9]\\d*)\\.(?:0|[1-9]\\d*)\\.(?:0|[1-9]\\d*))-(?<revision>\\d+)$'",
             workflow);
         Assert.Contains("$semVer = $tagVersion", workflow);
         Assert.Contains("$isPrerelease = $false", workflow);
@@ -83,7 +149,7 @@ public sealed class VersioningContractTests
             "- name: Revalidate stable correction release ordering",
             workflow);
         Assert.Contains(
-            "if: needs.test.outputs.isStableCorrection == 'true'",
+            "if: needs.metadata.outputs.isStableCorrection == 'true'",
             workflow);
         Assert.Contains(
             "semVer: ${{ steps.release_version.outputs.semVer }}",
@@ -95,7 +161,7 @@ public sealed class VersioningContractTests
             "-p:Version=$env:OPENCLAW_BUILD_VERSION",
             workflow);
         Assert.Contains(
-            "prerelease: ${{ needs.test.outputs.isPrerelease }}",
+            "prerelease: ${{ needs.metadata.outputs.isPrerelease }}",
             workflow);
         Assert.DoesNotContain(
             "prerelease: ${{ contains(github.ref_name, '-') }}",
@@ -127,6 +193,72 @@ public sealed class VersioningContractTests
         Assert.Contains(
             "$trayPublishArgs += \"-p:InformationalVersion=$PublishVersion\"",
             buildScript);
+    }
+
+    [Fact]
+    public void StableCorrectionValidator_HasNoUpstreamReleaseApiDependency()
+    {
+        var repoRoot = TestRepositoryPaths.GetRepositoryRoot();
+        var validator = File.ReadAllText(Path.Combine(
+            repoRoot,
+            "scripts",
+            "Test-OpenClawStableCorrectionRelease.ps1"));
+
+        Assert.DoesNotContain("repos/openclaw/openclaw/", validator);
+        Assert.DoesNotContain("releases/tags/$Tag", validator);
+        Assert.Contains(
+            "repos/openclaw/openclaw-windows-node/releases/latest",
+            validator);
+        Assert.Contains("[string]$CurrentWindowsTag", validator);
+    }
+
+    [Fact]
+    public void StableCorrectionValidator_RequiresSameLineMonotonicCorrection()
+    {
+        var repoRoot = TestRepositoryPaths.GetRepositoryRoot();
+        var validator = File.ReadAllText(Path.Combine(
+            repoRoot,
+            "scripts",
+            "Test-OpenClawStableCorrectionRelease.ps1"));
+
+        Assert.Contains(
+            "'^v(?:0|[1-9]\\d*)\\.(?:0|[1-9]\\d*)\\.(?:0|[1-9]\\d*)-[1-9]\\d*$'",
+            validator);
+        Assert.Contains("function Assert-SameLineStableCorrection", validator);
+        Assert.Contains("if ($candidateBase -ne $currentBase)", validator);
+        Assert.Contains("if ($candidateParts[3] -eq $currentParts[3])", validator);
+        Assert.Contains("if ($candidateParts[3] -lt $currentParts[3])", validator);
+        Assert.Contains("must never be moved or reused", validator);
+        Assert.Contains("function Assert-WindowsReleaseTagUnpublished", validator);
+        Assert.Contains("is already a published Windows release", validator);
+        Assert.Contains("is a prerelease; refusing to order a correction against it", validator);
+        Assert.DoesNotContain("function Assert-NewerStableRelease", validator);
+    }
+
+    [Fact]
+    public void ReleaseWorkflow_RevalidatesCorrectionOrderingAfterSigningBeforePublish()
+    {
+        var repoRoot = TestRepositoryPaths.GetRepositoryRoot();
+        var workflow = File.ReadAllText(
+            Path.Combine(repoRoot, ".github", "workflows", "ci.yml"));
+
+        var signIndex = workflow.IndexOf("- name: Sign Installers", StringComparison.Ordinal);
+        var revalidateIndex = workflow.IndexOf(
+            "- name: Revalidate stable correction release ordering",
+            StringComparison.Ordinal);
+        var publishIndex = workflow.IndexOf("- name: Create Release", StringComparison.Ordinal);
+
+        Assert.True(signIndex >= 0, "Release workflow must sign installers.");
+        Assert.True(revalidateIndex > signIndex, "Correction ordering must be revalidated after signing.");
+        Assert.True(publishIndex > revalidateIndex, "Correction ordering must be revalidated before publication.");
+
+        Assert.Contains(
+            "make_latest: ${{ needs.metadata.outputs.isPrerelease == 'true' && 'false' || 'true' }}",
+            workflow);
+        Assert.Contains("$majorMinorPatch = $validation.BaseVersion", workflow);
+        Assert.Contains(
+            "./scripts/test-stable-correction-release-validator.ps1",
+            workflow);
     }
 
     [Fact]

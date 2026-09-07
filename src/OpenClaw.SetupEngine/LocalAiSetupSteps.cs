@@ -17,7 +17,7 @@ public sealed class PreflightLocalAiHardwareStep : SetupStep
     private readonly IHostHardwareProbe _hardwareProbe;
 
     public PreflightLocalAiHardwareStep()
-        : this(new NvmlHostHardwareProbe())
+        : this(new CudaHostHardwareProbe())
     {
     }
 
@@ -52,6 +52,7 @@ public sealed class PreflightLocalAiHardwareStep : SetupStep
             ctx.Config.LocalAi.SelectedModelId);
         ctx.LocalAiHardware = hardware;
         ctx.LocalAiEligibility = eligibility;
+        ctx.Config.LocalAi.SelectedProfileId = eligibility.Plan?.Profile.Id;
 
         if (eligibility.Status == LocalInferenceEligibilityStatus.Unsupported)
         {
@@ -557,7 +558,11 @@ public sealed class PersistLocalAiManifestStep : SetupStep
             },
             RequestedPort = requestedPort,
             Endpoint = null,
-            ContextLength = plan.Model.Recipe.ContextTokens,
+            ContextLength = plan.Profile.ContextTokens,
+            KeyCachePrecision = plan.Profile.KeyCachePrecision,
+            ValueCachePrecision = plan.Profile.ValueCachePrecision,
+            DraftKeyCachePrecision = plan.Profile.DraftKeyCachePrecision,
+            DraftValueCachePrecision = plan.Profile.DraftValueCachePrecision,
         };
 
         var store = new LocalAiManifestStore(paths);
@@ -799,16 +804,18 @@ public sealed class VerifyLocalAiInferenceStep : SetupStep
         }
         catch (OperationCanceledException ex)
         {
-            await ResetRouterAsync(runtime);
-            return StepResult.Fail("The first Local AI model load timed out.", ex);
+            // A stalled CUDA model load presents as a timeout, so this path needs the same
+            // llama-server evidence as an explicit failure.
+            LocalAiFailureDetail detail = await CaptureFailureDetailAsync(ctx, runtime);
+            return StepResult.Fail("The first Local AI model load timed out.", ex, detail);
         }
         catch (Exception ex) when (
             ex is HttpRequestException
             or IOException
             or InvalidDataException)
         {
-            await ResetRouterAsync(runtime);
-            return StepResult.Fail($"Local AI inference verification failed: {ex.Message}", ex);
+            LocalAiFailureDetail detail = await CaptureFailureDetailAsync(ctx, runtime);
+            return StepResult.Fail($"Local AI inference verification failed: {ex.Message}", ex, detail);
         }
 
         if (loaded.State != LocalAiRuntimeState.Healthy ||
@@ -821,6 +828,27 @@ public sealed class VerifyLocalAiInferenceStep : SetupStep
         ctx.LocalAiInferenceVerification = verification;
         return StepResult.Ok(
             $"Verified {verification.CompletionTokens} generated tokens with the selected model.");
+    }
+
+    /// <summary>
+    /// Reads llama-server's own failure lines, then resets the router. The order matters: the reset
+    /// restarts llama-server, which appends a fresh startup banner and can rotate the failing lines
+    /// out of the bounded log. Uses <see cref="CancellationToken.None"/> so a timed-out verification
+    /// still yields evidence.
+    /// </summary>
+    private static async Task<LocalAiFailureDetail> CaptureFailureDetailAsync(
+        SetupContext ctx,
+        ILocalAiRuntime runtime)
+    {
+        var paths = new LocalAiPaths(ctx.LocalDataDir);
+        IReadOnlyList<string> diagnostics =
+            await LocalAiLogTail.ReadDiagnosticLinesAsync(paths, CancellationToken.None);
+        await ResetRouterAsync(runtime);
+        // Echo into the setup log the UI already links, so the root cause remains available if
+        // the router restart rotates the managed llama-server logs.
+        foreach (string line in diagnostics)
+            ctx.Logger.Warn($"llama-server: {line}");
+        return new LocalAiFailureDetail(diagnostics, paths.LogsDirectory);
     }
 
     internal static async Task<LocalAiRuntimeSnapshot> ResetRouterAsync(ILocalAiRuntime runtime)

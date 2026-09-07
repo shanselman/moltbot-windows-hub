@@ -222,7 +222,7 @@ public sealed partial class SandboxPage : Page
             return;
         }
 
-        var available = availability.HasAnyBackend;
+        var available = availability.CanRunSystemRunSandbox;
         if (!available)
         {
             SandboxStatusIcon.Text = "⚠";
@@ -251,21 +251,8 @@ public sealed partial class SandboxPage : Page
         if (enabled)
         {
             SandboxStatusIcon.Text = "🛡";
-            if (availability.IsDegradedContainment)
-            {
-                // Contained, but only via a weaker, last-resort isolation tier
-                // (e.g. DACL augmentation). Surface as a caution rather than a block.
-                SandboxStatusTitle.Text = "Node Sandbox is on: limited containment";
-                SandboxStatusSubtext.Text =
-                    "Programs the agent runs are contained, but this PC only supports a fallback isolation tier" +
-                    $"{(string.IsNullOrEmpty(availability.IsolationTier) ? "" : $" ({availability.IsolationTier})")}. " +
-                    "Containment is weaker than on a fully supported build; install the latest Windows updates to strengthen it.";
-            }
-            else
-            {
-                SandboxStatusTitle.Text = L("SandboxPage_StatusOnTitle");
-                SandboxStatusSubtext.Text = L("SandboxPage_StatusOnSubtext");
-            }
+            SandboxStatusTitle.Text = L("SandboxPage_StatusOnTitle");
+            SandboxStatusSubtext.Text = L("SandboxPage_StatusOnSubtext");
         }
         else
         {
@@ -286,13 +273,13 @@ public sealed partial class SandboxPage : Page
     private void UpdateUnavailableActionBar(OpenClaw.Shared.Mxc.MxcAvailability? availability, bool sandboxEnabled)
     {
         // Null = still probing; hide the bar until we have a verdict.
-        if (availability is null || availability.HasAnyBackend)
+        if (availability is null || availability.CanRunSystemRunSandbox)
         {
             UnavailableActionBar.IsOpen = false;
             return;
         }
 
-        var reasons = availability.UnsupportedReasons;
+        var reasons = availability.SystemRunSandboxUnsupportedReasons;
         var reasonText = reasons.Count > 0
             ? string.Join("  ·  ", reasons)
             : L("SandboxPage_UnavailableDefaultReason");
@@ -308,7 +295,8 @@ public sealed partial class SandboxPage : Page
             && availability.IsWxcExecResolvable
             && !availability.IsAppContainerAvailable;
 
-        var isSetupIssue = !availability.IsWxcExecResolvable;
+        var isSetupIssue = !availability.ProbeSuppressedBySkuGate
+            && !availability.IsWxcExecResolvable;
         var blockHostFallback = sandboxEnabled
             && (CurrentApp.Settings?.SystemRunBlockHostFallbackWhenMxcUnavailable ?? false);
         var unavailableBehavior = L(blockHostFallback
@@ -353,7 +341,12 @@ public sealed partial class SandboxPage : Page
 
     private bool IsSandboxDefinitivelyUnavailable()
     {
-        return _cachedAvailability is { HasAnyBackend: false, ProbeErrored: false };
+        return _cachedAvailability is
+        {
+            CanRunSystemRunSandbox: false,
+            ProbeErrored: false,
+            ProbeSuppressedBySkuGate: false,
+        };
     }
 
     private bool NormalizeSandboxToggleForAvailability()
@@ -429,7 +422,7 @@ public sealed partial class SandboxPage : Page
     {
         // Null availability = still probing; treat as not-yet-active so the
         // controls stay dimmed until the background probe resolves.
-        var available = _cachedAvailability?.HasAnyBackend ?? false;
+        var available = _cachedAvailability?.CanRunSystemRunSandbox ?? false;
         var sandboxOn = SandboxEnabledToggle.IsOn;
         var active = available && sandboxOn;
 
@@ -715,14 +708,14 @@ public sealed partial class SandboxPage : Page
         if (_dialogOpen)
             return;
 
-        var reasonText = _cachedAvailability?.UnsupportedReasons.Count > 0
-            ? string.Join("\n", _cachedAvailability.UnsupportedReasons)
+        var reasonText = _cachedAvailability?.SystemRunSandboxUnsupportedReasons.Count > 0
+            ? string.Join("\n", _cachedAvailability.SystemRunSandboxUnsupportedReasons)
             : L("SandboxPage_UnavailableDefaultReason");
         var dialog = new ContentDialog
         {
             Title = "Node Sandbox unavailable",
             Content =
-                "Node Sandbox can't be turned on because this PC does not currently have a usable MXC backend.\n\n" +
+                "Node Sandbox can't be turned on because this PC does not provide MXC BaseContainer without host DACL augmentation.\n\n" +
                 $"{reasonText}\n\n" +
                 "Agent-started commands will keep using the host execution path until MXC is available.",
             CloseButtonText = "OK",

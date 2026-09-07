@@ -1,5 +1,6 @@
 using System.Text.Json;
 using System.Runtime.Versioning;
+using OpenClaw.Shared.Inference.Catalog;
 
 namespace OpenClaw.SetupEngine.Tests;
 
@@ -391,6 +392,21 @@ public class SetupConfigTests : IDisposable
         Assert.False(traySettings.NodeSttEnabled);
     }
 
+    /// <summary>
+    /// The install-review card's WSL title/description in CapabilitiesPage.xaml is a design-time
+    /// placeholder that CapabilitiesPage.xaml.cs immediately overwrites at runtime with
+    /// SetupReviewSummaryBuilder's DistroTitle/DistroDescription. This pins the default-config
+    /// runtime text to the same simplified copy so the two cannot drift again.
+    /// </summary>
+    [Fact]
+    public void SetupReviewSummary_DistroTitleAndDescription_MatchSimplifiedReviewCopy()
+    {
+        var summary = SetupReviewSummaryBuilder.Build(new SetupConfig());
+
+        Assert.Equal("Install Ubuntu 24.04 in WSL", summary.DistroTitle);
+        Assert.Equal("Creates a separate OpenClawGateway instance. Uses several GB.", summary.DistroDescription);
+    }
+
     [Fact]
     public void SetupReviewSummary_UsesActiveSetupConfig()
     {
@@ -400,6 +416,7 @@ public class SetupConfigTests : IDisposable
         {
             Environment.SetEnvironmentVariable("OPENCLAW_TRAY_DATA_DIR", Path.Combine(_tempDir, "roaming"));
             Environment.SetEnvironmentVariable("OPENCLAW_TRAY_LOCAL_DATA_DIR", Path.Combine(_tempDir, "local"));
+            LocalModelInfo qwen35B = LocalModelCatalog.Find(LocalModelCatalog.Qwen35BModelId)!;
             var config = new SetupConfig
             {
                 DistroName = "CustomClaw",
@@ -411,7 +428,12 @@ public class SetupConfigTests : IDisposable
                     InstallUrl = "https://example.test/install.sh",
                     Version = GatewayReleasePolicy.SecurityFloor
                 },
-                LocalAi = { Enabled = true }
+                LocalAi =
+                {
+                    Enabled = true,
+                    SelectedModelId = qwen35B.Id,
+                    SelectedProfileId = LocalModelCatalog.GetProfiles(qwen35B)[1].Id,
+                }
             };
 
             var summary = SetupReviewSummaryBuilder.Build(config);
@@ -438,7 +460,14 @@ public class SetupConfigTests : IDisposable
             Assert.DoesNotContain("--retry", summary.ExactCommands);
             Assert.DoesNotContain("| bash", summary.ExactCommands);
             Assert.Equal("CustomClaw · LAN:19999", summary.CompletionGatewaySummary);
-            Assert.StartsWith("llama-server · ", summary.LocalAiDescription, StringComparison.Ordinal);
+            Assert.Equal("Qwen 3.6 35B-A3B installed", summary.LocalAiTitle);
+            Assert.StartsWith(
+                "llama-server for Windows · loads on first request · ",
+                summary.LocalAiDescription,
+                StringComparison.Ordinal);
+            Assert.Contains("256K context", summary.LocalAiDescription, StringComparison.Ordinal);
+            Assert.Contains("Q8_0 target and MTP draft KV", summary.LocalAiDescription, StringComparison.Ordinal);
+            Assert.DoesNotContain("full CUDA offload", summary.LocalAiDescription, StringComparison.Ordinal);
             Assert.DoesNotContain("immutable revision", summary.LocalAiDescription, StringComparison.Ordinal);
             Assert.DoesNotContain("llama-server b", summary.LocalAiDescription, StringComparison.Ordinal);
         }
@@ -671,6 +700,20 @@ public class SetupConfigTests : IDisposable
     {
         Assert.False(StepResult.Terminal("fatal").IsSuccess);
         Assert.Equal(StepOutcome.FailedTerminal, StepResult.Terminal("fatal").Outcome);
+    }
+
+    [Fact]
+    public void StepResult_RestartRequired_IsTypedTerminal()
+    {
+        var result = StepResult.RestartRequired("restart Windows");
+        var (outcome, message, error, detail) = result;
+
+        Assert.False(result.IsSuccess);
+        Assert.Equal(StepOutcome.FailedTerminal, outcome);
+        Assert.Equal("restart Windows", message);
+        Assert.Null(error);
+        Assert.Null(detail);
+        Assert.True(result.RequiresRestart);
     }
 
     [Fact]

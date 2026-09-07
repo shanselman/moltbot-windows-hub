@@ -6,15 +6,72 @@ on:
     tags: [ 'v*' ]
   pull_request:
     branches: [ main, master ]
+  workflow_dispatch:
 
 permissions:
   contents: read
 
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event_name == 'pull_request' && format('pr-{0}', github.event.pull_request.number) || format('{0}-{1}', github.ref, github.sha) }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 jobs:
-  repo-hygiene:
+  change-classification:
     runs-on: ubuntu-latest
+    outputs:
+      classification: ${{ steps.classify.outputs.classification }}
+      core_tests: ${{ steps.classify.outputs.core_tests }}
+      tray_tests: ${{ steps.classify.outputs.tray_tests }}
+      ui_tests: ${{ steps.classify.outputs.ui_tests }}
+      setup_e2e: ${{ steps.classify.outputs.setup_e2e }}
+      revocation_e2e: ${{ steps.classify.outputs.revocation_e2e }}
+      network_e2e: ${{ steps.classify.outputs.network_e2e }}
+      x64_release: ${{ steps.classify.outputs.x64_release }}
+      arm64_release: ${{ steps.classify.outputs.arm64_release }}
+      full: ${{ steps.classify.outputs.full }}
     steps:
     - uses: actions/checkout@v7
+      with:
+        fetch-depth: 0
+
+    - name: Classify changed paths
+      id: classify
+      shell: pwsh
+      env:
+        PR_BASE_SHA: ${{ github.event.pull_request.base.sha }}
+        PR_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+      run: |
+        $impactJson = ./scripts/Get-CiChangeClassification.ps1 `
+          -EventName $env:GITHUB_EVENT_NAME `
+          -BaseSha $env:PR_BASE_SHA `
+          -HeadSha $env:PR_HEAD_SHA
+        $impact = $impactJson | ConvertFrom-Json
+        if ($impact.classification -notin @("docs_only", "targeted", "full")) {
+          throw "Unexpected CI change classification '$($impact.classification)'."
+        }
+        "classification=$($impact.classification)" >> $env:GITHUB_OUTPUT
+        foreach ($lane in @(
+            "core_tests",
+            "tray_tests",
+            "ui_tests",
+            "setup_e2e",
+            "revocation_e2e",
+            "network_e2e",
+            "x64_release",
+            "arm64_release",
+            "full")) {
+          $value = ([bool]$impact.$lane).ToString().ToLowerInvariant()
+          "$lane=$value" >> $env:GITHUB_OUTPUT
+          "CI lane $lane`: $value" >> $env:GITHUB_STEP_SUMMARY
+        }
+        "CI change classification: $($impact.classification)" >> $env:GITHUB_STEP_SUMMARY
+
+  fast-validation:
+    runs-on: windows-latest
+    steps:
+    - uses: actions/checkout@v7
+      with:
+        fetch-depth: 0
 
     - name: Ensure .squad stays untracked
       shell: bash
@@ -26,21 +83,78 @@ jobs:
           exit 1
         fi
 
-    - name: Test repository triage automation
-      run: node --test .github/scripts/repository-triage.test.cjs
+    - name: Test repository triage automation and dashboard
+      run: node --test .github/scripts/repository-triage.test.cjs .github/extensions/openclaw-triage-dashboard/triage-state.test.mjs
 
-  test:
-    needs: repo-hygiene
-    if: ${{ !cancelled() }}
+    - name: Validate documentation
+      shell: pwsh
+      run: ./scripts/validate-docs.ps1
+
+    - name: Validate agent skills
+      shell: pwsh
+      run: ./scripts/validate-agent-skills.ps1
+
+    - name: Test agent skill validator
+      shell: pwsh
+      run: ./scripts/test-agent-skills-validator.ps1
+
+    - name: Validate CI change classifier
+      shell: pwsh
+      run: ./scripts/test-ci-change-classifier.ps1
+
+    - name: Validate CI Gate result contracts
+      shell: pwsh
+      run: ./scripts/test-ci-gate-results.ps1
+
+    - name: Validate CI workflow contracts
+      shell: pwsh
+      run: ./scripts/test-ci-workflow-contract.ps1
+
+    - name: Validate stable correction release ordering regressions
+      shell: pwsh
+      run: ./scripts/test-stable-correction-release-validator.ps1
+
+  proof-pool-contracts:
+    name: Proof-pool contracts
     runs-on: windows-latest
     steps:
-    - name: Fail if repo hygiene failed
-      if: ${{ needs.repo-hygiene.result != 'success' }}
-      shell: pwsh
-      run: |
-        Write-Error "repo-hygiene failed; see the repo-hygiene job output."
-        exit 1
+    - uses: actions/checkout@v7
+      with:
+        fetch-depth: 0
 
+    - name: Select proof-pool regression scope
+      id: proof_pool_regression
+      continue-on-error: true
+      shell: pwsh
+      env:
+        PR_BASE_SHA: ${{ github.event.pull_request.base.sha }}
+        PR_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+      run: |
+        $decision = ./scripts/Get-CiProofPoolRegressionDecision.ps1 `
+          -EventName $env:GITHUB_EVENT_NAME `
+          -BaseSha $env:PR_BASE_SHA `
+          -HeadSha $env:PR_HEAD_SHA
+        if ($decision -notin @("true", "false")) {
+          throw "Unexpected proof-pool regression decision '$decision'."
+        }
+        "run=$decision" >> $env:GITHUB_OUTPUT
+
+    - name: Validate proof-pool regressions
+      if: ${{ steps.proof_pool_regression.outcome != 'success' || steps.proof_pool_regression.outputs.run != 'false' }}
+      shell: pwsh
+      run: ./scripts/test-proof-pool-validator.ps1
+
+  metadata:
+    name: Release metadata
+    needs: change-classification
+    if: ${{ !cancelled() && needs.change-classification.result == 'success' && (needs.change-classification.outputs.x64_release == 'true' || needs.change-classification.outputs.arm64_release == 'true') }}
+    runs-on: windows-latest
+    outputs:
+      semVer: ${{ steps.release_version.outputs.semVer }}
+      majorMinorPatch: ${{ steps.release_version.outputs.majorMinorPatch }}
+      isPrerelease: ${{ steps.release_version.outputs.isPrerelease }}
+      isStableCorrection: ${{ steps.release_version.outputs.isStableCorrection }}
+    steps:
     - uses: actions/checkout@v7
       with:
         fetch-depth: 0
@@ -49,14 +163,6 @@ jobs:
       uses: actions/setup-dotnet@v6
       with:
         dotnet-version: 10.0.x
-
-    - name: Cache NuGet packages
-      continue-on-error: true
-      uses: actions/cache@v6
-      with:
-        path: ~/.nuget/packages
-        key: nuget-${{ runner.os }}-${{ hashFiles('**/*.csproj', '**/Directory.Packages.props') }}
-        restore-keys: nuget-${{ runner.os }}-
 
     - name: Install GitVersion
       uses: gittools/actions/gitversion/setup@v4
@@ -82,9 +188,12 @@ jobs:
 
         if ($env:GITHUB_REF.StartsWith("refs/tags/v", [StringComparison]::Ordinal)) {
           $tagVersion = $env:GITHUB_REF_NAME -replace '^v', ''
+          # Match every numeric suffix, including malformed ones such as -0 and
+          # -03, so the correction validator is the single authority that can
+          # accept or reject them.
           $correction = [regex]::Match(
             $tagVersion,
-            '^(?<base>(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)\.(?:0|[1-9]\d*))-(?<revision>[1-9]\d*)$')
+            '^(?<base>(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)\.(?:0|[1-9]\d*))-(?<revision>\d+)$')
 
           if ($correction.Success) {
             $validation = .\scripts\Test-OpenClawStableCorrectionRelease.ps1 `
@@ -104,114 +213,229 @@ jobs:
         "isPrerelease=$($isPrerelease.ToString().ToLowerInvariant())" >> $env:GITHUB_OUTPUT
         "isStableCorrection=$($isStableCorrection.ToString().ToLowerInvariant())" >> $env:GITHUB_OUTPUT
 
-    - name: Validate documentation
+  core-tests:
+    name: Core and CLI tests
+    needs: [change-classification, fast-validation]
+    if: ${{ !cancelled() && needs.change-classification.result == 'success' && needs.fast-validation.result == 'success' && needs.change-classification.outputs.core_tests == 'true' }}
+    runs-on: windows-latest
+    env:
+      OPENCLAW_CI_COLLECT_COVERAGE: ${{ github.event_name != 'pull_request' }}
+      OPENCLAW_REPO_ROOT: ${{ github.workspace }}
+    steps:
+    - uses: actions/checkout@v7
+      with:
+        fetch-depth: 0
+
+    - name: Setup .NET 10
+      uses: actions/setup-dotnet@v6
+      with:
+        dotnet-version: 10.0.x
+
+    - name: Configure core NuGet cache
+      # Keep the core graph out of the repository-wide NuGet cache used by every other lane.
       shell: pwsh
-      run: ./scripts/validate-docs.ps1
+      run: '"NUGET_PACKAGES=$env:RUNNER_TEMP\openclaw-core-nuget-packages" >> $env:GITHUB_ENV'
 
-    - name: Validate proof-pool regressions
-      shell: pwsh
-      run: ./scripts/test-proof-pool-validator.ps1
+    - name: Cache NuGet packages
+      continue-on-error: true
+      uses: actions/cache@v6
+      with:
+        path: ${{ env.NUGET_PACKAGES }}
+        # SDK/config and imported MSBuild files can change restore behavior or shared package references.
+        # These project files are the complete transitive graph restored by the core lane.
+        key: >-
+          nuget-core-${{ runner.os }}-${{ hashFiles(
+            'global.json',
+            'NuGet.Config',
+            'Directory.Build.props',
+            'src/Directory.Build.props',
+            'src/Directory.Build.targets',
+            'tests/Directory.Build.props',
+            'tests/OpenClaw.TestSupport/Directory.Build.props',
+            'tests/OpenClaw.Shared.TestHost/Directory.Build.props',
+            'src/OpenClaw.Shared/OpenClaw.Shared.csproj',
+            'src/OpenClaw.Connection/OpenClaw.Connection.csproj',
+            'src/OpenClaw.Cli/OpenClaw.Cli.csproj',
+            'src/OpenClaw.WinNode.Cli/OpenClaw.WinNode.Cli.csproj',
+            'tests/OpenClaw.TestSupport/OpenClaw.TestSupport.csproj',
+            'tests/OpenClaw.Shared.TestHost/OpenClaw.Shared.TestHost.csproj',
+            'tests/OpenClaw.Shared.Tests/OpenClaw.Shared.Tests.csproj',
+            'tests/OpenClaw.Connection.Tests/OpenClaw.Connection.Tests.csproj',
+            'tests/OpenClaw.WinNode.Cli.Tests/OpenClaw.WinNode.Cli.Tests.csproj'
+          ) }}
 
-    - name: Restore dependencies
-      run: dotnet restore
+    - name: Restore core test projects
+      run: |
+        dotnet restore tests/OpenClaw.Shared.Tests
+        dotnet restore tests/OpenClaw.Connection.Tests
+        dotnet restore tests/OpenClaw.WinNode.Cli.Tests
 
-    # dotnet-coverage replaces coverlet because the integration tests spawn the
-    # tray exe out-of-process; coverlet only instruments the in-proc test
-    # assembly. Installing once at the job level lets every test step wrap its
-    # `dotnet test` invocation in `dotnet-coverage collect`.
     - name: Install dotnet-coverage
+      if: ${{ github.event_name != 'pull_request' }}
       run: dotnet tool install --global dotnet-coverage
 
-    - name: Build Shared Library
-      run: dotnet build src/OpenClaw.Shared -c Debug --no-restore
-
-    - name: Build Tray App (WinUI)
-      run: dotnet build src/OpenClaw.Tray.WinUI -c Debug -r win-x64
-
-    - name: Build Tests
+    - name: Build core test projects
       run: |
         dotnet build tests/OpenClaw.Shared.Tests -c Debug --no-restore
-        dotnet build tests/OpenClaw.Tray.Tests -c Debug -r win-x64 --no-restore
         dotnet build tests/OpenClaw.Connection.Tests -c Debug --no-restore
         dotnet build tests/OpenClaw.WinNode.Cli.Tests -c Debug --no-restore
-        dotnet build tests/OpenClaw.Tray.IntegrationTests -c Debug -r win-x64 --no-restore
-        dotnet build tests/OpenClaw.Tray.UITests -c Debug -r win-x64 --no-restore
-        dotnet build tests/OpenClawTray.FunctionalUI.Tests -c Debug -r win-x64 --no-restore
-        dotnet build tests/OpenClaw.SetupEngine.Tests -c Debug -r win-x64
 
     - name: Run Shared Tests
       env:
         OPENCLAW_RUN_INTEGRATION: 1
       run: >
-        dotnet-coverage collect
-        --output TestResults\Shared\coverage.cobertura.xml
-        --output-format cobertura
-        "dotnet test tests/OpenClaw.Shared.Tests
-        --no-build
-        -c Debug
-        --verbosity normal
-        --results-directory TestResults\Shared
-        --logger trx;LogFileName=OpenClaw.Shared.Tests.trx"
-
-    - name: Run Tray Tests
-      run: >
-        dotnet-coverage collect
-        --output TestResults\Tray\coverage.cobertura.xml
-        --output-format cobertura
-        "dotnet test tests/OpenClaw.Tray.Tests
-        --no-build
-        -c Debug
-        -r win-x64
-        --verbosity normal
-        --results-directory TestResults\Tray
-        --logger trx;LogFileName=OpenClaw.Tray.Tests.trx"
+        ./scripts/Invoke-CiTest.ps1
+        -Project tests/OpenClaw.Shared.Tests
+        -ResultsDirectory TestResults\Shared
+        -TrxFileName OpenClaw.Shared.Tests.trx
 
     - name: Run Connection Tests
       run: >
-        dotnet-coverage collect
-        --output TestResults\Connection\coverage.cobertura.xml
-        --output-format cobertura
-        "dotnet test tests/OpenClaw.Connection.Tests
-        --no-build
-        -c Debug
-        --verbosity normal
-        --results-directory TestResults\Connection
-        --logger trx;LogFileName=OpenClaw.Connection.Tests.trx"
+        ./scripts/Invoke-CiTest.ps1
+        -Project tests/OpenClaw.Connection.Tests
+        -ResultsDirectory TestResults\Connection
+        -TrxFileName OpenClaw.Connection.Tests.trx
 
     - name: Run WinNode CLI Tests
       run: >
-        dotnet-coverage collect
-        --output TestResults\WinNodeCli\coverage.cobertura.xml
-        --output-format cobertura
-        "dotnet test tests/OpenClaw.WinNode.Cli.Tests
-        --no-build
-        -c Debug
-        --verbosity normal
-        --results-directory TestResults\WinNodeCli
-        --logger trx;LogFileName=OpenClaw.WinNode.Cli.Tests.trx"
+        ./scripts/Invoke-CiTest.ps1
+        -Project tests/OpenClaw.WinNode.Cli.Tests
+        -ResultsDirectory TestResults\WinNodeCli
+        -TrxFileName OpenClaw.WinNode.Cli.Tests.trx
+
+    - name: Upload Test Results
+      if: always()
+      uses: actions/upload-artifact@v7
+      with:
+        name: test-results-core
+        path: TestResults/
+        if-no-files-found: warn
+
+  tray-tests:
+    name: Tray, setup, and integration tests
+    needs: [change-classification, fast-validation]
+    if: ${{ !cancelled() && needs.change-classification.result == 'success' && needs.fast-validation.result == 'success' && needs.change-classification.outputs.tray_tests == 'true' }}
+    runs-on: windows-latest
+    env:
+      OPENCLAW_CI_COLLECT_COVERAGE: ${{ github.event_name != 'pull_request' }}
+      OPENCLAW_REPO_ROOT: ${{ github.workspace }}
+      OPENCLAW_TRAY_DATA_DIR: ${{ github.workspace }}\TestData\OpenClawTrayTests
+    steps:
+    - uses: actions/checkout@v7
+      with:
+        fetch-depth: 0
+
+    - name: Setup .NET 10
+      uses: actions/setup-dotnet@v6
+      with:
+        dotnet-version: 10.0.x
+
+    - name: Cache NuGet packages
+      continue-on-error: true
+      uses: actions/cache@v6
+      with:
+        path: ~/.nuget/packages
+        key: nuget-${{ runner.os }}-${{ hashFiles('**/*.csproj', '**/Directory.Packages.props') }}
+        restore-keys: nuget-${{ runner.os }}-
+
+    - name: Restore tray test projects
+      run: |
+        dotnet restore src/OpenClaw.Tray.WinUI -r win-x64
+        dotnet restore tests/OpenClaw.Tray.Tests -r win-x64
+        dotnet restore tests/OpenClaw.SetupEngine.Tests -r win-x64
+        dotnet restore tests/OpenClaw.Tray.IntegrationTests -r win-x64
+
+    - name: Install dotnet-coverage
+      if: ${{ github.event_name != 'pull_request' }}
+      run: dotnet tool install --global dotnet-coverage
+
+    - name: Build tray test projects
+      run: |
+        dotnet build src/OpenClaw.Tray.WinUI -c Debug -r win-x64 --no-restore
+        dotnet build tests/OpenClaw.Tray.Tests -c Debug -r win-x64 --no-restore
+        dotnet build tests/OpenClaw.SetupEngine.Tests -c Debug -r win-x64 --no-restore
+        dotnet build tests/OpenClaw.Tray.IntegrationTests -c Debug -r win-x64 --no-restore
+
+    - name: Run Tray Tests
+      run: >
+        ./scripts/Invoke-CiTest.ps1
+        -Project tests/OpenClaw.Tray.Tests
+        -ResultsDirectory TestResults\Tray
+        -TrxFileName OpenClaw.Tray.Tests.trx
+        -Runtime win-x64
 
     # Tray integration tests gate on OPENCLAW_RUN_INTEGRATION; set it so the
-    # MCP-server / capability tests actually run. dotnet-coverage with no
-    # filter captures coverage for both the test host AND the spawned tray
-    # exe (coverlet could not — see tests/Directory.Build.props comment).
+    # MCP-server and capability tests actually run.
     - name: Run Tray Integration Tests
       env:
         OPENCLAW_RUN_INTEGRATION: 1
       run: >
-        dotnet-coverage collect
-        --output TestResults\TrayIntegration\coverage.cobertura.xml
-        --output-format cobertura
-        "dotnet test tests/OpenClaw.Tray.IntegrationTests
-        --no-build
-        -c Debug
-        -r win-x64
-        --verbosity normal
-        --results-directory TestResults\TrayIntegration
-        --logger trx;LogFileName=OpenClaw.Tray.IntegrationTests.trx"
+        ./scripts/Invoke-CiTest.ps1
+        -Project tests/OpenClaw.Tray.IntegrationTests
+        -ResultsDirectory TestResults\TrayIntegration
+        -TrxFileName OpenClaw.Tray.IntegrationTests.trx
+        -Runtime win-x64
+
+    - name: Run SetupEngine Tests
+      run: >
+        ./scripts/Invoke-CiTest.ps1
+        -Project tests/OpenClaw.SetupEngine.Tests
+        -ResultsDirectory TestResults\SetupEngine
+        -TrxFileName OpenClaw.SetupEngine.Tests.trx
+        -Runtime win-x64
+
+    - name: Upload Test Results
+      if: always()
+      uses: actions/upload-artifact@v7
+      with:
+        name: test-results-tray
+        path: TestResults/
+        if-no-files-found: warn
+
+  ui-tests:
+    name: UI, functional, and accessibility tests
+    needs: [change-classification, fast-validation]
+    if: ${{ !cancelled() && needs.change-classification.result == 'success' && needs.fast-validation.result == 'success' && needs.change-classification.outputs.ui_tests == 'true' }}
+    runs-on: windows-latest
+    env:
+      OPENCLAW_CI_COLLECT_COVERAGE: ${{ github.event_name != 'pull_request' }}
+      OPENCLAW_REPO_ROOT: ${{ github.workspace }}
+      OPENCLAW_TRAY_DATA_DIR: ${{ github.workspace }}\TestData\OpenClawTrayUITests
+    steps:
+    - uses: actions/checkout@v7
+      with:
+        fetch-depth: 0
+
+    - name: Setup .NET 10
+      uses: actions/setup-dotnet@v6
+      with:
+        dotnet-version: 10.0.x
+
+    - name: Cache NuGet packages
+      continue-on-error: true
+      uses: actions/cache@v6
+      with:
+        path: ~/.nuget/packages
+        key: nuget-${{ runner.os }}-${{ hashFiles('**/*.csproj', '**/Directory.Packages.props') }}
+        restore-keys: nuget-${{ runner.os }}-
+
+    - name: Restore UI test projects
+      run: |
+        dotnet restore tests/OpenClaw.Tray.UITests -r win-x64
+        dotnet restore tests/OpenClawTray.FunctionalUI.Tests -r win-x64
+
+    - name: Install dotnet-coverage
+      if: ${{ github.event_name != 'pull_request' }}
+      run: dotnet tool install --global dotnet-coverage
+
+    - name: Build UI test projects
+      run: |
+        dotnet build tests/OpenClaw.Tray.UITests -c Debug -r win-x64 --no-restore
+        dotnet build tests/OpenClawTray.FunctionalUI.Tests -c Debug -r win-x64 --no-restore
 
     # UI tests need a real visual tree AND a system-registered WindowsAppRuntime
-    # framework MSIX. The hosted windows-2025 runner image doesn't preinstall it,
-    # so install the runtime that matches the repo-level WindowsAppSDK version.
+    # framework MSIX. The hosted runner image does not preinstall it, so install
+    # the runtime matching the repo-level WindowsAppSDK version.
     - name: Install WindowsAppRuntime
       shell: pwsh
       run: |
@@ -236,43 +460,20 @@ jobs:
 
     - name: Run Functional UI Tests
       run: >
-        dotnet-coverage collect
-        --output TestResults\FunctionalUI\coverage.cobertura.xml
-        --output-format cobertura
-        "dotnet test tests/OpenClawTray.FunctionalUI.Tests
-        --no-build
-        -c Debug
-        -r win-x64
-        --verbosity normal
-        --results-directory TestResults\FunctionalUI
-        --logger trx;LogFileName=OpenClawTray.FunctionalUI.Tests.trx"
-
-    - name: Run SetupEngine Tests
-      run: >
-        dotnet-coverage collect
-        --output TestResults\SetupEngine\coverage.cobertura.xml
-        --output-format cobertura
-        "dotnet test tests/OpenClaw.SetupEngine.Tests
-        --no-build
-        -c Debug
-        -r win-x64
-        --verbosity normal
-        --results-directory TestResults\SetupEngine
-        --logger trx;LogFileName=OpenClaw.SetupEngine.Tests.trx"
+        ./scripts/Invoke-CiTest.ps1
+        -Project tests/OpenClawTray.FunctionalUI.Tests
+        -ResultsDirectory TestResults\FunctionalUI
+        -TrxFileName OpenClawTray.FunctionalUI.Tests.trx
+        -Runtime win-x64
 
     - name: Run Tray UI Tests
       run: >
-        dotnet-coverage collect
-        --output TestResults\TrayUI\coverage.cobertura.xml
-        --output-format cobertura
-        "dotnet test tests/OpenClaw.Tray.UITests
-        --no-build
-        -c Debug
-        -r win-x64
-        --verbosity normal
-        --results-directory TestResults\TrayUI
-        --logger trx;LogFileName=OpenClaw.Tray.UITests.trx
-        --filter Category!=Accessibility"
+        ./scripts/Invoke-CiTest.ps1
+        -Project tests/OpenClaw.Tray.UITests
+        -ResultsDirectory TestResults\TrayUI
+        -TrxFileName OpenClaw.Tray.UITests.trx
+        -Runtime win-x64
+        -Filter Category!=Accessibility
 
     # Accessibility Insights CI pass: scans each page in the real app process.
     - name: Run Accessibility Tests (Axe.Windows)
@@ -325,42 +526,19 @@ jobs:
       if: always()
       uses: actions/upload-artifact@v7
       with:
-        name: test-results
+        name: test-results-ui
         path: TestResults/
         if-no-files-found: warn
 
-    outputs:
-      semVer: ${{ steps.release_version.outputs.semVer }}
-      majorMinorPatch: ${{ steps.release_version.outputs.majorMinorPatch }}
-      isPrerelease: ${{ steps.release_version.outputs.isPrerelease }}
-      isStableCorrection: ${{ steps.release_version.outputs.isStableCorrection }}
-
-  e2etests:
-    needs: repo-hygiene
-    if: ${{ !cancelled() }}
+  setup-e2e:
+    name: Setup and connect E2E
+    needs: [change-classification, fast-validation]
+    if: ${{ !cancelled() && needs.change-classification.result == 'success' && needs.fast-validation.result == 'success' && needs.change-classification.outputs.setup_e2e == 'true' }}
     runs-on: windows-latest
-    timeout-minutes: ${{ matrix.timeout_minutes }}
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - name: setup-connect
-            timeout_minutes: 45
-            filter: "FullyQualifiedName~OpenClaw.E2ETests.Setup.SetupAndConnectTests|FullyQualifiedName~OpenClaw.E2ETests.Setup.MxcSetupAndConnectTests|FullyQualifiedName~OpenClaw.E2ETests.Setup.MirroredWslPortLeaseTests|FullyQualifiedName~OpenClaw.E2ETests.Setup.SshOwnershipAdversarialProofTests|FullyQualifiedName~OpenClaw.E2ETests.Setup.TrayExecutableResolutionTests"
-          - name: revocation-recovery
-            timeout_minutes: 25
-            filter: FullyQualifiedName~OpenClaw.E2ETests.Setup.RevocationAndRecoveryTests
-          - name: network-recovery
-            timeout_minutes: 25
-            filter: FullyQualifiedName~OpenClaw.E2ETests.Setup.NetworkRecoveryTests
+    timeout-minutes: 45
+    env:
+      OPENCLAW_REPO_ROOT: ${{ github.workspace }}
     steps:
-    - name: Fail if repo hygiene failed
-      if: ${{ needs.repo-hygiene.result != 'success' }}
-      shell: pwsh
-      run: |
-        Write-Error "repo-hygiene failed; see the repo-hygiene job output."
-        exit 1
-
     - uses: actions/checkout@v7
       with:
         fetch-depth: 0
@@ -378,114 +556,149 @@ jobs:
         key: nuget-${{ runner.os }}-${{ hashFiles('**/*.csproj', '**/Directory.Packages.props') }}
         restore-keys: nuget-${{ runner.os }}-
 
-    - name: Restore dependencies
-      run: dotnet restore
+    - name: Restore E2E project graph
+      run: |
+        dotnet restore src/OpenClaw.Tray.WinUI -r win-x64
+        dotnet restore tests/OpenClaw.E2ETests -r win-x64
 
-    - name: Build Shared Library
-      run: dotnet build src/OpenClaw.Shared -c Debug --no-restore
+    - name: Build E2E project graph
+      run: |
+        dotnet build src/OpenClaw.Tray.WinUI -c Debug -r win-x64 --no-restore
+        dotnet build tests/OpenClaw.E2ETests -c Debug -r win-x64 --no-restore
 
-    - name: Build SetupEngine
-      run: dotnet build src/OpenClaw.SetupEngine -c Debug --no-restore
-
-    - name: Build Tray App (WinUI)
-      run: dotnet build src/OpenClaw.Tray.WinUI -c Debug -r win-x64
-
-    - name: Build E2E Tests
-      run: dotnet build tests/OpenClaw.E2ETests -c Debug -r win-x64
-
-    - name: Run E2E Tests (${{ matrix.name }})
+    - name: Run setup and connect E2E tests
       env:
         OPENCLAW_RUN_E2E: 1
       shell: pwsh
-      run: |
-        dotnet test tests/OpenClaw.E2ETests `
-          --no-build `
-          -c Debug `
-          -r win-x64 `
-          --verbosity normal `
-          --results-directory TestResults/E2E `
-          --logger "trx;LogFileName=OpenClaw.E2ETests.${{ matrix.name }}.trx" `
-          --logger "console;verbosity=detailed" `
-          --filter "${{ matrix.filter }}"
-        if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-
-        [xml]$trx = Get-Content "TestResults\E2E\OpenClaw.E2ETests.${{ matrix.name }}.trx"
-        $executed = [int]$trx.TestRun.ResultSummary.Counters.executed
-        if ($executed -lt 1) {
-          Write-Error "E2E shard '${{ matrix.name }}' executed zero tests. Check OPENCLAW_RUN_E2E gating/filter before merging."
-          exit 1
-        }
-        if ("${{ matrix.name }}" -eq "setup-connect") {
-          $mxcProofNames = @(
-            "RealGateway_SystemRun_ExecutesThroughWindowsNodeMxcSandbox",
-            "RealGateway_SystemRun_BlocksWritesToTrayDataDirectoryInMxcSandbox"
-          )
-
-          foreach ($mxcProofName in $mxcProofNames) {
-            $mxcProof = @($trx.TestRun.Results.UnitTestResult | Where-Object { $_.testName -like "*$mxcProofName*" }) | Select-Object -First 1
-            if ($null -eq $mxcProof) {
-              Write-Error "E2E shard '${{ matrix.name }}' did not report the MXC proof test '$mxcProofName'. Check the setup-connect filter before merging."
-              exit 1
-            }
-
-            $mxcOutcome = [string]$mxcProof.outcome
-            if ($mxcOutcome -eq "Passed") {
-              Write-Host "MXC E2E proof passed: $mxcProofName"
-            } elseif ($mxcOutcome -eq "NotExecuted" -or $mxcOutcome -eq "Skipped") {
-              $mxcSkipReason = @($mxcProof.Output.ErrorInfo.Message, $mxcProof.Output.StdOut) |
-                Where-Object { -not [string]::IsNullOrWhiteSpace($_) } |
-                Select-Object -First 1
-              if ([string]::IsNullOrWhiteSpace($mxcSkipReason)) {
-                $mxcSkipReason = "skip reason was not present in the trx output"
-              }
-              Write-Warning "MXC E2E proof skipped: $mxcProofName; $mxcSkipReason"
-            } else {
-              Write-Error "MXC E2E proof '$mxcProofName' had unexpected outcome '$mxcOutcome'."
-              exit 1
-            }
-          }
-
-          $sshOwnershipProofNames = @(
-            "UnownedListenerIsRejectedThenOwnedTunnelRecoversWithoutRepairing",
-            "InitialHandshakeListenerReplacementWithholdsCredentialFrame",
-            "InitialNodeHandshakeListenerReplacementWithholdsCredentialFrame"
-          )
-          foreach ($sshOwnershipProofName in $sshOwnershipProofNames) {
-            $sshOwnershipProof = @(
-              $trx.TestRun.Results.UnitTestResult |
-                Where-Object { $_.testName -like "*$sshOwnershipProofName*" }
-            ) | Select-Object -First 1
-            if ($null -eq $sshOwnershipProof) {
-              Write-Error "E2E shard '${{ matrix.name }}' did not report the SSH ownership proof test '$sshOwnershipProofName'. Check the setup-connect filter before merging."
-              exit 1
-            }
-
-            $sshOwnershipOutcome = [string]$sshOwnershipProof.outcome
-            if ($sshOwnershipOutcome -ne "Passed") {
-              Write-Error "SSH ownership E2E proof '$sshOwnershipProofName' had outcome '$sshOwnershipOutcome'; this proof must pass and may not skip."
-              exit 1
-            }
-            Write-Host "SSH ownership E2E proof passed: $sshOwnershipProofName"
-          }
-        }
+      run: >
+        ./scripts/Invoke-CiE2e.ps1
+        -Name setup-connect
+        -Filter "FullyQualifiedName~OpenClaw.E2ETests.Setup.SetupAndConnectTests|FullyQualifiedName~OpenClaw.E2ETests.Setup.MxcSetupAndConnectTests|FullyQualifiedName~OpenClaw.E2ETests.Setup.MirroredWslPortLeaseTests|FullyQualifiedName~OpenClaw.E2ETests.Setup.SshOwnershipAdversarialProofTests|FullyQualifiedName~OpenClaw.E2ETests.Setup.TrayExecutableResolutionTests"
 
     - name: Upload E2E Test Results & Logs
       if: always()
       uses: actions/upload-artifact@v7
       with:
-        name: e2e-test-results-${{ matrix.name }}
+        name: e2e-test-results-setup-connect
         path: |
           TestResults/E2E/
         if-no-files-found: warn
 
-  build:
-    needs: [test, e2etests]
-    runs-on: ${{ matrix.rid == 'win-arm64' && 'windows-11-arm' || 'windows-latest' }}
+  revocation-e2e:
+    name: Revocation recovery E2E
+    needs: [change-classification, fast-validation]
+    if: ${{ !cancelled() && needs.change-classification.result == 'success' && needs.fast-validation.result == 'success' && needs.change-classification.outputs.revocation_e2e == 'true' }}
+    runs-on: windows-latest
+    timeout-minutes: 25
     env:
-      OPENCLAW_BUILD_VERSION: ${{ needs.test.outputs.semVer }}
-    strategy:
-      matrix:
-        rid: [win-x64, win-arm64]
+      OPENCLAW_REPO_ROOT: ${{ github.workspace }}
+    steps:
+    - uses: actions/checkout@v7
+      with:
+        fetch-depth: 0
+
+    - name: Setup .NET 10
+      uses: actions/setup-dotnet@v6
+      with:
+        dotnet-version: 10.0.x
+
+    - name: Cache NuGet packages
+      continue-on-error: true
+      uses: actions/cache@v6
+      with:
+        path: ~/.nuget/packages
+        key: nuget-${{ runner.os }}-${{ hashFiles('**/*.csproj', '**/Directory.Packages.props') }}
+        restore-keys: nuget-${{ runner.os }}-
+
+    - name: Restore E2E project graph
+      run: |
+        dotnet restore src/OpenClaw.Tray.WinUI -r win-x64
+        dotnet restore tests/OpenClaw.E2ETests -r win-x64
+
+    - name: Build E2E project graph
+      run: |
+        dotnet build src/OpenClaw.Tray.WinUI -c Debug -r win-x64 --no-restore
+        dotnet build tests/OpenClaw.E2ETests -c Debug -r win-x64 --no-restore
+
+    - name: Run revocation recovery E2E tests
+      env:
+        OPENCLAW_RUN_E2E: 1
+      shell: pwsh
+      run: >
+        ./scripts/Invoke-CiE2e.ps1
+        -Name revocation-recovery
+        -Filter FullyQualifiedName~OpenClaw.E2ETests.Setup.RevocationAndRecoveryTests
+
+    - name: Upload E2E Test Results & Logs
+      if: always()
+      uses: actions/upload-artifact@v7
+      with:
+        name: e2e-test-results-revocation-recovery
+        path: |
+          TestResults/E2E/
+        if-no-files-found: warn
+
+  network-e2e:
+    name: Network recovery E2E
+    needs: [change-classification, fast-validation]
+    if: ${{ !cancelled() && needs.change-classification.result == 'success' && needs.fast-validation.result == 'success' && needs.change-classification.outputs.network_e2e == 'true' }}
+    runs-on: windows-latest
+    timeout-minutes: 25
+    env:
+      OPENCLAW_REPO_ROOT: ${{ github.workspace }}
+    steps:
+    - uses: actions/checkout@v7
+      with:
+        fetch-depth: 0
+
+    - name: Setup .NET 10
+      uses: actions/setup-dotnet@v6
+      with:
+        dotnet-version: 10.0.x
+
+    - name: Cache NuGet packages
+      continue-on-error: true
+      uses: actions/cache@v6
+      with:
+        path: ~/.nuget/packages
+        key: nuget-${{ runner.os }}-${{ hashFiles('**/*.csproj', '**/Directory.Packages.props') }}
+        restore-keys: nuget-${{ runner.os }}-
+
+    - name: Restore E2E project graph
+      run: |
+        dotnet restore src/OpenClaw.Tray.WinUI -r win-x64
+        dotnet restore tests/OpenClaw.E2ETests -r win-x64
+
+    - name: Build E2E project graph
+      run: |
+        dotnet build src/OpenClaw.Tray.WinUI -c Debug -r win-x64 --no-restore
+        dotnet build tests/OpenClaw.E2ETests -c Debug -r win-x64 --no-restore
+
+    - name: Run network recovery E2E tests
+      env:
+        OPENCLAW_RUN_E2E: 1
+      shell: pwsh
+      run: >
+        ./scripts/Invoke-CiE2e.ps1
+        -Name network-recovery
+        -Filter FullyQualifiedName~OpenClaw.E2ETests.Setup.NetworkRecoveryTests
+
+    - name: Upload E2E Test Results & Logs
+      if: always()
+      uses: actions/upload-artifact@v7
+      with:
+        name: e2e-test-results-network-recovery
+        path: |
+          TestResults/E2E/
+        if-no-files-found: warn
+
+  build-x64:
+    name: x64 release publish smoke
+    needs: [change-classification, metadata]
+    if: ${{ !cancelled() && needs.change-classification.result == 'success' && needs.metadata.result == 'success' && needs.change-classification.outputs.x64_release == 'true' }}
+    runs-on: windows-latest
+    env:
+      OPENCLAW_BUILD_VERSION: ${{ needs.metadata.outputs.semVer }}
 
     steps:
     - uses: actions/checkout@v7
@@ -506,32 +719,19 @@ jobs:
         restore-keys: nuget-${{ runner.os }}-
 
     - name: Restore WinUI Tray App
-      run: dotnet restore src/OpenClaw.Tray.WinUI -r ${{ matrix.rid }}
-
-    - name: Build WinUI Tray App (Release)
-      run: dotnet build src/OpenClaw.Tray.WinUI --no-restore -c Release -r ${{ matrix.rid }} -p:Version=$env:OPENCLAW_BUILD_VERSION -p:InformationalVersion=$env:OPENCLAW_BUILD_VERSION
+      run: dotnet restore src/OpenClaw.Tray.WinUI -r win-x64
 
     - name: Publish WinUI Tray App
-      run: dotnet publish src/OpenClaw.Tray.WinUI -c Release -r ${{ matrix.rid }} --self-contained --no-restore -o publish -p:Version=$env:OPENCLAW_BUILD_VERSION -p:InformationalVersion=$env:OPENCLAW_BUILD_VERSION
+      run: dotnet publish src/OpenClaw.Tray.WinUI -c Release -r win-x64 --self-contained --no-restore -o publish -p:Version=$env:OPENCLAW_BUILD_VERSION -p:InformationalVersion=$env:OPENCLAW_BUILD_VERSION
 
     - name: Verify x64 Native Runtime Payload
-      if: matrix.rid == 'win-x64'
       shell: pwsh
       run: .\scripts\Test-ReleaseNativeDependencies.ps1 -PayloadPath publish -RequireAppLocalVCRuntime
-
-    - name: Verify ARM64 Native Runtime Payload
-      if: matrix.rid == 'win-arm64'
-      shell: pwsh
-      # -SkipNativeLoadProbe: an ARM64 runner CAN LoadLibrary ARM64 DLLs, but
-      # the full tray native dependency chain may include components that are
-      # not in this payload here (WindowsAppSDK pieces, etc.). The probe is for
-      # x64 parity; signature + presence is what we actually care about.
-      run: .\scripts\Test-ReleaseNativeDependencies.ps1 -PayloadPath publish -RequireAppLocalVCRuntime -SkipNativeLoadProbe
 
     - name: Verify GitVersion assembly metadata
       shell: pwsh
       run: |
-        $expected = "${{ needs.test.outputs.semVer }}"
+        $expected = "${{ needs.metadata.outputs.semVer }}"
         $assemblyPath = Resolve-Path "publish\OpenClaw.Tray.WinUI.dll"
         $metadata = [System.Diagnostics.FileVersionInfo]::GetVersionInfo($assemblyPath)
         if ([string]::IsNullOrWhiteSpace($metadata.ProductVersion)) {
@@ -545,11 +745,69 @@ jobs:
     - name: Upload Tray Artifact
       uses: actions/upload-artifact@v7
       with:
-        name: openclaw-tray-${{ matrix.rid }}
+        name: openclaw-tray-win-x64
+        path: publish/
+
+  build-arm64:
+    name: ARM64 release publish
+    needs: [change-classification, metadata]
+    if: ${{ !cancelled() && needs.change-classification.result == 'success' && needs.metadata.result == 'success' && needs.change-classification.outputs.arm64_release == 'true' }}
+    runs-on: windows-11-arm
+    env:
+      OPENCLAW_BUILD_VERSION: ${{ needs.metadata.outputs.semVer }}
+
+    steps:
+    - uses: actions/checkout@v7
+      with:
+        fetch-depth: 0
+
+    - name: Setup .NET 10
+      uses: actions/setup-dotnet@v6
+      with:
+        dotnet-version: 10.0.x
+
+    - name: Cache NuGet packages
+      continue-on-error: true
+      uses: actions/cache@v6
+      with:
+        path: ~/.nuget/packages
+        key: nuget-${{ runner.os }}-${{ hashFiles('**/*.csproj', '**/Directory.Packages.props') }}
+        restore-keys: nuget-${{ runner.os }}-
+
+    - name: Restore WinUI Tray App
+      run: dotnet restore src/OpenClaw.Tray.WinUI -r win-arm64
+
+    - name: Publish WinUI Tray App
+      run: dotnet publish src/OpenClaw.Tray.WinUI -c Release -r win-arm64 --self-contained --no-restore -o publish -p:Version=$env:OPENCLAW_BUILD_VERSION -p:InformationalVersion=$env:OPENCLAW_BUILD_VERSION
+
+    - name: Verify ARM64 Native Runtime Payload
+      shell: pwsh
+      # -SkipNativeLoadProbe keeps parity with the prior release matrix. Presence
+      # and signature checks remain authoritative for this payload.
+      run: .\scripts\Test-ReleaseNativeDependencies.ps1 -PayloadPath publish -RequireAppLocalVCRuntime -SkipNativeLoadProbe
+
+    - name: Verify GitVersion assembly metadata
+      shell: pwsh
+      run: |
+        $expected = "${{ needs.metadata.outputs.semVer }}"
+        $assemblyPath = Resolve-Path "publish\OpenClaw.Tray.WinUI.dll"
+        $metadata = [System.Diagnostics.FileVersionInfo]::GetVersionInfo($assemblyPath)
+        if ([string]::IsNullOrWhiteSpace($metadata.ProductVersion)) {
+          throw "OpenClaw.Tray.WinUI.dll is missing ProductVersion metadata."
+        }
+        $actual = $metadata.ProductVersion -replace '\+.*$', ''
+        if ($actual -ne $expected) {
+          throw "ProductVersion '$actual' did not match GitVersion SemVer '$expected'."
+        }
+
+    - name: Upload Tray Artifact
+      uses: actions/upload-artifact@v7
+      with:
+        name: openclaw-tray-win-arm64
         path: publish/
 
   build-msix:
-    needs: [test, e2etests]
+    needs: [metadata]
     if: false # MSIX distribution is paused; ship Inno setup and portable ZIP artifacts only.
     runs-on: ${{ matrix.rid == 'win-arm64' && 'windows-11-arm' || 'windows-latest' }}
     continue-on-error: true
@@ -598,7 +856,7 @@ jobs:
     - name: Patch MSIX manifest metadata
       shell: pwsh
       run: |
-        $version = "${{ needs.test.outputs.majorMinorPatch }}.0"
+        $version = "${{ needs.metadata.outputs.majorMinorPatch }}.0"
         $isAlpha = "${{ startsWith(github.ref, 'refs/tags/v') && contains(github.ref_name, '-') }}" -eq "true"
         $identityName = if ($isAlpha) { "OpenClaw.Companion.Alpha" } else { "OpenClaw.Companion" }
         $displayName = if ($isAlpha) { "OpenClaw Companion Alpha" } else { "OpenClaw Companion" }
@@ -643,9 +901,68 @@ jobs:
         name: openclaw-msix-${{ matrix.rid }}
         path: ${{ steps.find-msix.outputs.msix_path }}
 
+  ci-gate:
+    name: CI Gate
+    if: ${{ always() }}
+    needs: [change-classification, fast-validation, proof-pool-contracts, metadata, core-tests, tray-tests, ui-tests, setup-e2e, revocation-e2e, network-e2e, build-x64, build-arm64]
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v7
+
+    - name: Enforce required CI results
+      shell: pwsh
+      env:
+        CLASSIFICATION_RESULT: ${{ needs.change-classification.result }}
+        CLASSIFICATION: ${{ needs.change-classification.outputs.classification }}
+        FULL_REQUIRED: ${{ needs.change-classification.outputs.full }}
+        FAST_VALIDATION_RESULT: ${{ needs.fast-validation.result }}
+        PROOF_POOL_CONTRACTS_RESULT: ${{ needs.proof-pool-contracts.result }}
+        CORE_REQUIRED: ${{ needs.change-classification.outputs.core_tests }}
+        CORE_RESULT: ${{ needs.core-tests.result }}
+        TRAY_REQUIRED: ${{ needs.change-classification.outputs.tray_tests }}
+        TRAY_RESULT: ${{ needs.tray-tests.result }}
+        UI_REQUIRED: ${{ needs.change-classification.outputs.ui_tests }}
+        UI_RESULT: ${{ needs.ui-tests.result }}
+        SETUP_E2E_REQUIRED: ${{ needs.change-classification.outputs.setup_e2e }}
+        SETUP_E2E_RESULT: ${{ needs.setup-e2e.result }}
+        REVOCATION_E2E_REQUIRED: ${{ needs.change-classification.outputs.revocation_e2e }}
+        REVOCATION_E2E_RESULT: ${{ needs.revocation-e2e.result }}
+        NETWORK_E2E_REQUIRED: ${{ needs.change-classification.outputs.network_e2e }}
+        NETWORK_E2E_RESULT: ${{ needs.network-e2e.result }}
+        X64_RELEASE_REQUIRED: ${{ needs.change-classification.outputs.x64_release }}
+        X64_RELEASE_RESULT: ${{ needs.build-x64.result }}
+        ARM64_RELEASE_REQUIRED: ${{ needs.change-classification.outputs.arm64_release }}
+        ARM64_RELEASE_RESULT: ${{ needs.build-arm64.result }}
+        METADATA_RESULT: ${{ needs.metadata.result }}
+      run: |
+        $validatedMode = ./scripts/Assert-CiGateResults.ps1 `
+          -ClassificationResult $env:CLASSIFICATION_RESULT `
+          -Classification $env:CLASSIFICATION `
+          -FullRequired $env:FULL_REQUIRED `
+          -FastValidationResult $env:FAST_VALIDATION_RESULT `
+          -ProofPoolContractsResult $env:PROOF_POOL_CONTRACTS_RESULT `
+          -CoreRequired $env:CORE_REQUIRED `
+          -CoreResult $env:CORE_RESULT `
+          -TrayRequired $env:TRAY_REQUIRED `
+          -TrayResult $env:TRAY_RESULT `
+          -UiRequired $env:UI_REQUIRED `
+          -UiResult $env:UI_RESULT `
+          -SetupE2eRequired $env:SETUP_E2E_REQUIRED `
+          -SetupE2eResult $env:SETUP_E2E_RESULT `
+          -RevocationE2eRequired $env:REVOCATION_E2E_REQUIRED `
+          -RevocationE2eResult $env:REVOCATION_E2E_RESULT `
+          -NetworkE2eRequired $env:NETWORK_E2E_REQUIRED `
+          -NetworkE2eResult $env:NETWORK_E2E_RESULT `
+          -X64ReleaseRequired $env:X64_RELEASE_REQUIRED `
+          -X64ReleaseResult $env:X64_RELEASE_RESULT `
+          -Arm64ReleaseRequired $env:ARM64_RELEASE_REQUIRED `
+          -Arm64ReleaseResult $env:ARM64_RELEASE_RESULT `
+          -MetadataResult $env:METADATA_RESULT
+        "CI Gate passed $validatedMode validation." >> $env:GITHUB_STEP_SUMMARY
+
   release:
-    needs: [repo-hygiene, test, e2etests, build]
-    if: startsWith(github.ref, 'refs/tags/v') && needs.repo-hygiene.result == 'success' && needs.test.result == 'success' && needs.e2etests.result == 'success' && needs.build.result == 'success' && !cancelled()
+    needs: [change-classification, metadata, build-x64, build-arm64, ci-gate]
+    if: startsWith(github.ref, 'refs/tags/v') && needs.ci-gate.result == 'success' && needs.change-classification.outputs.full == 'true' && needs.metadata.result == 'success' && needs.build-x64.result == 'success' && needs.build-arm64.result == 'success' && !cancelled()
     runs-on: windows-latest
     environment: release-signing
     permissions:
@@ -794,11 +1111,11 @@ jobs:
     # on the windows-11-arm runner; see src/Directory.Build.targets).
     - name: Create x64 Release ZIP
       run: |
-        Compress-Archive -Path artifacts/tray-win-x64/* -DestinationPath OpenClawTray-${{ needs.test.outputs.semVer }}-win-x64.zip
+        Compress-Archive -Path artifacts/tray-win-x64/* -DestinationPath OpenClawTray-${{ needs.metadata.outputs.semVer }}-win-x64.zip
 
     - name: Create arm64 Release ZIP
       run: |
-        Compress-Archive -Path artifacts/tray-win-arm64/* -DestinationPath OpenClawTray-${{ needs.test.outputs.semVer }}-win-arm64.zip
+        Compress-Archive -Path artifacts/tray-win-arm64/* -DestinationPath OpenClawTray-${{ needs.metadata.outputs.semVer }}-win-arm64.zip
 
     # Inno Setup installer for x64
     - name: Install Inno Setup
@@ -811,7 +1128,7 @@ jobs:
         copy artifacts/tray-win-x64/* publish-x64/ -Recurse
         .\scripts\Test-ReleaseNativeDependencies.ps1 -PayloadPath publish-x64 -RequireAppLocalVCRuntime -RequireInstallerVCRedist -InstallerVCRedistPath vc_redist.x64.exe
         # Build installer
-        & "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" /DMyAppVersion=${{ needs.test.outputs.semVer }} /DMyAppArch=x64 /Dpublish=publish-x64 /DvcRedist=vc_redist.x64.exe installer.iss
+        & "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" /DMyAppVersion=${{ needs.metadata.outputs.semVer }} /DMyAppArch=x64 /Dpublish=publish-x64 /DvcRedist=vc_redist.x64.exe installer.iss
 
     - name: Build arm64 Installer
       run: |
@@ -823,7 +1140,7 @@ jobs:
         #                             LoadLibrary an arm64 DLL.
         .\scripts\Test-ReleaseNativeDependencies.ps1 -PayloadPath publish-arm64 -RequireAppLocalVCRuntime -RequireInstallerVCRedist -InstallerVCRedistPath vc_redist.arm64.exe -SkipNativeLoadProbe
         # Build installer
-        & "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" /DMyAppVersion=${{ needs.test.outputs.semVer }} /DMyAppArch=arm64 /Dpublish=publish-arm64 /DvcRedist=vc_redist.arm64.exe installer.iss
+        & "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" /DMyAppVersion=${{ needs.metadata.outputs.semVer }} /DMyAppArch=arm64 /Dpublish=publish-arm64 /DvcRedist=vc_redist.arm64.exe installer.iss
 
     - name: Sign Installers
       uses: azure/artifact-signing-action@v2
@@ -838,7 +1155,7 @@ jobs:
         timestamp-digest: SHA256
 
     - name: Revalidate stable correction release ordering
-      if: needs.test.outputs.isStableCorrection == 'true'
+      if: needs.metadata.outputs.isStableCorrection == 'true'
       shell: pwsh
       env:
         GH_TOKEN: ${{ github.token }}
@@ -855,18 +1172,18 @@ jobs:
         files: |
           Output/OpenClawCompanion-Setup-x64.exe
           Output/OpenClawCompanion-Setup-arm64.exe
-          OpenClawTray-${{ needs.test.outputs.semVer }}-win-x64.zip
-          OpenClawTray-${{ needs.test.outputs.semVer }}-win-arm64.zip
-        prerelease: ${{ needs.test.outputs.isPrerelease }}
-        make_latest: ${{ needs.test.outputs.isPrerelease == 'true' && 'false' || 'true' }}
+          OpenClawTray-${{ needs.metadata.outputs.semVer }}-win-x64.zip
+          OpenClawTray-${{ needs.metadata.outputs.semVer }}-win-arm64.zip
+        prerelease: ${{ needs.metadata.outputs.isPrerelease }}
+        make_latest: ${{ needs.metadata.outputs.isPrerelease == 'true' && 'false' || 'true' }}
         body: |
           ## OpenClaw Windows Hub ${{ github.ref_name }}
 
           ### Downloads
           - **Installer (x64)**: `OpenClawCompanion-Setup-x64.exe` - Intel/AMD 64-bit
           - **Installer (ARM64)**: `OpenClawCompanion-Setup-arm64.exe` - Windows on ARM (Surface, etc.)
-          - **Portable x64**: `OpenClawTray-${{ needs.test.outputs.semVer }}-win-x64.zip`
-          - **Portable ARM64**: `OpenClawTray-${{ needs.test.outputs.semVer }}-win-arm64.zip`
+          - **Portable x64**: `OpenClawTray-${{ needs.metadata.outputs.semVer }}-win-x64.zip`
+          - **Portable ARM64**: `OpenClawTray-${{ needs.metadata.outputs.semVer }}-win-arm64.zip`
 
           ### Features
           - 🦞 System tray integration with gateway status
@@ -882,3 +1199,60 @@ jobs:
           1. Run the installer for your architecture
           2. Launch from Start Menu or system tray
           3. Right-click tray icon → Settings to configure
+
+    - name: Retain alpha releases for 30 days
+      if: needs.metadata.outputs.isPrerelease == 'true' && contains(github.ref_name, '-alpha.')
+      shell: bash
+      env:
+        GH_TOKEN: ${{ github.token }}
+      run: |
+        set -euo pipefail
+
+        releases_json="$(
+          gh api --paginate "repos/${GITHUB_REPOSITORY}/releases?per_page=100" |
+            jq -s 'add'
+        )"
+        current_release_count="$(
+          jq --arg tag "$GITHUB_REF_NAME" '
+            map(select(.draft == false and .prerelease == true and .tag_name == $tag))
+            | length
+          ' <<< "$releases_json"
+        )"
+        if [[ "$current_release_count" != "1" ]]; then
+          echo "::warning::Current alpha release $GITHUB_REF_NAME is not visible yet; deferring retention cleanup."
+          exit 0
+        fi
+
+        while IFS=$'\t' read -r release_id stale_tag; do
+          if [[ -z "$release_id" ]]; then
+            continue
+          fi
+          echo "Deleting old alpha release $stale_tag; retaining its Git tag."
+          deleted=false
+          for attempt in 1 2 3; do
+            if gh api --method DELETE "repos/${GITHUB_REPOSITORY}/releases/$release_id"; then
+              deleted=true
+              break
+            fi
+            echo "::warning::Attempt $attempt could not delete old alpha release $stale_tag."
+            if [[ "$attempt" -lt 3 ]]; then
+              sleep $((attempt * 5))
+            fi
+          done
+          if [[ "$deleted" != "true" ]]; then
+            echo "::warning::Retention cleanup for $stale_tag will retry after the next alpha publication."
+          fi
+        done < <(
+          jq -r '
+            map(select(
+              .draft == false and
+              .prerelease == true and
+              (.tag_name | test("^v[0-9]+\\.[0-9]+\\.[0-9]+-alpha\\.[0-9]+$")) and
+              ((.published_at | fromdateiso8601) < (now - (30 * 24 * 60 * 60)))
+            ))
+            | sort_by(.published_at)
+            | .[]
+            | [.id, .tag_name]
+            | @tsv
+          ' <<< "$releases_json"
+        )

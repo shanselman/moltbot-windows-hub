@@ -605,6 +605,7 @@ public class LocalizationValidationTests
     {
         "fr-fr",
         "nl-nl",
+        "pt-br",
     };
 
     private static bool IsInvariantOrDeferred(string key, string value) =>
@@ -778,10 +779,10 @@ public class LocalizationValidationTests
     }
 
     [Fact]
-    public void AllFiveLocaleDirectories_Exist()
+    public void AllSupportedLocaleDirectories_Exist()
     {
         var stringsDir = GetStringsDirectory();
-        string[] expected = ["en-us", "fr-fr", "nl-nl", "zh-cn", "zh-tw"];
+        string[] expected = ["en-us", "fr-fr", "nl-nl", "zh-cn", "zh-tw", "pt-br"];
 
         foreach (var locale in expected)
         {
@@ -790,6 +791,30 @@ public class LocalizationValidationTests
             Assert.True(File.Exists(Path.Combine(dir, "Resources.resw")),
                 $"Resources.resw missing for locale: {locale}");
         }
+    }
+
+    [Fact]
+    public void LanguageOverrideWhitelist_MatchesSupportedLocaleDirectories()
+    {
+        var root = TestRepositoryPaths.GetRepositoryRoot();
+        var appSource = File.ReadAllText(Path.Combine(root, "src", "OpenClaw.Tray.WinUI", "App.xaml.cs"));
+        var whitelist = Regex.Match(
+            appSource,
+            @"string\[\]\s+allowedLocales\s*=\s*\[(?<locales>[^\]]+)\]",
+            RegexOptions.CultureInvariant);
+
+        Assert.True(whitelist.Success, "App language override whitelist was not found.");
+
+        var allowedLocales = Regex.Matches(whitelist.Groups["locales"].Value, @"""(?<locale>[^""]+)""")
+            .Select(match => match.Groups["locale"].Value)
+            .OrderBy(locale => locale, StringComparer.OrdinalIgnoreCase);
+        var resourceLocales = Directory.GetDirectories(GetStringsDirectory())
+            .Select(Path.GetFileName)
+            .Where(locale => locale is not null)
+            .Cast<string>()
+            .OrderBy(locale => locale, StringComparer.OrdinalIgnoreCase);
+
+        Assert.Equal(resourceLocales, allowedLocales);
     }
 
     [Fact]

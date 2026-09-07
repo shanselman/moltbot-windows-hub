@@ -897,7 +897,7 @@ Direct `dotnet build` without the script will fail with "WindowsAppSDKSelfContai
 |----------|---------|
 | `OPENCLAW_FORCE_ONBOARDING=1` | Show onboarding wizard even if a token already exists |
 | `OPENCLAW_SKIP_UPDATE_CHECK=1` | Skip the update dialog (useful during testing) |
-| `OPENCLAW_LANGUAGE=fr-fr` | Override UI language (validated: en-us, fr-fr, nl-nl, zh-cn, zh-tw) |
+| `OPENCLAW_LANGUAGE=fr-fr` | Override UI language (validated: en-us, fr-fr, nl-nl, pt-br, zh-cn, zh-tw) |
 | `OPENCLAW_GATEWAY_PORT=19001` | Override default gateway port for local dev |
 | `OPENCLAW_VISUAL_TEST=1` | Enable automatic screenshot capture on page transitions |
 | `OPENCLAW_VISUAL_TEST_DIR=path` | Output directory for visual test screenshots |

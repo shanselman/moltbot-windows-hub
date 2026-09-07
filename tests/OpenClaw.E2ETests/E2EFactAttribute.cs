@@ -78,12 +78,11 @@ internal static class MxcE2ETestGate
         try
         {
             var availability = ProbeAvailabilityForE2E();
-            var hasBackend = availability.IsAppContainerAvailable || availability.IsIsolationSessionAvailable;
-            if (!hasBackend)
+            if (!availability.CanRunSystemRunSandbox)
             {
-                var reason = availability.UnsupportedReasons.Count == 0
-                    ? "MXC backend is unavailable."
-                    : string.Join("; ", availability.UnsupportedReasons);
+                var reason = availability.SystemRunSandboxUnsupportedReasons.Count == 0
+                    ? "MXC BaseContainer is unavailable."
+                    : string.Join("; ", availability.SystemRunSandboxUnsupportedReasons);
                 return $"MXC E2E test skipped: {reason}";
             }
 

@@ -65,12 +65,13 @@ public class CameraCaptureService : IDisposable
         try
         {
             var format = NormalizeFormat(args.Format);
+            var deviceId = await ResolveVideoDeviceIdAsync(args.DeviceId, cancellationToken);
             _logger.Info($"camera.snap: initializing MediaCapture (format={format})");
             using var capture = new MediaCapture();
             
             var settings = new MediaCaptureInitializationSettings
             {
-                VideoDeviceId = args.DeviceId,
+                VideoDeviceId = deviceId,
                 MemoryPreference = MediaCaptureMemoryPreference.Cpu,
                 StreamingCaptureMode = StreamingCaptureMode.Video,
                 PhotoCaptureSource = PhotoCaptureSource.Auto
@@ -148,11 +149,12 @@ public class CameraCaptureService : IDisposable
         
         try
         {
+            var deviceId = await ResolveVideoDeviceIdAsync(args.DeviceId, cancellationToken);
             capture = new MediaCapture();
             
             var settings = new MediaCaptureInitializationSettings
             {
-                VideoDeviceId = args.DeviceId,
+                VideoDeviceId = deviceId,
                 MemoryPreference = MediaCaptureMemoryPreference.Auto,
                 StreamingCaptureMode = args.IncludeAudio
                     ? StreamingCaptureMode.AudioAndVideo
@@ -227,6 +229,34 @@ public class CameraCaptureService : IDisposable
 
             capture?.Dispose();
         }
+    }
+
+    private static async Task<string?> ResolveVideoDeviceIdAsync(
+        string? requestedDeviceId,
+        CancellationToken cancellationToken)
+    {
+        var devices = await DeviceInformation
+            .FindAllAsync(DeviceClass.VideoCapture)
+            .AsTask(cancellationToken);
+
+        if (devices.Count == 0)
+        {
+            throw new InvalidOperationException("No camera devices found.");
+        }
+
+        if (string.IsNullOrWhiteSpace(requestedDeviceId))
+        {
+            return null;
+        }
+
+        var requestedDevice = devices.FirstOrDefault(
+            device => string.Equals(device.Id, requestedDeviceId, StringComparison.Ordinal));
+        if (requestedDevice == null)
+        {
+            throw new InvalidOperationException("Requested camera device was not found.");
+        }
+
+        return requestedDevice.Id;
     }
     
     private async Task<ImageEncodingProperties?> CaptureWithFallbackAsync(

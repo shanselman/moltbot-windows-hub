@@ -19,7 +19,7 @@
                        Style="{StaticResource BodyTextBlockStyle}"
                        Foreground="{ThemeResource TextFillColorSecondaryBrush}"
                        HorizontalAlignment="Center"
-                       Text="OpenClaw runs your agent through a gateway. Choose how to set it up on this PC. You can change this later." />
+                       Text="Choose where to run your OpenClaw gateway. You can change this later." />
         </StackPanel>
 
         <ScrollViewer Grid.Row="1" Margin="0,24,0,0"
@@ -66,28 +66,30 @@
                                                Style="{StaticResource CaptionTextBlockStyle}"
                                                Foreground="{ThemeResource AccentTextFillColorPrimaryBrush}" />
                                 </Border>
-                                <Border x:Name="LocalAiAvailabilityBadge"
-                                        AutomationProperties.AutomationId="WelcomeLocalAiAvailable"
-                                        AutomationProperties.AccessibilityView="Raw"
-                                        CornerRadius="4" Padding="7,1" VerticalAlignment="Center"
-                                        BorderBrush="{ThemeResource SystemFillColorSuccessBrush}"
-                                        BorderThickness="1" Visibility="Collapsed">
-                                    <StackPanel Orientation="Horizontal" Spacing="4">
-                                        <FontIcon Glyph="&#xE950;" FontSize="11"
-                                                  IsTextScaleFactorEnabled="False"
-                                                  Foreground="{ThemeResource SystemFillColorSuccessBrush}"
-                                                  AutomationProperties.AccessibilityView="Raw" />
-                                        <TextBlock x:Uid="Onboarding_Welcome_LocalAiAvailableBadge"
-                                                   Text="Local AI available"
-                                                   Style="{StaticResource CaptionTextBlockStyle}"
-                                                   Foreground="{ThemeResource SystemFillColorSuccessBrush}" />
-                                    </StackPanel>
-                                </Border>
                             </StackPanel>
                             <TextBlock TextWrapping="Wrap"
                                        Style="{StaticResource CaptionTextBlockStyle}"
                                        Foreground="{ThemeResource TextFillColorSecondaryBrush}"
-                                       Text="A private, self-hosted OpenClaw gateway in an isolated Ubuntu WSL instance. We'll show exactly what gets installed before anything runs." />
+                                       Text="Install a private OpenClaw gateway in WSL." />
+                            <StackPanel x:Name="LocalAiAvailabilityPanel"
+                                        AutomationProperties.AutomationId="WelcomeLocalAiAvailable"
+                                        AutomationProperties.AccessibilityView="Raw"
+                                        Margin="0,8,0,0" Spacing="4" Visibility="Collapsed">
+                                <StackPanel Orientation="Horizontal" Spacing="4">
+                                    <FontIcon Glyph="&#xE73E;" FontSize="11"
+                                              IsTextScaleFactorEnabled="False"
+                                              Foreground="{ThemeResource SystemFillColorSuccessBrush}"
+                                              AutomationProperties.AccessibilityView="Raw" />
+                                    <TextBlock x:Uid="Onboarding_Welcome_LocalAiAvailableBadge"
+                                               Text="Local AI supported"
+                                               Style="{StaticResource CaptionTextBlockStyle}"
+                                               Foreground="{ThemeResource SystemFillColorSuccessBrush}" />
+                                </StackPanel>
+                                <TextBlock x:Name="LocalAiAvailabilityText"
+                                           TextWrapping="Wrap"
+                                           Style="{StaticResource CaptionTextBlockStyle}"
+                                           Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+                            </StackPanel>
                         </StackPanel>
                     </Grid>
                 </ListViewItem>
@@ -110,7 +112,7 @@
                             <TextBlock TextWrapping="Wrap"
                                        Style="{StaticResource CaptionTextBlockStyle}"
                                        Foreground="{ThemeResource TextFillColorSecondaryBrush}"
-                                       Text="Already run an OpenClaw gateway: here, on another machine, or remote? Pair without installing a gateway or configuring Local AI on this PC." />
+                                       Text="Connect without installing a gateway or Local AI on this PC." />
                         </StackPanel>
                     </Grid>
                 </ListViewItem>

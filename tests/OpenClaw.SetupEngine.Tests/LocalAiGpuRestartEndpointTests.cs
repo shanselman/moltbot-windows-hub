@@ -132,7 +132,7 @@ public sealed class LocalAiGpuRestartEndpointTests
             ModelAsset = receipt with { FileName = Path.GetFileName(modelPath) },
             RequestedPort = 0,
             Endpoint = endpoint.AbsoluteUri,
-            ContextLength = model.Recipe.ContextTokens,
+            ContextLength = LocalModelCatalog.GetProfiles(model)[0].ContextTokens,
         };
         return new LocalAiResolvedInstall(manifest, executable, modelPath, endpoint);
     }

@@ -868,7 +868,7 @@ public sealed class AppRefactorContractTests
         };
         const string runtimeContractKey = "PermissionsPage_PatternsAreMatchedLeft.Text";
 
-        foreach (var locale in new[] { "fr-fr", "nl-nl", "zh-cn", "zh-tw" })
+        foreach (var locale in new[] { "fr-fr", "nl-nl", "zh-cn", "zh-tw", "pt-br" })
         {
             var localized = ReadReswValues(Path.Combine(stringsRoot, locale, "Resources.resw"));
             foreach (var key in localizedKeys)
@@ -1172,11 +1172,11 @@ public sealed class AppRefactorContractTests
 
         AssertInOrder(
             code,
-            "(\"wsl-platform\", \"Prepare and verify WSL platform\", [\"ensure-wsl-platform\"])",
-            "(\"local-ai-engine\", \"Install verified llama-server\"",
-            "(\"local-ai-model\", \"Download verified model from Hugging Face\"");
+            "(\"wsl-platform\", \"Prepare WSL\", [\"ensure-wsl-platform\"])",
+            "(\"local-ai-engine\", \"Install Local AI\"",
+            "(\"local-ai-model\", \"Download AI model\"");
         Assert.Contains(
-            "(\"wsl-networking\", \"Configure WSL access to Local AI\", [\"configure-local-ai-wsl-networking\"])",
+            "(\"wsl-networking\", \"Connect WSL to Local AI\", [\"configure-local-ai-wsl-networking\"])",
             code);
         Assert.DoesNotContain("Verify Local AI before WSL setup", code);
     }
@@ -1326,6 +1326,40 @@ public sealed class AppRefactorContractTests
     }
 
     [Fact]
+    public void CompletePage_OffersTypedRestartChoiceWithoutForcingApplicationsClosed()
+    {
+        var root = TestRepositoryPaths.GetRepositoryRoot();
+        var xaml = File.ReadAllText(Path.Combine(root, "src", "OpenClaw.SetupEngine.UI", "Pages", "CompletePage.xaml"));
+        var complete = File.ReadAllText(Path.Combine(root, "src", "OpenClaw.SetupEngine.UI", "Pages", "CompletePage.xaml.cs"));
+        var restartLauncher = File.ReadAllText(Path.Combine(root, "src", "OpenClaw.SetupEngine.UI", "WindowsRestartLauncher.cs"));
+        var progress = File.ReadAllText(Path.Combine(root, "src", "OpenClaw.SetupEngine.UI", "Pages", "ProgressPage.xaml.cs"));
+        var setupWindow = File.ReadAllText(Path.Combine(root, "src", "OpenClaw.SetupEngine.UI", "SetupWindow.xaml.cs"));
+        var deferRestart = ExtractMethod(complete, "RestartLaterButton_Click");
+
+        Assert.Contains("restartRequired: result.RequiresRestart", progress);
+        Assert.Contains("if (args.RequiresRestart)", complete);
+        Assert.Contains("OpenClaw needs to restart Windows to continue the installation. Would you like to restart now?", complete);
+        Assert.Contains("Content=\"Yes, restart now\"", xaml);
+        Assert.Contains("Content=\"No, I'm not ready yet\"", xaml);
+        Assert.Contains("Path.Combine(Environment.SystemDirectory, \"shutdown.exe\")", restartLauncher);
+        Assert.Contains("ArgumentList = { \"/r\", \"/t\", \"0\" }", restartLauncher);
+        Assert.DoesNotContain("\"/f\"", restartLauncher);
+        Assert.Contains("SetupWindow.Active?.Close()", deferRestart);
+        Assert.DoesNotContain("Process.", deferRestart);
+        var restartNow = ExtractMethod(complete, "RestartNowButton_Click");
+        var restartWindows = ExtractMethod(complete, "RestartWindowsAsync");
+        var restartError = ExtractMethod(complete, "ShowRestartError");
+        Assert.Contains("AsyncEventHandlerGuard.Run(", restartNow);
+        Assert.Contains("RestartWindowsAsync", restartNow);
+        Assert.Contains("ShowRestartError", restartNow);
+        Assert.Contains("await s_windowsRestartLauncher.RestartAsync()", restartWindows);
+        Assert.Contains("RestartNowButton.IsEnabled = true", restartError);
+        Assert.Contains("RestartLaterButton.IsEnabled = true", restartError);
+        Assert.Contains("public bool RequiresRestart { get; init; }", setupWindow);
+        Assert.DoesNotContain("LocalAiFailureDetail? Detail = null,\n    bool RequiresRestart", setupWindow.Replace("\r\n", "\n"));
+    }
+
+    [Fact]
     public void CapabilitiesPage_PersistsSelectedProfileIntoRuntimeNodeSettings()
     {
         var root = TestRepositoryPaths.GetRepositoryRoot();
@@ -1459,10 +1493,16 @@ public sealed class AppRefactorContractTests
         var diagnostics = File.ReadAllText(Path.Combine(root, "src", "OpenClaw.Shared", "Inference", "Catalog", "LocalInferenceEligibilityDiagnostics.cs"));
         var resources = File.ReadAllText(Path.Combine(root, "src", "OpenClaw.Tray.WinUI", "Strings", "en-us", "Resources.resw"));
 
-        Assert.Contains("LocalInferenceEligibility.GetRequiredMemoryBytes(model) <= capacityBytes", source);
+        Assert.Contains("LocalInferenceEligibility.Evaluate(_localAiHardware!, model.Id)", source);
         Assert.Contains("eligibility.RequiredTotalMemoryBytes", diagnostics);
         Assert.Contains("eligibility.DetectedTotalMemoryBytes", diagnostics);
         Assert.Contains("model weights, KV cache, and runtime workspace", resources);
+        Assert.Contains("SetupReviewSummaryBuilder.DisplayModelName(model)", source);
+        Assert.Contains("(isRecommended ? \" (Recommended)\" : string.Empty)", source);
+        Assert.Contains("SetupReviewSummaryBuilder.DisplayModelName(plan.Model)", source);
+        Assert.Contains("bytes / (1024d * 1024d * 1024d)", diagnostics);
+        Assert.Contains("GiB", resources);
+        Assert.DoesNotContain(" ({FormatSize(model.Weights.SizeBytes)})", source);
         Assert.DoesNotContain("2 GiB runtime margin", source);
         Assert.DoesNotContain("HardwareProfile", source);
         Assert.DoesNotContain("RTX PRO 6000", source);
@@ -1942,8 +1982,9 @@ public sealed class AppRefactorContractTests
             "UpdatePresetHighlight();",
             "UpdateSandboxStatusCard();",
             "UpdateControlsEnabledState();");
-        Assert.Contains("HasAnyBackend: false", definitiveUnavailable);
+        Assert.Contains("CanRunSystemRunSandbox: false", definitiveUnavailable);
         Assert.Contains("ProbeErrored: false", definitiveUnavailable);
+        Assert.Contains("ProbeSuppressedBySkuGate: false", definitiveUnavailable);
         AssertInOrder(
             normalize,
             "settings.SystemRunSandboxEnabled",
@@ -1952,6 +1993,19 @@ public sealed class AppRefactorContractTests
         Assert.Contains("settings.SystemRunSandboxEnabled = false", normalize);
         Assert.Contains("SandboxEnabledToggle.IsOn = false", normalize);
         Assert.Contains("Save();", normalize);
+    }
+
+    [Fact]
+    public void SandboxPage_SkuSuppressionIsNotClassifiedAsMissingComponents()
+    {
+        var source = ReadSandboxPageSource();
+        var actionBar = ExtractMethod(source, "UpdateUnavailableActionBar");
+
+        AssertInOrder(
+            actionBar,
+            "var isSetupIssue",
+            "!availability.ProbeSuppressedBySkuGate",
+            "!availability.IsWxcExecResolvable");
     }
 
     [Fact]
@@ -1971,7 +2025,7 @@ public sealed class AppRefactorContractTests
             "return;");
         Assert.Contains("SandboxEnabledToggle.IsOn = false", reject);
         Assert.Contains("Node Sandbox unavailable", reject);
-        Assert.Contains("usable MXC backend", reject);
+        Assert.Contains("MXC BaseContainer without host DACL augmentation", reject);
     }
 
     private static string ReadCoordinatorSource()

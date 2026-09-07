@@ -254,6 +254,15 @@ public sealed class GatewayRegistry
             GatewayUrlsEquivalent(r.Url, url));
     }
 
+    /// <summary>
+    /// Find all gateway records with an equivalent URL.
+    /// </summary>
+    public IReadOnlyList<GatewayRecord> FindAllByUrl(string url)
+    {
+        lock (_lock) return _records.Where(r =>
+            GatewayUrlsEquivalent(r.Url, url)).ToList();
+    }
+
     private static bool GatewayUrlsEquivalent(string? left, string? right)
     {
         if (string.Equals(left, right, StringComparison.OrdinalIgnoreCase))

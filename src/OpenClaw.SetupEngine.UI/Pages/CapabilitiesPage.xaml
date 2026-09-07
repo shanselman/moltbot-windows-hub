@@ -108,8 +108,8 @@
                                     <Grid ColumnDefinitions="Auto,*,Auto" ColumnSpacing="14">
                                         <FontIcon Grid.Column="0" Glyph="&#xE756;" FontSize="18" VerticalAlignment="Center" />
                                         <StackPanel Grid.Column="1" Spacing="2">
-                                            <TextBlock x:Name="InstallDistroTitleText" Text="Install an isolated Ubuntu 24.04 instance" Style="{StaticResource BodyStrongTextBlockStyle}" />
-                                            <TextBlock x:Name="InstallDistroDetailText" TextWrapping="Wrap" Style="{StaticResource CaptionTextBlockStyle}" Foreground="{ThemeResource TextFillColorSecondaryBrush}" Text="WSL distro &quot;OpenClawGateway&quot; in your AppData. Separate from any Ubuntu you already have. Disk use grows dynamically." />
+                                            <TextBlock x:Name="InstallDistroTitleText" Text="Install Ubuntu 24.04 in WSL" Style="{StaticResource BodyStrongTextBlockStyle}" />
+                                            <TextBlock x:Name="InstallDistroDetailText" TextWrapping="Wrap" Style="{StaticResource CaptionTextBlockStyle}" Foreground="{ThemeResource TextFillColorSecondaryBrush}" Text="Creates a separate OpenClawGateway instance. Uses several GB." />
                                         </StackPanel>
                                         <TextBlock Grid.Column="2" Text="Several GB" Style="{StaticResource CaptionTextBlockStyle}" Foreground="{ThemeResource TextFillColorTertiaryBrush}" FontFamily="Cascadia Mono, Consolas" VerticalAlignment="Center" />
                                     </Grid>
@@ -158,14 +158,14 @@
                                             <Grid ColumnDefinitions="Auto,*,Auto" ColumnSpacing="14">
                                                 <FontIcon Grid.Column="0" Glyph="&#xE950;" FontSize="18" VerticalAlignment="Center" />
                                                 <StackPanel Grid.Column="1" Spacing="2">
-                                                    <TextBlock Text="Local AI on this PC" Style="{StaticResource BodyStrongTextBlockStyle}" />
-                                                    <TextBlock Text="OpenClaw installs a verified native llama-server and downloads a pinned GGUF model from Hugging Face."
+                                                    <TextBlock Text="Local AI" Style="{StaticResource BodyStrongTextBlockStyle}" />
+                                                    <TextBlock Text="Install Local AI and an optimized model."
                                                                TextWrapping="Wrap" Style="{StaticResource CaptionTextBlockStyle}"
                                                                Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
                                                 </StackPanel>
                                                 <ToggleSwitch x:Name="LocalAiToggle" Grid.Column="2"
                                                               AutomationProperties.AutomationId="LocalAiSetupToggle"
-                                                              AutomationProperties.Name="Set up Local AI on this PC"
+                                                              AutomationProperties.Name="Set up Local AI"
                                                               OnContent="" OffContent="" MinWidth="0"
                                                               Toggled="LocalAiToggle_Toggled" VerticalAlignment="Center" />
                                             </Grid>
@@ -186,9 +186,6 @@
                                                            Style="{StaticResource CaptionTextBlockStyle}"
                                                            Foreground="{ThemeResource TextFillColorSecondaryBrush}" TextWrapping="Wrap" />
                                                 <TextBlock x:Name="LocalAiModelDetailText"
-                                                           Style="{StaticResource CaptionTextBlockStyle}"
-                                                           Foreground="{ThemeResource TextFillColorSecondaryBrush}" TextWrapping="Wrap" />
-                                                <TextBlock x:Name="LocalAiSettingsDetailText"
                                                            Style="{StaticResource CaptionTextBlockStyle}"
                                                            Foreground="{ThemeResource TextFillColorSecondaryBrush}" TextWrapping="Wrap" />
                                                 <InfoBar x:Name="LocalAiNetworkingConsentPanel"

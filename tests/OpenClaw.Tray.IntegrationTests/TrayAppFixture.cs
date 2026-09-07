@@ -166,6 +166,13 @@ public sealed class TrayAppFixture : IAsyncLifetime
         // Disable the MXC sandbox for these tray/MCP wiring smokes because hosted
         // CI does not provide MXC; fail-closed sandbox behavior is covered by
         // OpenClaw.Shared.Tests.Mxc.
+        // CaptureConsentTimeoutMs is cut way down from the 120s production default:
+        // screen.snapshot/camera.snap now require recording consent (see
+        // NodeService.EnsureCaptureConsentAsync), and no human is present in this
+        // hosted process to click the consent prompt. The fail-closed timeout
+        // still denies (never auto-grants) — it just does so in seconds instead
+        // of never, so ScreenSnapshot/CameraSnap integration tests get a
+        // deterministic tool error well inside McpClient's 30s HTTP timeout.
         var settings = new SettingsData
         {
             EnableMcpServer = true,
@@ -174,7 +181,10 @@ public sealed class TrayAppFixture : IAsyncLifetime
             AutoStart = false,
             GlobalHotkeyEnabled = false,
             ShowNotifications = false,
+            ScreenRecordingConsentGiven = true,
+            CameraRecordingConsentGiven = true,
             HasSeenActivityStreamTip = true,
+            CaptureConsentTimeoutMs = 3000,
         };
         File.WriteAllText(Path.Combine(DataDir, "settings.json"), settings.ToJson());
     }

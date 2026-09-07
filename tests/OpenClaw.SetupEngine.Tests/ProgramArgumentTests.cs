@@ -1,4 +1,5 @@
 using System.Runtime.Versioning;
+using System.Text.Json;
 
 namespace OpenClaw.SetupEngine.Tests;
 
@@ -511,6 +512,22 @@ public sealed class ProgramArgumentTests : IDisposable
             ]);
 
         Assert.Equal(2, exitCode);
+    }
+
+    [Fact]
+    public void SerializeJsonOutput_IncludesRequiresRestart()
+    {
+        var config = new SetupConfig();
+        GatewayReleasePolicy.ResolveAndApply(config);
+        var result = new PipelineResult(PipelineOutcome.Failed, "ensure-wsl-platform")
+        {
+            RequiresRestart = true,
+        };
+
+        using var document = JsonDocument.Parse(
+            Program.SerializeJsonOutput(result, config, "journal.jsonl"));
+        Assert.True(document.RootElement.TryGetProperty("requiresRestart", out var requiresRestart));
+        Assert.True(requiresRestart.GetBoolean());
     }
 
     [Fact]

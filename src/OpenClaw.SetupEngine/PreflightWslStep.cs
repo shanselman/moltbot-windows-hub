@@ -188,6 +188,7 @@ public sealed class PreflightWslStep : SetupStep
 
     public override async Task<StepResult> ExecuteAsync(SetupContext ctx, CancellationToken ct)
     {
+        ctx.WslViability = null;
         WslViabilityResult viability = await WslViabilityInspector.InspectAsync(
             ctx.Commands,
             ctx.Logger,
@@ -236,7 +237,7 @@ public sealed class PreflightWslStep : SetupStep
             await process.WaitForExitAsync(ct);
 
             if (process.ExitCode == 3010)
-                return StepResult.Terminal("WSL platform install requires a restart. Reboot Windows, then run setup again.");
+                return StepResult.RestartRequired("WSL platform install requires a restart. Reboot Windows, then run setup again.");
 
             if (process.ExitCode != 0)
             {
@@ -251,7 +252,7 @@ public sealed class PreflightWslStep : SetupStep
                 ct: ct);
             if (probe.ExitCode != 0 || WslViabilityInspector.LooksUnavailable(probe))
             {
-                return StepResult.Terminal(
+                return StepResult.RestartRequired(
                     "WSL platform install completed, but Windows still reports WSL unavailable. Reboot Windows, then run setup again.");
             }
 
@@ -279,15 +280,25 @@ public sealed class PreflightWslStep : SetupStep
 public sealed class EnsureWslPlatformStep : SetupStep
 {
     private readonly Func<SetupContext, CancellationToken, Task<StepResult>> _installer;
+    private readonly bool _reusePreflightResult;
 
     public EnsureWslPlatformStep()
-        : this(PreflightWslStep.InstallWslPlatformAsync)
+        : this(PreflightWslStep.InstallWslPlatformAsync, reusePreflightResult: false)
+    {
+    }
+
+    internal EnsureWslPlatformStep(bool reusePreflightResult)
+        : this(PreflightWslStep.InstallWslPlatformAsync, reusePreflightResult)
     {
     }
 
     internal EnsureWslPlatformStep(
-        Func<SetupContext, CancellationToken, Task<StepResult>> installer) =>
+        Func<SetupContext, CancellationToken, Task<StepResult>> installer,
+        bool reusePreflightResult = false)
+    {
         _installer = installer ?? throw new ArgumentNullException(nameof(installer));
+        _reusePreflightResult = reusePreflightResult;
+    }
 
     public override string Id => "ensure-wsl-platform";
     public override string DisplayName => "Prepare WSL platform";
@@ -295,10 +306,16 @@ public sealed class EnsureWslPlatformStep : SetupStep
 
     public override async Task<StepResult> ExecuteAsync(SetupContext ctx, CancellationToken ct)
     {
-        WslViabilityResult viability = await WslViabilityInspector.InspectAsync(
-            ctx.Commands,
-            ctx.Logger,
-            ct);
+        WslViabilityResult viability;
+        if (_reusePreflightResult && ctx.WslViability is { } preflightViability)
+        {
+            viability = preflightViability;
+        }
+        else
+        {
+            ctx.WslViability = null;
+            viability = await WslViabilityInspector.InspectAsync(ctx.Commands, ctx.Logger, ct);
+        }
         ctx.WslViability = viability;
 
         if (viability.Kind == WslViabilityKind.Ready)
@@ -306,6 +323,7 @@ public sealed class EnsureWslPlatformStep : SetupStep
         if (viability.BlocksSetup)
             return StepResult.Terminal(viability.Description);
 
+        ctx.WslViability = null;
         StepResult install = await _installer(ctx, ct);
         if (!install.IsSuccess)
             return install;
@@ -314,9 +332,9 @@ public sealed class EnsureWslPlatformStep : SetupStep
         ctx.WslViability = viability;
         if (viability.Kind == WslViabilityKind.Ready)
             return StepResult.Ok("WSL platform installed and verified.");
-        if (viability.Kind == WslViabilityKind.Installable)
+        if (viability.Kind is WslViabilityKind.Installable or WslViabilityKind.EnvironmentBlocked)
         {
-            return StepResult.Terminal(
+            return StepResult.RestartRequired(
                 "WSL platform installation completed, but Windows must be restarted before WSL is ready. " +
                 "Reboot Windows, then run setup again.");
         }

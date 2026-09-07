@@ -63,8 +63,8 @@ public sealed partial class LocalAiPage : Page
         ModelRecipeText.Text = string.Format(
             CultureInfo.CurrentCulture,
             LocalizationHelper.GetString("LocalAiPage_ModelRecipeFormat"),
-            LocalAiPageViewModel.ContextLengthText,
-            LocalAiPageViewModel.KvCacheText);
+            _viewModel.ContextLengthText,
+            _viewModel.KvCacheText);
         ModelStatusDot.Fill = ModelStatusText.Foreground = ResolveBrush(_viewModel.ModelState switch
         {
             LocalAiModelPresentationState.Loaded => "SystemFillColorSuccessBrush",

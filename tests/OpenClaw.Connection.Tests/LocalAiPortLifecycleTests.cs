@@ -5,6 +5,7 @@ using OpenClaw.TestSupport;
 using System.Collections.Immutable;
 using System.Net;
 using System.Text.Json;
+using System.Text.Json.Nodes;
 
 namespace OpenClaw.Connection.Tests;
 
@@ -52,11 +53,19 @@ public sealed class LocalAiPortLifecycleTests
         var paths = new LocalAiPaths(temp.Path);
         var store = new LocalAiManifestStore(paths);
         await store.SaveAsync(ValidManifest() with { HardwareProfileId = "retired-profile-id" });
+        JsonObject legacyJson = (JsonNode.Parse(await File.ReadAllTextAsync(paths.ManifestPath)) as JsonObject)!;
+        legacyJson.Remove("keyCachePrecision");
+        legacyJson.Remove("valueCachePrecision");
+        legacyJson.Remove("draftKeyCachePrecision");
+        legacyJson.Remove("draftValueCachePrecision");
+        await File.WriteAllTextAsync(paths.ManifestPath, legacyJson.ToJsonString());
 
         LocalAiResolvedInstall saved = (await store.LoadAsync())!;
         LlamaServerRouterLaunchPlan launch = LlamaServerRouterConfiguration.Build(paths, saved);
 
         Assert.Equal("retired-profile-id", saved.Manifest.HardwareProfileId);
+        Assert.Equal(KvCachePrecision.F16, saved.Manifest.KeyCachePrecision);
+        Assert.Contains("cache-type-k = f16", launch.PresetContent);
         Assert.Equal(LocalModelCatalog.Qwen35BModelId, launch.ModelAlias);
     }
 
@@ -81,6 +90,11 @@ public sealed class LocalAiPortLifecycleTests
         Assert.Contains(
             $"n-predict = {gatewayMaximum}",
             launch.PresetContent.Split(Environment.NewLine));
+        Assert.Contains("ctx-size = 262144", launch.PresetContent.Split(Environment.NewLine));
+        Assert.Contains("cache-type-k = q8_0", launch.PresetContent.Split(Environment.NewLine));
+        Assert.Contains("cache-type-v = q8_0", launch.PresetContent.Split(Environment.NewLine));
+        Assert.Contains("cache-type-k-draft = q8_0", launch.PresetContent.Split(Environment.NewLine));
+        Assert.Contains("cache-type-v-draft = q8_0", launch.PresetContent.Split(Environment.NewLine));
     }
 
     [Fact]
@@ -93,6 +107,8 @@ public sealed class LocalAiPortLifecycleTests
         string json = await File.ReadAllTextAsync(paths.ManifestPath);
 
         Assert.DoesNotContain("hardwareProfileId", json, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("\"keyCachePrecision\": \"q8_0\"", json, StringComparison.Ordinal);
+        Assert.Contains("\"draftValueCachePrecision\": \"q8_0\"", json, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -623,6 +639,115 @@ public sealed class LocalAiPortLifecycleTests
         expectedModelPath,
         "The managed model is ready.");
 
+    /// <summary>
+    /// A managed Qwen3.5 9B install predates the profile-aware catalog and is no
+    /// longer offered for new installs. Upgrading must not strand it: its own
+    /// pinned receipt has to keep resolving and launching unchanged.
+    /// </summary>
+    [Fact]
+    public async Task Router_LaunchesRetiredQwen9BInstallAfterUpgrade()
+    {
+        using var temp = new TempDirectory("local-ai-legacy-model-");
+        var paths = new LocalAiPaths(temp.Path);
+        var store = new LocalAiManifestStore(paths);
+        await store.SaveAsync(LegacyQwen9BManifest());
+        JsonObject legacyJson = (JsonNode.Parse(await File.ReadAllTextAsync(paths.ManifestPath)) as JsonObject)!;
+        legacyJson.Remove("keyCachePrecision");
+        legacyJson.Remove("valueCachePrecision");
+        legacyJson.Remove("draftKeyCachePrecision");
+        legacyJson.Remove("draftValueCachePrecision");
+        await File.WriteAllTextAsync(paths.ManifestPath, legacyJson.ToJsonString());
+
+        LocalAiResolvedInstall saved = (await store.LoadAsync())!;
+        LlamaServerRouterLaunchPlan launch = LlamaServerRouterConfiguration.Build(paths, saved);
+
+        Assert.Equal(LocalModelCatalog.Qwen9BModelId, launch.ModelAlias);
+        Assert.Contains("ctx-size = 262144", launch.PresetContent.Split(Environment.NewLine));
+        Assert.Contains("cache-type-k = f16", launch.PresetContent.Split(Environment.NewLine));
+        Assert.Contains("cache-type-v = f16", launch.PresetContent.Split(Environment.NewLine));
+        Assert.Equal(
+            $"llamacpp/{LocalModelCatalog.Qwen9BModelId}",
+            LocalAiGatewayProviderDefinition.BuildPrimaryModel(saved));
+    }
+
+    /// <summary>
+    /// The retired entry is a compatibility shim only. It must never be offered,
+    /// recommended, or selectable for a new install.
+    /// </summary>
+    [Fact]
+    public void Catalog_DoesNotOfferRetiredQwen9BForNewInstalls()
+    {
+        Assert.DoesNotContain(
+            LocalModelCatalog.Models,
+            model => string.Equals(model.Id, LocalModelCatalog.Qwen9BModelId, StringComparison.OrdinalIgnoreCase));
+        Assert.DoesNotContain(
+            LocalModelCatalog.ExplicitAlternatives,
+            model => string.Equals(model.Id, LocalModelCatalog.Qwen9BModelId, StringComparison.OrdinalIgnoreCase));
+        Assert.Null(LocalModelCatalog.Find(LocalModelCatalog.Qwen9BModelId));
+        Assert.NotNull(LocalModelCatalog.FindInstalled(LocalModelCatalog.Qwen9BModelId));
+        Assert.True(LocalModelCatalog.IsLegacy(LocalModelCatalog.Qwen9BModelId));
+        Assert.False(LocalModelCatalog.IsLegacy(LocalModelCatalog.Qwen38_27BModelId));
+    }
+
+    /// <summary>
+    /// Compatibility must not become silent remapping: a retired model receipt
+    /// that claims a context or KV profile it could never have been installed
+    /// with still has to fail receipt validation.
+    /// </summary>
+    [Fact]
+    public async Task Router_RejectsRetiredQwen9BReceiptWithUnsupportedProfile()
+    {
+        using var temp = new TempDirectory("local-ai-legacy-profile-");
+        var paths = new LocalAiPaths(temp.Path);
+        var store = new LocalAiManifestStore(paths);
+        await store.SaveAsync(LegacyQwen9BManifest() with
+        {
+            KeyCachePrecision = KvCachePrecision.Q8_0,
+            ValueCachePrecision = KvCachePrecision.Q8_0,
+            DraftKeyCachePrecision = KvCachePrecision.Q8_0,
+            DraftValueCachePrecision = KvCachePrecision.Q8_0,
+        });
+
+        LocalAiResolvedInstall saved = (await store.LoadAsync())!;
+
+        InvalidDataException error = Assert.Throws<InvalidDataException>(
+            () => LlamaServerRouterConfiguration.Build(paths, saved));
+        Assert.Contains("qualified catalog profile", error.Message, StringComparison.Ordinal);
+    }
+
+    private static LocalAiInstallManifest LegacyQwen9BManifest()
+    {
+        LlamaRuntimeVariant runtime = LlamaRuntimeCatalog.Find(
+            System.Runtime.InteropServices.Architecture.Arm64)!;
+        return ValidManifest() with
+        {
+            ModelCatalogId = LocalModelCatalog.Qwen9BModelId,
+            ModelPath = Path.Combine("models", "Qwen3.5-9B-Q4_K_M.gguf"),
+            ModelId = "unsloth/Qwen3.5-9B-MTP-GGUF@9716a636ee4bddc3fed678220b7a33dd2a4160ae",
+            ModelAlias = LocalModelCatalog.Qwen9BModelId,
+            ModelAsset = new LocalAiAssetReceipt
+            {
+                FileName = "Qwen3.5-9B-Q4_K_M.gguf",
+                SourceUrl = "https://huggingface.co/unsloth/Qwen3.5-9B-MTP-GGUF/resolve/" +
+                    "9716a636ee4bddc3fed678220b7a33dd2a4160ae/Qwen3.5-9B-Q4_K_M.gguf?download=true",
+                SizeBytes = 5_868_826_976,
+                Sha256 = "e8dd94817e95d6c0939102049d068418269978377b13616c4726235e232841fe",
+            },
+            RuntimeAssets = runtime.Artifacts.Select(artifact => new LocalAiAssetReceipt
+            {
+                FileName = Path.GetFileName(artifact.RelativePath),
+                SourceUrl = artifact.DownloadUri.AbsoluteUri,
+                SizeBytes = artifact.SizeBytes,
+                Sha256 = artifact.Sha256.Value,
+            }).ToImmutableArray(),
+            ContextLength = LocalModelCatalog.NativeContextTokens,
+            KeyCachePrecision = KvCachePrecision.F16,
+            ValueCachePrecision = KvCachePrecision.F16,
+            DraftKeyCachePrecision = KvCachePrecision.F16,
+            DraftValueCachePrecision = KvCachePrecision.F16,
+        };
+    }
+
     private static LocalAiInstallManifest ValidManifest()
     {
         LlamaRuntimeVariant runtime = LlamaRuntimeCatalog.Find(
@@ -658,6 +783,10 @@ public sealed class LocalAiPortLifecycleTests
             RequestedPort = 0,
             Endpoint = null,
             ContextLength = 262_144,
+            KeyCachePrecision = KvCachePrecision.Q8_0,
+            ValueCachePrecision = KvCachePrecision.Q8_0,
+            DraftKeyCachePrecision = KvCachePrecision.Q8_0,
+            DraftValueCachePrecision = KvCachePrecision.Q8_0,
             InstalledAtUtc = DateTimeOffset.Parse("2026-08-18T12:00:00Z"),
         };
     }

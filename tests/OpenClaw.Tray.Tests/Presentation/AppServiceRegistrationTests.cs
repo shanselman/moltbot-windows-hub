@@ -69,7 +69,7 @@ public sealed class AppServiceRegistrationTests
             Assert.Same(settings, provider.GetRequiredService<SettingsManager>());
             Assert.Same(execApprovalsStore, provider.GetRequiredService<IExecApprovalsPresentationStore>());
             Assert.Same(runtimeHost, provider.GetRequiredService<IPermissionsPageRuntimeHost>());
-            Assert.IsType<NvmlHostHardwareProbe>(provider.GetRequiredService<IHostHardwareProbe>());
+            Assert.IsType<CudaHostHardwareProbe>(provider.GetRequiredService<IHostHardwareProbe>());
             Assert.Same(
                 provider.GetRequiredService<IHostHardwareProbe>(),
                 provider.GetRequiredService<IHostHardwareProbe>());

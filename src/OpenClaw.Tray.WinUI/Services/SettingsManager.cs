@@ -107,6 +107,8 @@ public class SettingsManager
     public bool CameraRecordingConsentGiven { get => _data.CameraRecordingConsentGiven; set => _data = _data with { CameraRecordingConsentGiven = value }; }
     public bool NodeLocationEnabled { get => _data.NodeLocationEnabled; set => _data = _data with { NodeLocationEnabled = value }; }
     public bool LocationConsentGiven { get => _data.LocationConsentGiven; set => _data = _data with { LocationConsentGiven = value }; }
+    /// <summary>Fail-closed timeout (ms) for an unanswered capture consent prompt. See <see cref="SettingsData.CaptureConsentTimeoutMs"/>.</summary>
+    public int CaptureConsentTimeoutMs { get => _data.CaptureConsentTimeoutMs; set => _data = _data with { CaptureConsentTimeoutMs = value }; }
     public bool NodeBrowserProxyEnabled { get => _data.NodeBrowserProxyEnabled; set => _data = _data with { NodeBrowserProxyEnabled = value }; }
     /// <summary>
     /// Master switch for the <c>system.run</c> / <c>system.run.prepare</c>

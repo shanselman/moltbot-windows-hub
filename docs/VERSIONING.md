@@ -14,9 +14,16 @@ Canonical release tags use:
 Numeric correction suffixes are an intentional stable-channel exception to
 SemVer's usual prerelease interpretation. Corrections sort after their
 unsuffixed base release and then by numeric correction: `vX.Y.Z` <
-`vX.Y.Z-1` < `vX.Y.Z-2`. A correction tag must not be published if that exact
-tag already exists or a newer stable/correction release has already been
-published.
+`vX.Y.Z-1` < `vX.Y.Z-2`. A correction must stay on the current Windows latest
+release line and strictly advance that line's correction number. A correction
+tag must not be published if that exact tag already exists or a newer
+stable/correction release has already been published.
+
+Windows Hub release tags are an independent version domain. They are not
+validated against, or required to match, any other repository's releases. The
+Gateway package version is pinned separately by
+`GatewayReleasePolicy.RecommendedVersion` under its own evidence gates, and a
+Windows Hub correction release never changes that pin.
 
 `GitVersion.yml` controls how tag history becomes SemVer. The product build
 imports GitVersion through `src\Directory.Build.props`, so normal `dotnet build`,
@@ -77,6 +84,25 @@ and artifact naming. It then passes that resolved value to product builds as
 one exact identity. CI must not pass a competing hardcoded version literal that
 could hide drift.
 
+The daily alpha workflow runs at 2:00 PM in `America/Los_Angeles`. GitHub
+Actions schedules use UTC, so the workflow registers both possible UTC hours
+and runs only the one matching the current Pacific UTC offset. It compares the
+default-branch head with all published GitHub Releases and does nothing when
+one already points at that commit. It defers while an unpublished non-alpha tag
+points at the head. When changes exist, it uses the same GitVersion 6.8.x line
+to create the next canonical `vX.Y.Z-alpha.N` tag and refuses to create a tag
+that is not strictly newer than the newest reachable canonical alpha tag. It
+then explicitly dispatches the Build and Test workflow at that tag. The
+explicit dispatch is required because a tag pushed with the workflow's
+`GITHUB_TOKEN` does not itself start another workflow. The normal test, E2E,
+build, signing, and release jobs remain the publication gate; the alpha GitHub
+Release is created only when all validation succeeds. After each successful
+alpha publication, CI deletes canonical alpha release objects and their assets
+once they are older than 30 days. It intentionally retains every Git tag so
+GitVersion can continue deriving the next monotonic alpha version from complete
+tag history. If the new release is not yet visible through the Releases API,
+cleanup defers until the next alpha publication.
+
 GitVersion interprets `X.Y.Z-N` as a prerelease, so numeric stable corrections
 use one narrow exception: the release-version step recognizes the correction
 tag, validates its stable ordering with
@@ -85,6 +111,19 @@ workflow outputs with the exact tag-derived value before the build. The build's
 explicit MSBuild version properties are therefore the validated correction tag,
 not an independent version source. Ordinary stable, alpha, and untagged builds
 continue to use the GitVersion result directly.
+
+That validator resolves only this repository's latest release and then requires
+the candidate to share its `X.Y.Z` base line and carry a strictly greater
+correction. It also rejects a candidate that already has a published Windows
+release. It performs no other repository's release lookup, and
+`-CurrentWindowsTag` evaluates the ordering rule offline.
+`scripts\test-stable-correction-release-validator.ps1` covers the accept and
+reject matrix plus the workflow's tag classification deterministically in CI.
+Every numeric-suffix tag is routed to the validator, so malformed corrections
+such as `X.Y.Z-0` cannot be published as an ordinary prerelease instead. The
+release job revalidates the same ordering after signing and before publication,
+so a correction that stopped being the next release while the build ran cannot
+be published as latest.
 
 Release build jobs must check out full git history (`fetch-depth: 0`) so
 GitVersion can see tags.
@@ -124,6 +163,8 @@ For example:
 - Keep numeric correction tags behind the stable-ordering validation in both
   release resolution and publication; never classify every hyphenated tag as a
   prerelease without recognizing this exception.
+- Keep the correction validator free of other repositories' release APIs. Windows
+  Hub release tags and the pinned Gateway version are separate domains.
 
 ## References
 

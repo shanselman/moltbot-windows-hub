@@ -125,7 +125,7 @@ public static class LocalAiGatewayProviderDefinition
 
     private static LocalModelInfo GetQualifiedModel(LocalAiResolvedInstall install)
     {
-        LocalModelInfo model = LocalModelCatalog.Find(install.Manifest.ModelCatalogId)
+        LocalModelInfo model = LocalModelCatalog.FindInstalled(install.Manifest.ModelCatalogId)
             ?? throw new InvalidDataException("The managed Local AI model is no longer qualified.");
         if (!string.Equals(model.Id, install.Manifest.ModelAlias, StringComparison.Ordinal))
             throw new InvalidDataException("The managed Local AI model alias does not match the qualified catalog.");

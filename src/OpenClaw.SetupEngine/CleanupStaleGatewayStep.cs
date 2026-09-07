@@ -36,11 +36,12 @@ public sealed class CleanupStaleGatewayStep : SetupStep
             ctx.Logger.Info("Deleted stale setup-state.json (LocalAppData)");
         }
 
-        // Remove stale gateway record for our local URL if it exists
+        // Remove stale setup-managed records for our local URL. Multiple records
+        // can exist when an older unmarked record sorts before managed records.
         var registry = new GatewayRegistry(ctx.DataDir, logger: new SetupOpenClawLogger(ctx.Logger));
         registry.Load();
-        var existing = registry.FindByUrl(ctx.GatewayUrl!);
-        if (existing != null)
+        var staleRecords = new List<GatewayRecord>();
+        foreach (var existing in registry.FindAllByUrl(ctx.GatewayUrl!))
         {
             // Preserve non-local records and SSH-tunneled gateways — they may be
             // remote gateways that happen to use localhost as a forwarded port.
@@ -51,17 +52,63 @@ public sealed class CleanupStaleGatewayStep : SetupStep
             }
             else
             {
-                // Clean identity directory
-                var identityDir = registry.GetIdentityDirectory(existing.Id);
+                staleRecords.Add(existing);
+            }
+        }
+
+        if (staleRecords.Count > 0)
+        {
+            var originalActiveId = registry.ActiveGatewayId;
+            foreach (var staleRecord in staleRecords)
+                registry.Remove(staleRecord.Id);
+
+            // Persist the complete record and active-ID transition before deleting
+            // identities so the durable registry never references a missing identity.
+            registry.Save();
+
+            var cleanupFailures = new List<(GatewayRecord Record, Exception Error)>();
+            foreach (var staleRecord in staleRecords)
+            {
+                var identityDir = registry.GetIdentityDirectory(staleRecord.Id);
                 if (Directory.Exists(identityDir))
                 {
-                    Directory.Delete(identityDir, recursive: true);
-                    ctx.Logger.Info($"Deleted stale identity directory: {identityDir}");
+                    try
+                    {
+                        Directory.Delete(identityDir, recursive: true);
+                        ctx.Logger.Info($"Deleted stale identity directory: {identityDir}");
+                    }
+                    catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+                    {
+                        cleanupFailures.Add((staleRecord, ex));
+                        ctx.Logger.Warn(
+                            $"Failed to delete stale identity directory {identityDir}: {ex.Message}");
+                    }
                 }
-                registry.Remove(existing.Id);
-                registry.Save();
-                ctx.Logger.Info($"Removed stale gateway record for {ctx.GatewayUrl}");
             }
+
+            if (cleanupFailures.Count > 0)
+            {
+                foreach (var (record, _) in cleanupFailures)
+                    registry.AddOrUpdate(record);
+
+                if (cleanupFailures.Any(failure =>
+                    string.Equals(
+                        failure.Record.Id,
+                        originalActiveId,
+                        StringComparison.Ordinal)))
+                {
+                    registry.SetActive(originalActiveId);
+                }
+
+                registry.Save();
+                throw new AggregateException(
+                    "One or more stale gateway identities could not be removed. " +
+                    "Their registry records were restored so cleanup can be retried.",
+                    cleanupFailures.Select(failure => failure.Error));
+            }
+
+            ctx.Logger.Info(
+                $"Removed {staleRecords.Count} stale gateway record(s) for {ctx.GatewayUrl}");
         }
 
         await Task.CompletedTask;

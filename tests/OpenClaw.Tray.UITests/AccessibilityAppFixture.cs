@@ -29,6 +29,7 @@ public sealed class AccessibilityAppFixture : IDisposable
 
     private readonly string _dataDirectory;
     private readonly string _executablePath;
+    private readonly string? _chatFixture;
     private readonly string? _nativeChatProofSignalPath;
     private readonly string? _nativeChatProofVisualDirectory;
     private readonly string _navigationSignalPath;
@@ -41,8 +42,11 @@ public sealed class AccessibilityAppFixture : IDisposable
     {
     }
 
-    internal AccessibilityAppFixture(bool initializeAxe)
+    internal AccessibilityAppFixture(
+        bool initializeAxe,
+        string? chatFixture = null)
     {
+        _chatFixture = chatFixture;
         _executablePath = Path.Combine(AppContext.BaseDirectory, "OpenClaw.Tray.WinUI.exe");
         if (!File.Exists(_executablePath))
         {
@@ -91,9 +95,34 @@ public sealed class AccessibilityAppFixture : IDisposable
         string expectedPageName,
         string pageMarkerAutomationId)
     {
-        EnsureTargetIsAlive();
-        var baselineSignalCount = ReadNavigationSignals().Count;
+        for (var attempt = 0; attempt < 2; attempt++)
+        {
+            EnsureTargetIsAlive();
+            var baselineSignalCount = ReadNavigationSignals().Count;
+            await ForwardDeepLinkAsync(pageTag);
 
+            try
+            {
+                await WaitForNavigationSignalAsync(
+                    pageTag,
+                    expectedPageName,
+                    baselineSignalCount);
+                await WaitForPageMarkerAsync(pageTag, pageMarkerAutomationId);
+                return;
+            }
+            catch (TimeoutException) when (attempt == 0)
+            {
+                // A busy UI automation host can delay or lose one activation.
+                // Re-sending is safe because same-page navigation is deduplicated.
+            }
+        }
+
+        throw new InvalidOperationException(
+            $"Navigation retry loop for '{pageTag}' completed unexpectedly.");
+    }
+
+    private async Task ForwardDeepLinkAsync(string pageTag)
+    {
         using var sender = StartProcess($"{OpenClawTray.AppIdentity.ProtocolScheme}://hub/{pageTag}");
         using var timeout = new CancellationTokenSource(DeepLinkTimeout);
         try
@@ -107,13 +136,6 @@ public sealed class AccessibilityAppFixture : IDisposable
             throw new TimeoutException(
                 $"Timed out forwarding the '{pageTag}' deep link to the accessibility app.");
         }
-
-        EnsureTargetIsAlive();
-        await WaitForNavigationSignalAsync(
-            pageTag,
-            expectedPageName,
-            baselineSignalCount);
-        await WaitForPageMarkerAsync(pageTag, pageMarkerAutomationId);
     }
 
     public string? CaptureHubScreenshotIfRequested()
@@ -349,6 +371,12 @@ public sealed class AccessibilityAppFixture : IDisposable
         startInfo.Environment["OPENCLAW_LANGUAGE"] = "en-US";
         startInfo.Environment["OPENCLAW_ACCESSIBILITY_TEST_CHAT"] = "1";
         startInfo.Environment["OPENCLAW_ACCESSIBILITY_TEST_SESSIONS"] = "1";
+        if (!string.IsNullOrWhiteSpace(_chatFixture))
+        {
+            startInfo.Environment[
+                "OPENCLAW_ACCESSIBILITY_TEST_CHAT_FIXTURE"] =
+                _chatFixture;
+        }
         startInfo.Environment["OPENCLAW_ACCESSIBILITY_NAVIGATION_SIGNAL"] =
             _navigationSignalPath;
         if (_nativeChatProofSignalPath is not null

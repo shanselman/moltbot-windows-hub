@@ -802,7 +802,12 @@ public sealed class LlamaServerRuntimeService : ILocalAiRuntime
             processId,
             processStartedAtUtc,
             detail,
-            now);
+            now,
+            _install?.Manifest.ContextLength,
+            _install?.Manifest.KeyCachePrecision,
+            _install?.Manifest.ValueCachePrecision,
+            _install?.Manifest.DraftKeyCachePrecision,
+            _install?.Manifest.DraftValueCachePrecision);
         lock (_snapshotGate)
             _snapshot = value;
 

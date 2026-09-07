@@ -109,4 +109,28 @@ public class ConsentAndSettingsSaveTests
             Directory.Delete(tempDir, recursive: true);
         }
     }
+
+    [Fact]
+    public void CaptureConsentTimeoutMs_DefaultsToTwoMinutes_AndPersistsAcrossReload()
+    {
+        var tempDir = Path.Combine(Path.GetTempPath(), $"openclaw-test-{Guid.NewGuid():N}");
+        Directory.CreateDirectory(tempDir);
+        try
+        {
+            var settings = new SettingsManager(tempDir);
+            // Generous enough for a real interactive user to notice and answer
+            // the prompt, but still bounded - see NodeService.EnsureCaptureConsentAsync.
+            Assert.Equal(120_000, settings.CaptureConsentTimeoutMs);
+
+            settings.CaptureConsentTimeoutMs = 3000;
+            settings.Save();
+
+            var reloaded = new SettingsManager(tempDir);
+            Assert.Equal(3000, reloaded.CaptureConsentTimeoutMs);
+        }
+        finally
+        {
+            Directory.Delete(tempDir, recursive: true);
+        }
+    }
 }

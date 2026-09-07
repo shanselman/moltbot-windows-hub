@@ -61,6 +61,7 @@
     <Compile Include="..\..\src\OpenClaw.Tray.WinUI\Chat\ChatContentFormatting.cs" Link="Chat\ChatContentFormatting.cs" />
     <Compile Include="..\..\src\OpenClaw.Tray.WinUI\Chat\ChatEventMapper.cs" Link="Chat\ChatEventMapper.cs" />
     <Compile Include="..\..\src\OpenClaw.Tray.WinUI\Chat\ChatHistoryLoader.cs" Link="Chat\ChatHistoryLoader.cs" />
+    <Compile Include="..\..\src\OpenClaw.Tray.WinUI\Chat\AccessibilityHistoryCollisionFixture.cs" Link="Chat\AccessibilityHistoryCollisionFixture.cs" />
     <Compile Include="..\..\src\OpenClaw.Tray.WinUI\Chat\ChatHistoryState.cs" Link="Chat\ChatHistoryState.cs" />
     <Compile Include="..\..\src\OpenClaw.Tray.WinUI\Chat\ChatLifecycleState.cs" Link="Chat\ChatLifecycleState.cs" />
     <Compile Include="..\..\src\OpenClaw.Tray.WinUI\Chat\ChatMetadataStore.cs" Link="Chat\ChatMetadataStore.cs" />
@@ -132,6 +133,7 @@
     <Compile Include="..\..\src\OpenClaw.Tray.WinUI\Services\CaptureOperationGate.cs" Link="Services\CaptureOperationGate.cs" />
     <Compile Include="..\..\src\OpenClaw.Tray.WinUI\Services\CaptureCancellationPolicy.cs" Link="Services\CaptureCancellationPolicy.cs" />
     <Compile Include="..\..\src\OpenClaw.Tray.WinUI\Services\SensitiveCaptureExecutor.cs" Link="Services\SensitiveCaptureExecutor.cs" />
+    <Compile Include="..\..\src\OpenClaw.Tray.WinUI\Services\ConsentPromptTimeoutGate.cs" Link="Services\ConsentPromptTimeoutGate.cs" />
     <Compile Include="..\..\src\OpenClaw.Tray.WinUI\Services\BrowserProxyTunnelState.cs" Link="Services\BrowserProxyTunnelState.cs" />
     <Compile Include="..\..\src\OpenClaw.Tray.WinUI\Services\CommandCenterTopologyTunnelResolver.cs" Link="Services\CommandCenterTopologyTunnelResolver.cs" />
     <Compile Include="..\..\src\OpenClaw.Tray.WinUI\Services\CommandCenterTunnelInfoBuilder.cs" Link="Services\CommandCenterTunnelInfoBuilder.cs" />
@@ -184,6 +186,7 @@
     <!-- Pulled in for console-log tail tests. Pure logic, no WinUI deps. -->
     <Compile Include="..\..\src\OpenClaw.SetupEngine.UI\WizardConsoleTail.cs" Link="WizardConsoleTail.cs" />
     <Compile Include="..\..\src\OpenClaw.SetupEngine.UI\WizardPayloadHelpers.cs" Link="WizardPayloadHelpers.cs" />
+    <Compile Include="..\..\src\OpenClaw.SetupEngine.UI\WindowsRestartLauncher.cs" Link="WindowsRestartLauncher.cs" />
     <Compile Include="..\..\src\OpenClaw.SetupEngine.UI\Pages\LocalAiSetupAvailabilityCoordinator.cs" Link="Pages\LocalAiSetupAvailabilityCoordinator.cs" />
   </ItemGroup>
 

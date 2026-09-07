@@ -31,7 +31,12 @@ evidence.
   an unembedded release; candidate execution requires a reviewed embedded
   `GatewayReleaseStatus.Candidate` policy entry.
 - Numeric correction releases such as `2026.7.1-2` are stable-version syntax,
-  but still require the complete evidence gate.
+  but still require the complete evidence gate. This applies to the Gateway
+  package version only. Windows Hub application release tags are a separate
+  version domain validated by
+  [`../RELEASING.md`](../RELEASING.md); a Windows Hub correction release neither
+  changes `GatewayReleasePolicy.RecommendedVersion` nor supplies any Gateway
+  promotion evidence.
 - Prerelease labels, versions below the floor, missing provenance, missing
   stable upstream attestation, package/tag commit mismatch, unbound candidate
   provenance, and protocol-generation mismatch fail closed.
