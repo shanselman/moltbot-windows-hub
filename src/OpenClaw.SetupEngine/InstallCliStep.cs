@@ -74,7 +74,12 @@ public sealed class InstallCliStep : SetupStep
             var result = await ctx.Commands.RunInWslAsync(distro, installScript, TimeSpan.FromMinutes(5), ct: ct);
 
             if (result.ExitCode != 0)
-                return StepResult.Fail($"CLI install failed (exit {result.ExitCode}): {result.Stderr}");
+            {
+                var diagnostic = string.IsNullOrWhiteSpace(result.Stderr)
+                    ? result.Stdout.Trim()
+                    : result.Stderr.Trim();
+                return StepResult.Fail($"CLI install failed (exit {result.ExitCode}): {diagnostic}");
+            }
 
             var verifyCommands = new (string Command, string? ExecutablePath)[]
             {

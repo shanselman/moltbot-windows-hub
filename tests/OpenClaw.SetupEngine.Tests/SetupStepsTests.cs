@@ -1956,8 +1956,24 @@ public class SetupStepsTests : IDisposable
             GatewayReleasePolicy.NodeVersion);
 
         Assert.Equal(
-            "curl -fsSL --proto '=https' --tlsv1.2 'https://openclaw.ai/install-cli.sh' | bash -s -- --version '2026.5.22' --node-version '22.22.3'",
+            "curl -fsSL --proto '=https' --tlsv1.2 'https://openclaw.ai/install-cli.sh' | bash -s -- --version '2026.5.22' --node-version '24.19.0'",
             command);
+    }
+
+    [Fact]
+    public async Task InstallCli_InstallFailureSurfacesStdoutWhenStderrIsEmpty()
+    {
+        var commands = new FakeCommandRunner(
+            _ => Ok(),
+            (_, _, _) => FailWithStdout("ERROR: Node 22.22.3 is unsupported; use Node 24.16.0+."));
+        var config = new SetupConfig();
+        GatewayReleasePolicy.ResolveAndApply(config);
+        var ctx = CreateContext(config, commands);
+
+        var result = await new InstallCliStep().ExecuteAsync(ctx, CancellationToken.None);
+
+        Assert.Equal(StepOutcome.Failed, result.Outcome);
+        Assert.Contains("Node 22.22.3 is unsupported", result.Message);
     }
 
     [Fact]

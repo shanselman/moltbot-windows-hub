@@ -22,7 +22,7 @@ evidence.
 ## Decision
 
 - Product setup installs the exact `GatewayReleasePolicy.RecommendedVersion`.
-- Official setup also pins and verifies Node `22.22.3`; the installer runtime is
+- Official setup also pins and verifies Node `24.19.0`; the installer runtime is
   part of the compatibility tuple rather than a floating dependency.
 - Protocol generation 4 is required.
 - `2026.6.11` is the current minimum security floor.
@@ -56,10 +56,12 @@ evidence.
 
 ## Current candidate decision
 
-`2026.6.34` is the recommendation. With Node `22.22.3`, the exact package passed
-clean setup, CLI and protocol-v4 server-version checks, operator and node
-pairing, Gateway restart, repeated network recovery, device revocation and
-re-approval, and a real Gateway `node.invoke` call to Windows `system.which`.
+`2026.6.34` is the recommendation. It passed clean setup, CLI and protocol-v4
+server-version checks, operator and node pairing, Gateway restart, repeated
+network recovery, device revocation and re-approval, and a real Gateway
+`node.invoke` call to Windows `system.which` with Node `22.22.3`. After upstream
+raised its runtime floor for lossless SQLite reads, the policy advanced to Node
+`24.19.0`; current-head Windows CI must revalidate the full compatibility tuple.
 
 `2026.6.11` remains a distinct validated fallback at the security floor. It is
 never selected automatically.
