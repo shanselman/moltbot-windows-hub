@@ -110,9 +110,12 @@ public sealed class InstallCliStep : SetupStep
 
             if (result.ExitCode != 0)
             {
+                var diagnostic = string.IsNullOrWhiteSpace(result.Stderr)
+                    ? result.Stdout.Trim()
+                    : result.Stderr.Trim();
                 var cleanup = FormatCleanupError(cleanupError);
                 return StepResult.Fail(
-                    $"CLI install failed (exit {result.ExitCode}): {result.Stderr}{cleanup}");
+                    $"CLI install failed (exit {result.ExitCode}): {diagnostic}{cleanup}");
             }
 
             if (cleanupError is not null)
