@@ -2247,6 +2247,90 @@ public class SetupStepsTests : IDisposable
         Assert.False(cleanup.CancellationToken.IsCancellationRequested);
     }
 
+    [Fact]
+    public async Task InstallCli_CleanupExceptionDoesNotMaskDownloadFailure()
+    {
+        var commands = new FakeCommandRunner(
+            _ => Ok(),
+            (_, command, _) => command.Contains("curl -fsSL", StringComparison.Ordinal)
+                ? new CommandResult(
+                    6,
+                    "",
+                    "curl: (6) Could not resolve host: openclaw.ai",
+                    TimeSpan.Zero,
+                    TimedOut: false)
+                : command.StartsWith("rm -rf -- /tmp/openclaw-installer-", StringComparison.Ordinal)
+                    ? throw new IOException("cleanup launch failed")
+                    : throw new InvalidOperationException($"Unexpected command: {command}"));
+        var config = new SetupConfig();
+        GatewayReleasePolicy.ResolveAndApply(config);
+        var ctx = CreateContext(config, commands);
+
+        StepResult result = await new InstallCliStep().ExecuteAsync(ctx, CancellationToken.None);
+
+        Assert.Equal(StepOutcome.Failed, result.Outcome);
+        Assert.Contains("exit 6", result.Message);
+        Assert.Contains("Could not resolve host: openclaw.ai", result.Message);
+        Assert.Contains("Cleanup also failed: failed (IOException)", result.Message);
+    }
+
+    [Fact]
+    public async Task InstallCli_CleanupExceptionDoesNotMaskCallerCancellation()
+    {
+        using var cancellation = new CancellationTokenSource();
+        var commands = new FakeCommandRunner(
+            _ => Ok(),
+            (_, command, _) =>
+            {
+                if (command.Contains("curl -fsSL", StringComparison.Ordinal))
+                {
+                    cancellation.Cancel();
+                    throw new OperationCanceledException(cancellation.Token);
+                }
+
+                return command.StartsWith("rm -rf -- /tmp/openclaw-installer-", StringComparison.Ordinal)
+                    ? throw new IOException("cleanup launch failed")
+                    : throw new InvalidOperationException($"Unexpected command: {command}");
+            });
+        var config = new SetupConfig();
+        GatewayReleasePolicy.ResolveAndApply(config);
+        var ctx = CreateContext(config, commands);
+
+        await Assert.ThrowsAsync<OperationCanceledException>(
+            () => new InstallCliStep().ExecuteAsync(ctx, cancellation.Token));
+
+        AssertCleanupRan(commands);
+    }
+
+    [Fact]
+    public async Task InstallCli_CleanupCancellationDoesNotMaskDownloadFailure()
+    {
+        using var cleanupCancellation = new CancellationTokenSource();
+        cleanupCancellation.Cancel();
+        var commands = new FakeCommandRunner(
+            _ => Ok(),
+            (_, command, _) => command.Contains("curl -fsSL", StringComparison.Ordinal)
+                ? new CommandResult(
+                    6,
+                    "",
+                    "curl: (6) Could not resolve host: openclaw.ai",
+                    TimeSpan.Zero,
+                    TimedOut: false)
+                : command.StartsWith("rm -rf -- /tmp/openclaw-installer-", StringComparison.Ordinal)
+                    ? throw new OperationCanceledException(cleanupCancellation.Token)
+                    : throw new InvalidOperationException($"Unexpected command: {command}"));
+        var config = new SetupConfig();
+        GatewayReleasePolicy.ResolveAndApply(config);
+        var ctx = CreateContext(config, commands);
+
+        StepResult result = await new InstallCliStep().ExecuteAsync(ctx, CancellationToken.None);
+
+        Assert.Equal(StepOutcome.Failed, result.Outcome);
+        Assert.Contains("exit 6", result.Message);
+        Assert.Contains("Could not resolve host: openclaw.ai", result.Message);
+        Assert.Contains("Cleanup also failed: was cancelled", result.Message);
+    }
+
     private static (
         string DistroName,
         string Command,

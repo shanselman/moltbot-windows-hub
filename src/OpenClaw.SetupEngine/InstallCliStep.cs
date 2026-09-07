@@ -291,6 +291,21 @@ public sealed class InstallCliStep : SetupStep
         {
             return "timed out after 15 seconds";
         }
+        catch (OperationCanceledException ex)
+        {
+            ctx.Logger.Warn($"CLI installer cleanup was cancelled ({ex.GetType().Name}).");
+            return "was cancelled";
+        }
+        catch (Exception ex) when (
+            ex is IOException
+            or InvalidOperationException
+            or NotSupportedException
+            or UnauthorizedAccessException
+            or System.ComponentModel.Win32Exception)
+        {
+            ctx.Logger.Warn($"CLI installer cleanup failed ({ex.GetType().Name}).");
+            return $"failed ({ex.GetType().Name})";
+        }
     }
 
     private static string FormatCleanupError(string? cleanupError)
