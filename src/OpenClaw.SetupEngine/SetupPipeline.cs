@@ -60,7 +60,7 @@ public static class SetupStepFactory
             new PreflightLocalAiHardwareStep(),
             new PreflightWslStep(),
             new PreflightWindowsTailscaleStep(),
-            new EnsureWslPlatformStep(),
+            new EnsureWslPlatformStep(reusePreflightResult: true),
             new ReconcileLocalAiInstallationStep(),
             new AcquireLocalAiRuntimeStep(),
             new AcquireLocalAiModelStep(),

@@ -2121,11 +2121,13 @@ public class SetupStepsTests : IDisposable
             _ => Fail($"unexpected args: {string.Join(' ', args)}"),
         });
         var ctx = CreateContext(commands: commands);
-        var ensure = new EnsureWslPlatformStep((_, _) =>
-        {
-            installed = true;
-            return Task.FromResult(StepResult.Ok("installed"));
-        });
+        var ensure = new EnsureWslPlatformStep(
+            (_, _) =>
+            {
+                installed = true;
+                return Task.FromResult(StepResult.Ok("installed"));
+            },
+            reusePreflightResult: true);
         var pipeline = new SetupPipeline([new PreflightWslStep(), ensure]);
 
         var result = await pipeline.RunAsync(ctx);
@@ -2146,11 +2148,13 @@ public class SetupStepsTests : IDisposable
             _ => Fail($"unexpected args: {string.Join(' ', args)}"),
         });
         var ctx = CreateContext(commands: commands);
-        var ensure = new EnsureWslPlatformStep((_, _) =>
-        {
-            installCalls++;
-            return Task.FromResult(StepResult.Ok("installed"));
-        });
+        var ensure = new EnsureWslPlatformStep(
+            (_, _) =>
+            {
+                installCalls++;
+                return Task.FromResult(StepResult.Ok("installed"));
+            },
+            reusePreflightResult: true);
         var pipeline = new SetupPipeline([new PreflightWslStep(), ensure]);
 
         var result = await pipeline.RunAsync(ctx);
@@ -2169,8 +2173,12 @@ public class SetupStepsTests : IDisposable
             : Fail($"unexpected args: {string.Join(' ', args)}"));
         var ctx = CreateContext(commands: commands);
         var pipeline = new SetupPipeline(
-            [new PreflightWslStep(), new EnsureWslPlatformStep((_, _) =>
-                Task.FromResult(StepResult.Ok("installed")))]);
+            [
+                new PreflightWslStep(),
+                new EnsureWslPlatformStep(
+                    (_, _) => Task.FromResult(StepResult.Ok("installed")),
+                    reusePreflightResult: true),
+            ]);
 
         var result = await pipeline.RunAsync(ctx);
 
@@ -2210,6 +2218,162 @@ public class SetupStepsTests : IDisposable
         Assert.Equal(1, installCalls);
         Assert.Equal(WslViabilityKind.Ready, ctx.WslViability?.Kind);
         Assert.Equal(3, commands.Calls.Count);
+    }
+
+    [Fact]
+    public async Task EnsureWslPlatform_StandaloneIgnoresCachedReadyResult()
+    {
+        var installed = false;
+        var installCalls = 0;
+        var commands = new FakeCommandRunner(args => args switch
+        {
+            ["--version"] when !installed => new CommandResult(
+                1,
+                "",
+                "Windows Subsystem for Linux is not installed. See https://aka.ms/wslinstall",
+                TimeSpan.Zero,
+                TimedOut: false),
+            ["--version"] => Ok("WSL version: 2.7.3.0\n"),
+            ["--status"] => Ok("Default Version: 2\n"),
+            _ => Fail($"unexpected args: {string.Join(' ', args)}"),
+        });
+        var ctx = CreateContext(commands: commands);
+        ctx.WslViability = new WslViabilityResult(
+            WslViabilityKind.Ready,
+            "stale ready",
+            string.Empty);
+        var step = new EnsureWslPlatformStep((_, _) =>
+        {
+            installCalls++;
+            installed = true;
+            return Task.FromResult(StepResult.Ok("installed"));
+        });
+
+        var result = await step.ExecuteAsync(ctx, CancellationToken.None);
+
+        Assert.Equal(StepOutcome.Success, result.Outcome);
+        Assert.Equal(1, installCalls);
+        Assert.Equal(3, commands.Calls.Count);
+        Assert.Equal(WslViabilityKind.Ready, ctx.WslViability?.Kind);
+    }
+
+    [Fact]
+    public async Task EnsureWslPlatform_StandaloneIgnoresCachedInstallableResult()
+    {
+        var installCalls = 0;
+        var commands = new FakeCommandRunner(args => args switch
+        {
+            ["--version"] => Ok("WSL version: 2.7.3.0\n"),
+            ["--status"] => Ok("Default Version: 2\n"),
+            _ => Fail($"unexpected args: {string.Join(' ', args)}"),
+        });
+        var ctx = CreateContext(commands: commands);
+        ctx.WslViability = new WslViabilityResult(
+            WslViabilityKind.Installable,
+            "stale missing",
+            string.Empty);
+        var step = new EnsureWslPlatformStep((_, _) =>
+        {
+            installCalls++;
+            return Task.FromResult(StepResult.Ok("installed"));
+        });
+
+        var result = await step.ExecuteAsync(ctx, CancellationToken.None);
+
+        Assert.Equal(StepOutcome.Success, result.Outcome);
+        Assert.Equal(0, installCalls);
+        Assert.Equal(2, commands.Calls.Count);
+        Assert.Equal(WslViabilityKind.Ready, ctx.WslViability?.Kind);
+    }
+
+    [Fact]
+    public async Task PreflightWsl_ClearsCachedResultBeforeCanceledInspection()
+    {
+        var commands = new FakeCommandRunner(
+            _ => Ok(),
+            runWithCancellation: (_, _, _, cancellationToken) =>
+                throw new OperationCanceledException(cancellationToken));
+        var ctx = CreateContext(commands: commands);
+        ctx.WslViability = new WslViabilityResult(
+            WslViabilityKind.Ready,
+            "stale ready",
+            string.Empty);
+
+        await Assert.ThrowsAsync<OperationCanceledException>(
+            () => new PreflightWslStep().ExecuteAsync(ctx, CancellationToken.None));
+
+        Assert.Null(ctx.WslViability);
+    }
+
+    [Fact]
+    public async Task EnsureWslPlatform_StandaloneClearsCachedResultBeforeCanceledInspection()
+    {
+        var commands = new FakeCommandRunner(
+            _ => Ok(),
+            runWithCancellation: (_, _, _, cancellationToken) =>
+                throw new OperationCanceledException(cancellationToken));
+        var ctx = CreateContext(commands: commands);
+        ctx.WslViability = new WslViabilityResult(
+            WslViabilityKind.Ready,
+            "stale ready",
+            string.Empty);
+
+        await Assert.ThrowsAsync<OperationCanceledException>(
+            () => new EnsureWslPlatformStep().ExecuteAsync(ctx, CancellationToken.None));
+
+        Assert.Null(ctx.WslViability);
+    }
+
+    [Fact]
+    public async Task EnsureWslPlatform_ClearsPreflightResultBeforeCanceledInstallation()
+    {
+        var commands = new FakeCommandRunner(_ =>
+            Fail("The cached same-run preflight result should be reused."));
+        var ctx = CreateContext(commands: commands);
+        ctx.WslViability = new WslViabilityResult(
+            WslViabilityKind.Installable,
+            "current-run missing",
+            string.Empty);
+        using var cts = new CancellationTokenSource();
+        var step = new EnsureWslPlatformStep(
+            (_, cancellationToken) =>
+            {
+                cts.Cancel();
+                throw new OperationCanceledException(cancellationToken);
+            },
+            reusePreflightResult: true);
+
+        await Assert.ThrowsAsync<OperationCanceledException>(
+            () => step.ExecuteAsync(ctx, cts.Token));
+        Assert.Null(ctx.WslViability);
+    }
+
+    [Fact]
+    public async Task EnsureWslPlatform_ClearsPreflightResultBeforeCanceledPostInstallInspection()
+    {
+        var commands = new FakeCommandRunner(
+            _ => Ok(),
+            runWithCancellation: (_, _, _, cancellationToken) =>
+            {
+                throw new OperationCanceledException(cancellationToken);
+            });
+        var ctx = CreateContext(commands: commands);
+        ctx.WslViability = new WslViabilityResult(
+            WslViabilityKind.Installable,
+            "current-run missing",
+            string.Empty);
+        using var cts = new CancellationTokenSource();
+        var step = new EnsureWslPlatformStep(
+            (_, _) =>
+            {
+                cts.Cancel();
+                return Task.FromResult(StepResult.Ok("installed"));
+            },
+            reusePreflightResult: true);
+
+        await Assert.ThrowsAsync<OperationCanceledException>(
+            () => step.ExecuteAsync(ctx, cts.Token));
+        Assert.Null(ctx.WslViability);
     }
 
     [Fact]
