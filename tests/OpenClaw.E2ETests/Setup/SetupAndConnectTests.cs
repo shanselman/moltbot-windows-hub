@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using System.Text.Json;
 using System.Text.RegularExpressions;
 using OpenClaw.E2ETests;
@@ -223,45 +224,41 @@ public class SetupAndConnectTests
         var config = SetupConfig.LoadFromFile(_fixture.ConfigPath);
         var nodePath = $"/home/{config.Wsl.User}/.openclaw/tools/node/bin/node";
         var proofId = Guid.NewGuid().ToString("N");
-        var portPath = $"/tmp/openclaw-foreign-listener-{proofId}.port";
-        var logPath = $"/tmp/openclaw-foreign-listener-{proofId}.log";
+        var statePath = $"/tmp/openclaw-foreign-listener-{proofId}.state";
         var nodeScript =
             $"const fs=require(\"fs\"),net=require(\"net\");const server=net.createServer();" +
-            $"server.listen(0,\"127.0.0.1\",()=>fs.writeFileSync(\"{portPath}\",String(server.address().port)))";
-        var start = await _fixture.RunInWslAsync(
-            $"""
-            rm -f '{portPath}' '{logPath}'
-            nohup '{nodePath}' -e '{nodeScript}' >'{logPath}' 2>&1 </dev/null &
-            echo $!
-            """,
-            TimeSpan.FromSeconds(15),
-            inputViaStdin: true);
-        AssertCommandSucceeded(start, "start foreign WSL listener");
-        Assert.True(int.TryParse(start.Stdout.Trim(), out var foreignPid) && foreignPid > 0);
+            $"server.listen(0,\"127.0.0.1\",()=>fs.writeFileSync(\"{statePath}\",process.pid+\" \"+server.address().port))";
+        _ = await _fixture.RunInWslAsync($"rm -f '{statePath}'", TimeSpan.FromSeconds(15));
+        using var foreignProcess = StartWslProcess(_fixture.DistroName, nodePath, nodeScript);
+        var foreignPid = 0;
 
         try
         {
-            string? publishedPort = null;
+            var port = 0;
             for (var attempt = 0; attempt < 50; attempt++)
             {
-                var portResult = await _fixture.RunInWslAsync(
-                    $"cat '{portPath}' 2>/dev/null || true",
+                var stateResult = await _fixture.RunInWslAsync(
+                    $"cat '{statePath}' 2>/dev/null || true",
                     TimeSpan.FromSeconds(15));
-                if (int.TryParse(portResult.Stdout.Trim(), out _))
+                var values = stateResult.Stdout.Split(
+                    ' ',
+                    StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+                if (values.Length == 2 &&
+                    int.TryParse(values[0], out foreignPid) &&
+                    int.TryParse(values[1], out port) &&
+                    foreignPid > 0 &&
+                    port > 0)
                 {
-                    publishedPort = portResult.Stdout.Trim();
                     break;
+                }
+                if (foreignProcess.HasExited)
+                {
+                    var stderr = await foreignProcess.StandardError.ReadToEndAsync();
+                    Assert.Fail($"Foreign listener exited before publishing its state: {stderr}");
                 }
                 await Task.Delay(100);
             }
-            if (!int.TryParse(publishedPort, out var port))
-            {
-                var startupLog = await _fixture.RunInWslAsync(
-                    $"cat '{logPath}' 2>/dev/null || true",
-                    TimeSpan.FromSeconds(15));
-                Assert.Fail($"Foreign listener did not publish a port. Log: {startupLog.Stdout} {startupLog.Stderr}");
-                return;
-            }
+            Assert.True(foreignPid > 0 && port > 0, "Foreign listener did not publish a PID and port.");
 
             OpenClaw.SetupEngine.CommandResult? listeners = null;
             for (var attempt = 0; attempt < 20; attempt++)
@@ -305,10 +302,41 @@ public class SetupAndConnectTests
         }
         finally
         {
-            _ = await _fixture.RunInWslAsync(
-                $"kill {foreignPid} 2>/dev/null || true; rm -f '{portPath}' '{logPath}'",
-                TimeSpan.FromSeconds(15));
+            if (foreignPid > 0)
+            {
+                _ = await _fixture.RunInWslAsync(
+                    $"kill {foreignPid} 2>/dev/null || true; rm -f '{statePath}'",
+                    TimeSpan.FromSeconds(15));
+            }
+            try
+            {
+                await foreignProcess.WaitForExitAsync().WaitAsync(TimeSpan.FromSeconds(5));
+            }
+            catch (TimeoutException)
+            {
+                foreignProcess.Kill(entireProcessTree: true);
+            }
         }
+    }
+
+    private static Process StartWslProcess(string distroName, string executable, string argument)
+    {
+        var startInfo = new ProcessStartInfo
+        {
+            FileName = "wsl.exe",
+            RedirectStandardOutput = true,
+            RedirectStandardError = true,
+            UseShellExecute = false,
+            CreateNoWindow = true,
+        };
+        startInfo.Environment["WSL_UTF8"] = "1";
+        startInfo.ArgumentList.Add("-d");
+        startInfo.ArgumentList.Add(distroName);
+        startInfo.ArgumentList.Add("--");
+        startInfo.ArgumentList.Add(executable);
+        startInfo.ArgumentList.Add("-e");
+        startInfo.ArgumentList.Add(argument);
+        return Process.Start(startInfo) ?? throw new InvalidOperationException("Could not start the foreign WSL listener.");
     }
 
     private static string ResolveNodeCommandsAllowKey()
