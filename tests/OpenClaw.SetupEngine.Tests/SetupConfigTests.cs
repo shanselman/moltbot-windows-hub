@@ -451,7 +451,8 @@ public class SetupConfigTests : IDisposable
                 $"'{InstallCliStep.InstallerTempDirectoryPreview}'",
                 summary.ExactCommands);
             Assert.Contains("'https://example.test/install.sh'", summary.ExactCommands);
-            Assert.Contains("--max-time 60", summary.ExactCommands);
+            Assert.DoesNotContain("--connect-timeout", summary.ExactCommands);
+            Assert.DoesNotContain("--max-time", summary.ExactCommands);
             Assert.Contains("--remove-on-error", summary.ExactCommands);
             Assert.Contains(
                 $"bash -s -- --version '{GatewayReleasePolicy.SecurityFloor}' < \"$installer\"",

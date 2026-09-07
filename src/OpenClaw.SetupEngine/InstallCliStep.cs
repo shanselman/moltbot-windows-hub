@@ -213,6 +213,9 @@ public sealed class InstallCliStep : SetupStep
             var escapedNodeVersion = WslShellQuoting.EscapePosixSingleQuoteInner(trimmedNodeVersion);
             runtimeArgument = $" --node-version '{escapedNodeVersion}'";
         }
+        var transferDeadlineArguments = GatewayReleasePolicy.IsOfficialInstallerUrl(installUrl)
+            ? $" --connect-timeout 15 --max-time {DownloadMaxTimeSeconds}"
+            : "";
 
         installerTempDirectory ??= $"{InstallerTempDirectoryPrefix}{Guid.NewGuid():N}";
         if (!installerTempDirectory.StartsWith(InstallerTempDirectoryPrefix, StringComparison.Ordinal))
@@ -231,9 +234,7 @@ public sealed class InstallCliStep : SetupStep
             mkdir -m 0700 -- "$installer_dir"
             installer="$installer_dir/installer.sh"
             trap 'rm -rf -- "$installer_dir"' EXIT
-            curl -fsSL \
-              --connect-timeout 15 \
-              --max-time {DownloadMaxTimeSeconds} \
+            curl -fsSL{transferDeadlineArguments} \
               --remove-on-error \
               --proto '=https' \
               --tlsv1.2 \

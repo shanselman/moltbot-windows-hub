@@ -2027,6 +2027,9 @@ public class SetupStepsTests : IDisposable
         Assert.Contains(
             $"installer_dir='{InstallCliStep.InstallerTempDirectoryPreview}'",
             preview);
+        Assert.DoesNotContain("--connect-timeout", preview);
+        Assert.DoesNotContain("--max-time", preview);
+        Assert.Contains("--remove-on-error", preview);
     }
 
     [Fact]
