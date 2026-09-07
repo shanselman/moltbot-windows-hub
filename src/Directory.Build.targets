@@ -1,87 +1,84 @@
 <Project>
 
-  <PropertyGroup>
-    <OpenClawVCRuntimePackageVersion>1.0.5</OpenClawVCRuntimePackageVersion>
-    <OpenClawVCRuntimePackageRoot>$(NuGetPackageRoot)vcruntime.cefsharp.140\$(OpenClawVCRuntimePackageVersion)\vc_redist\</OpenClawVCRuntimePackageRoot>
-    <OpenClawVCRuntimeArch Condition="'$(RuntimeIdentifier)' == 'win-x64'">x64</OpenClawVCRuntimeArch>
-    <OpenClawVCRuntimeArch Condition="'$(RuntimeIdentifier)' == 'win-arm64'">arm64</OpenClawVCRuntimeArch>
-  </PropertyGroup>
+  <Import Project="$(MSBuildThisFileDirectory)..\Directory.Build.targets" />
 
   <!--
-    Both x64 and ARM64 resolve loose VC++ runtime DLLs from the local Visual
-    Studio install at publish time (via ResolveOpenClawVCRuntimeFromVSInstall).
-    This ensures onnxruntime and other native dependencies always get a current
-    CRT — the VCRuntime.CefSharp.140 NuGet ships 14.29 DLLs that are too old
-    for onnxruntime ≥ 1.20.
+    App-local Visual C++ runtime for the tray and the other src projects.
 
-    For local x64 *builds* (not publish), the NuGet DLLs are still copied to
-    the output directory as a convenience so devs without VS can iterate.
-    Local 'dotnet build -r win-arm64' intentionally does NOT require a VS
-    install (so cross-compile sanity checks keep working on x64 dev boxes).
-    The VS-install requirement only kicks in at publish time, which is what
-    the release pipeline actually runs.
+    The native speech stack (onnxruntime, sherpa-onnx) imports the VC++
+    runtime, and onnxruntime >= 1.20 needs 14.38 or newer. Every x64 build and
+    every publish copies loose CRT DLLs next to the executable so the app
+    behaves the same on a clean host as on a dev box.
+
+    The DLLs come from LocateOpenClawVCRuntimeFromVSInstall (repo-root
+    Directory.Build.targets):
+      * Publish (x64 and ARM64): the local Visual Studio install, required.
+        A missing install, component, or DLL set fails the publish.
+      * Local x64 build: the local Visual Studio install when one exists.
+        Without one the build falls back to the VCRuntime.CefSharp.140 NuGet
+        DLLs (14.29) and warns, because that runtime is too old for
+        onnxruntime: the app still builds, but Piper TTS and Silero VAD fail
+        with DllNotFoundException until a current CRT is available.
+      * Local ARM64 build: nothing is copied, so 'dotnet build -r win-arm64'
+        stays a VS-free cross-compile sanity check on x64 dev boxes.
+
+    The 14.29 fallback must never reach a published payload. The release
+    verifier (scripts\Test-ReleaseNativeDependencies.ps1) enforces the 14.38
+    floor and load-probes the native TTS stack; NativeSpeechStackRuntimeTests
+    does the same for local build output and test hosts.
   -->
   <ItemGroup Condition="'$(OpenClawVCRuntimeArch)' == 'x64'">
     <OpenClawVCRuntimeFiles Include="$(OpenClawVCRuntimePackageRoot)x64\*.dll" />
   </ItemGroup>
 
+  <!-- Publish-time resolution: the Visual Studio install is mandatory. -->
   <Target Name="ResolveOpenClawVCRuntimeFromVSInstall"
-          Condition="'$(OpenClawVCRuntimeArch)' != ''">
+          Condition="'$(OpenClawVCRuntimeArch)' != ''"
+          DependsOnTargets="LocateOpenClawVCRuntimeFromVSInstall">
 
-    <PropertyGroup>
-      <_OpenClawVsWherePath>$(MSBuildProgramFiles32)\Microsoft Visual Studio\Installer\vswhere.exe</_OpenClawVsWherePath>
-    </PropertyGroup>
+    <Error Condition="!Exists('$(OpenClawVsWherePath)')"
+           Text="vswhere.exe not found at '$(OpenClawVsWherePath)'. Publishing requires a Visual Studio install with the C++ Redistributable (Microsoft.VisualStudio.Component.VC.Redist.14.Latest) component." />
 
-    <Error Condition="!Exists('$(_OpenClawVsWherePath)')"
-           Text="vswhere.exe not found at '$(_OpenClawVsWherePath)'. Publishing requires a Visual Studio install with the C++ Redistributable (Microsoft.VisualStudio.Component.VC.Redist.14.Latest) component." />
+    <Error Condition="'$(OpenClawVsInstallRoot)' == ''"
+           Text="vswhere did not find a Visual Studio install with the C++ Redistributable (Microsoft.VisualStudio.Component.VC.Redist.14.Latest) component. Install that component via the Visual Studio Installer (Individual Components tab)." />
 
-    <Exec Command="&quot;$(_OpenClawVsWherePath)&quot; -latest -products * -requires Microsoft.VisualStudio.Component.VC.Redist.14.Latest -property installationPath"
-          ConsoleToMSBuild="true"
-          IgnoreExitCode="true">
-      <Output TaskParameter="ConsoleOutput" PropertyName="_OpenClawVsInstallRoot" />
-    </Exec>
+    <Error Condition="'@(OpenClawVSVCRuntimeFiles)' == ''"
+           Text="No $(OpenClawVCRuntimeArch) VC++ Runtime DLLs were found under '$(OpenClawVCRedistCrtDir)'. Install the C++ Redistributable Update Visual Studio component." />
 
-    <Error Condition="'$(_OpenClawVsInstallRoot)' == '' or !Exists('$(_OpenClawVsInstallRoot)')"
-           Text="vswhere did not find a Visual Studio install with the C++ Redistributable (Microsoft.VisualStudio.Component.VC.Redist.14.Latest) component (got '$(_OpenClawVsInstallRoot)'). Install that component via the Visual Studio Installer (Individual Components tab)." />
-
-    <!--
-      Glob the loose CRT DLLs. The Microsoft.VC*.CRT folder name carries the VS
-      major version (Microsoft.VC143.CRT for VS 2022, Microsoft.VC145.CRT for
-      VS 18). There is at most one Microsoft.VC*.CRT subdir per arch per redist
-      version, so the * collapses to a single match. We limit to
-      vcruntime140*.dll + msvcp140*.dll to match the file set required by the
-      native speech stack without carrying unrelated CRT DLLs.
-
-      For x64 this replaces the stale NuGet-sourced items so publish always
-      ships current DLLs from the VS install.
-    -->
-    <ItemGroup Condition="'$(OpenClawVCRuntimeArch)' == 'x64'">
+    <!-- Replace the NuGet-sourced x64 items so publish always ships the VS install's DLLs. -->
+    <ItemGroup>
       <OpenClawVCRuntimeFiles Remove="@(OpenClawVCRuntimeFiles)" />
-      <OpenClawVCRuntimeFiles Include="$(_OpenClawVsInstallRoot)\VC\Redist\MSVC\*\x64\Microsoft.VC*.CRT\vcruntime140*.dll" />
-      <OpenClawVCRuntimeFiles Include="$(_OpenClawVsInstallRoot)\VC\Redist\MSVC\*\x64\Microsoft.VC*.CRT\msvcp140*.dll" />
+      <OpenClawVCRuntimeFiles Include="@(OpenClawVSVCRuntimeFiles)" />
     </ItemGroup>
-
-    <ItemGroup Condition="'$(OpenClawVCRuntimeArch)' == 'arm64'">
-      <OpenClawVCRuntimeFiles Include="$(_OpenClawVsInstallRoot)\VC\Redist\MSVC\*\arm64\Microsoft.VC*.CRT\vcruntime140*.dll" />
-      <OpenClawVCRuntimeFiles Include="$(_OpenClawVsInstallRoot)\VC\Redist\MSVC\*\arm64\Microsoft.VC*.CRT\msvcp140*.dll" />
-    </ItemGroup>
-
-    <Error Condition="'@(OpenClawVCRuntimeFiles)' == ''"
-           Text="No $(OpenClawVCRuntimeArch) VC++ Runtime DLLs were found under '$(_OpenClawVsInstallRoot)\VC\Redist\MSVC\*\$(OpenClawVCRuntimeArch)\Microsoft.VC*.CRT\'. Install the C++ Redistributable Update Visual Studio component." />
   </Target>
 
   <!-- Legacy alias so existing CI log searches and docs still find the target. -->
   <Target Name="ResolveOpenClawVCRuntimeArm64FromVSInstall"
           DependsOnTargets="ResolveOpenClawVCRuntimeFromVSInstall" />
 
+  <!-- Build-time resolution: prefer the Visual Studio install, fall back to NuGet with a warning. -->
+  <Target Name="ResolveOpenClawVCRuntimeForBuild"
+          Condition="'$(OpenClawVCRuntimeArch)' == 'x64'"
+          DependsOnTargets="LocateOpenClawVCRuntimeFromVSInstall">
+
+    <ItemGroup Condition="'@(OpenClawVSVCRuntimeFiles)' != ''">
+      <OpenClawVCRuntimeFiles Remove="@(OpenClawVCRuntimeFiles)" />
+      <OpenClawVCRuntimeFiles Include="@(OpenClawVSVCRuntimeFiles)" />
+    </ItemGroup>
+
+    <Warning Condition="'@(OpenClawVSVCRuntimeFiles)' == ''"
+             Code="OPENCLAW0001"
+             Text="No Visual Studio install with the C++ Redistributable component was found; copying the VCRuntime.CefSharp.140 (14.29) runtime to '$(TargetDir)'. onnxruntime needs 14.38 or newer, so Piper TTS and Silero VAD will fail to load from this output. Install 'C++ Redistributable Update' (Microsoft.VisualStudio.Component.VC.Redist.14.Latest) via the Visual Studio Installer." />
+  </Target>
+
   <Target Name="CopyOpenClawVCRuntimeToOutput"
           AfterTargets="Build"
-          Condition="'$(OpenClawVCRuntimeArch)' == 'x64' and '@(OpenClawVCRuntimeFiles)' != ''">
+          DependsOnTargets="ResolveOpenClawVCRuntimeForBuild"
+          Condition="'$(OpenClawVCRuntimeArch)' == 'x64'">
     <!--
       x64-only on purpose. ARM64 publishes its runtime through the publish-only
       target below so that local 'dotnet build -r win-arm64' does not require
       a Visual Studio install.
-      Uses the NuGet-sourced DLLs (the VS resolution only runs at publish).
     -->
     <Copy SourceFiles="@(OpenClawVCRuntimeFiles)"
           DestinationFolder="$(TargetDir)"
