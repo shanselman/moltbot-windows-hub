@@ -1,4 +1,5 @@
 using OpenClaw.Connection;
+using OpenClaw.Connection.LocalAi;
 
 namespace OpenClaw.SetupEngine;
 
@@ -144,13 +145,39 @@ public sealed class PreserveLocalAiRecoveryGatewayStep : SetupStep
 
     public override async Task RollbackAsync(SetupContext ctx, CancellationToken ct)
     {
-        if (!ctx.LocalAiRecoveryStoppedWsl)
-            return;
+        Exception? receiptError = null;
+        if (ctx.LocalAiRecoveryOriginalInstall is { } originalInstall)
+        {
+            try
+            {
+                var store = new LocalAiManifestStore(new LocalAiPaths(ctx.LocalDataDir));
+                await store.SaveAsync(originalInstall.Manifest, ct).ConfigureAwait(false);
+                ctx.LocalAiResolvedInstall = store.ResolveAndValidate(originalInstall.Manifest);
+                ctx.LocalAiRecoveryProviderTransition = false;
+                ctx.LocalAiGatewayPriorState = null;
+            }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or InvalidDataException)
+            {
+                receiptError = ex;
+                ctx.Logger.Warn(
+                    $"Restoring the previous Local AI endpoint receipt failed ({ex.GetType().Name}).");
+            }
+        }
 
-        StepResult restart = await _restart(ctx, ct);
-        if (!restart.IsSuccess)
-            throw new InvalidOperationException(restart.Message);
+        if (ctx.LocalAiRecoveryStoppedWsl)
+        {
+            StepResult restart = await _restart(ctx, ct);
+            if (!restart.IsSuccess)
+                throw new InvalidOperationException(restart.Message);
 
-        ctx.LocalAiRecoveryStoppedWsl = false;
+            ctx.LocalAiRecoveryStoppedWsl = false;
+        }
+
+        if (receiptError is not null)
+        {
+            throw new InvalidOperationException(
+                "The previous Local AI endpoint receipt could not be restored.",
+                receiptError);
+        }
     }
 }
