@@ -148,20 +148,29 @@ public sealed class PreserveLocalAiRecoveryGatewayStep : SetupStep
         Exception? receiptError = null;
         if (ctx.LocalAiRecoveryOriginalInstall is { } originalInstall)
         {
-            try
+            if (!ctx.LocalAiRecoveryReceiptRollbackAllowed)
             {
-                var store = new LocalAiManifestStore(new LocalAiPaths(ctx.LocalDataDir));
-                await store.SaveAsync(originalInstall.Manifest, ct).ConfigureAwait(false);
-                ctx.LocalAiResolvedInstall = store.ResolveAndValidate(originalInstall.Manifest);
-                ctx.LocalAiRecoveryProviderTransition = false;
-                ctx.LocalAiGatewayPriorState = null;
-            }
-            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or InvalidDataException)
-            {
-                receiptError = ex;
                 ctx.Logger.Warn(
-                    $"Restoring the previous Local AI endpoint receipt failed ({ex.GetType().Name}).");
+                    "The previous Local AI endpoint receipt was not restored because gateway provider rollback did not complete.");
             }
+            else
+            {
+                try
+                {
+                    var store = new LocalAiManifestStore(new LocalAiPaths(ctx.LocalDataDir));
+                    await store.SaveAsync(originalInstall.Manifest, ct).ConfigureAwait(false);
+                    ctx.LocalAiResolvedInstall = store.ResolveAndValidate(originalInstall.Manifest);
+                }
+                catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or InvalidDataException)
+                {
+                    receiptError = ex;
+                    ctx.Logger.Warn(
+                        $"Restoring the previous Local AI endpoint receipt failed ({ex.GetType().Name}).");
+                }
+            }
+            ctx.LocalAiRecoveryProviderTransition = false;
+            ctx.LocalAiRecoveryReceiptRollbackAllowed = false;
+            ctx.LocalAiGatewayPriorState = null;
         }
 
         if (ctx.LocalAiRecoveryStoppedWsl)
