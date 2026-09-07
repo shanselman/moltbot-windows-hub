@@ -115,12 +115,6 @@ public sealed class CommandRunner : ICommandRunner
             WorkingDirectory = workingDirectory ?? ""
         };
 
-        if (UsesUtf16OutputEncoding(executable, arguments))
-        {
-            psi.StandardOutputEncoding = Encoding.Unicode;
-            psi.StandardErrorEncoding = Encoding.Unicode;
-        }
-
         foreach (var arg in arguments)
             psi.ArgumentList.Add(arg);
 
@@ -128,6 +122,16 @@ public sealed class CommandRunner : ICommandRunner
         {
             foreach (var (key, value) in environment)
                 psi.Environment[key] = value;
+        }
+
+        if (IsWslExecutable(executable))
+        {
+            // wsl.exe management commands default to UTF-16LE, while distro
+            // commands emit UTF-8. Force the documented UTF-8 mode so every WSL
+            // invocation has one deterministic redirected-output encoding.
+            psi.Environment["WSL_UTF8"] = "1";
+            psi.StandardOutputEncoding = Encoding.UTF8;
+            psi.StandardErrorEncoding = Encoding.UTF8;
         }
 
         using var process = new Process { StartInfo = psi };
@@ -248,23 +252,8 @@ public sealed class CommandRunner : ICommandRunner
         return remaining < s_outputDrainCap ? remaining : s_outputDrainCap;
     }
 
-    internal static bool UsesUtf16OutputEncoding(string executable, string[] arguments)
-    {
-        if (!string.Equals(Path.GetFileName(executable), "wsl.exe", StringComparison.OrdinalIgnoreCase) ||
-            arguments.Length == 0)
-        {
-            return false;
-        }
-
-        return arguments[0] is
-            "--version" or
-            "--status" or
-            "--list" or
-            "--install" or
-            "--terminate" or
-            "--unregister" or
-            "--shutdown";
-    }
+    internal static bool IsWslExecutable(string executable) =>
+        string.Equals(Path.GetFileName(executable), "wsl.exe", StringComparison.OrdinalIgnoreCase);
 
     /// <summary>
     /// Run a command inside a WSL distro.

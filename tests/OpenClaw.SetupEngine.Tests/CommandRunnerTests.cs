@@ -28,6 +28,7 @@ public class CommandRunnerTests
 
             var output = result.Stdout + result.Stderr;
             Assert.NotEmpty(output);
+            Assert.Contains("WSL version", output, StringComparison.OrdinalIgnoreCase);
             Assert.DoesNotContain('\0', output);
 
             var jsonl = await File.ReadAllTextAsync(logPath);
@@ -40,33 +41,20 @@ public class CommandRunnerTests
     }
 
     [Theory]
-    [InlineData("--version")]
-    [InlineData("--status")]
-    [InlineData("--list")]
-    [InlineData("--install")]
-    [InlineData("--terminate")]
-    [InlineData("--unregister")]
-    [InlineData("--shutdown")]
-    public void UsesUtf16OutputEncoding_WslManagementVerb_ReturnsTrue(string verb)
+    [InlineData("wsl.exe")]
+    [InlineData(@"C:\Windows\System32\WSL.EXE")]
+    public void IsWslExecutable_WslPath_ReturnsTrue(string executable)
     {
-        Assert.True(CommandRunner.UsesUtf16OutputEncoding("wsl.exe", [verb]));
-        Assert.True(CommandRunner.UsesUtf16OutputEncoding(@"C:\Windows\System32\WSL.EXE", [verb]));
+        Assert.True(CommandRunner.IsWslExecutable(executable));
     }
 
     [Theory]
-    [InlineData("wsl.exe", "-d")]
-    [InlineData("wsl.exe", "--distribution")]
-    [InlineData("wsl.exe", "--exec")]
-    [InlineData("powershell.exe", "--version")]
-    public void UsesUtf16OutputEncoding_OtherCommand_ReturnsFalse(string executable, string argument)
+    [InlineData("wsl")]
+    [InlineData("powershell.exe")]
+    [InlineData("")]
+    public void IsWslExecutable_OtherPath_ReturnsFalse(string executable)
     {
-        Assert.False(CommandRunner.UsesUtf16OutputEncoding(executable, [argument]));
-    }
-
-    [Fact]
-    public void UsesUtf16OutputEncoding_EmptyArguments_ReturnsFalse()
-    {
-        Assert.False(CommandRunner.UsesUtf16OutputEncoding("wsl.exe", []));
+        Assert.False(CommandRunner.IsWslExecutable(executable));
     }
 
     [Fact]
