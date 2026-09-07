@@ -4779,6 +4779,19 @@ public class SetupStepsTests : IDisposable
     }
 
     [Fact]
+    public void WindowsNodeContext_IsMissingDistroResult_InspectsBothOutputStreams()
+    {
+        var result = new CommandResult(
+            -1,
+            "There is no distribution with the supplied name.",
+            "wsl: warning: ignored setting",
+            TimeSpan.Zero,
+            TimedOut: false);
+
+        Assert.True(WindowsNodeBootstrapContextStep.IsMissingDistroResult(result));
+    }
+
+    [Fact]
     public async Task WindowsNodeContext_Execute_RunsInWslAsConfiguredUserAndResolvesWorkspace()
     {
         var commands = new FakeCommandRunner(
@@ -5208,10 +5221,103 @@ public class SetupStepsTests : IDisposable
     }
 
     [Fact]
+    public async Task WindowsNodeContext_Rollback_SkipsLegacyCleanupWhenDistroIsAbsent()
+    {
+        var commands = new FakeCommandRunner(
+            arguments =>
+            {
+                Assert.Equal(["--list", "--quiet"], arguments);
+                return Ok("Ubuntu\n");
+            });
+        var ctx = CreateContext(commands: commands);
+
+        await new WindowsNodeBootstrapContextStep().RollbackAsync(ctx, CancellationToken.None);
+
+        Assert.Empty(commands.WslCalls);
+        Assert.Single(commands.Calls);
+    }
+
+    [Fact]
+    public async Task WindowsNodeContext_Rollback_SkipsLegacyCleanupWhenWslHasNoDistributions()
+    {
+        var commands = new FakeCommandRunner(
+            arguments =>
+            {
+                Assert.Equal(["--list", "--quiet"], arguments);
+                return new CommandResult(
+                    1,
+                    "",
+                    "Windows Subsystem for Linux has no installed distributions.\n" +
+                    "Use 'wsl.exe --list --online' to list available distributions and " +
+                    "'wsl.exe --install <Distro>' to install.",
+                    TimeSpan.Zero,
+                    TimedOut: false);
+            });
+        var ctx = CreateContext(commands: commands);
+
+        await new WindowsNodeBootstrapContextStep().RollbackAsync(ctx, CancellationToken.None);
+
+        Assert.Empty(commands.WslCalls);
+        Assert.Single(commands.Calls);
+    }
+
+    [Fact]
+    public async Task WindowsNodeContext_Rollback_SkipsLegacyCleanupWhenWslExeCannotStart()
+    {
+        var commands = new FakeCommandRunner(
+            _ => new CommandResult(
+                -1,
+                "",
+                @"Failed to start process 'C:\Windows\System32\wsl.exe': The system cannot find the file specified.",
+                TimeSpan.Zero,
+                TimedOut: false));
+        var ctx = CreateContext(commands: commands);
+
+        await new WindowsNodeBootstrapContextStep().RollbackAsync(ctx, CancellationToken.None);
+
+        Assert.Empty(commands.WslCalls);
+        Assert.Single(commands.Calls);
+    }
+
+    [Fact]
+    public async Task WindowsNodeContext_Rollback_FailsWhenDistroInspectionIsAmbiguous()
+    {
+        var commands = new FakeCommandRunner(_ => Fail("Access is denied."));
+        var ctx = CreateContext(commands: commands);
+
+        var error = await Assert.ThrowsAsync<InvalidOperationException>(
+            () => new WindowsNodeBootstrapContextStep().RollbackAsync(ctx, CancellationToken.None));
+
+        Assert.Contains(
+            "Could not inspect WSL distributions while cleaning legacy Windows node context",
+            error.Message);
+        Assert.Empty(commands.WslCalls);
+    }
+
+    [Fact]
+    public async Task WindowsNodeContext_Rollback_FailsWhenDistroInspectionTimesOut()
+    {
+        var commands = new FakeCommandRunner(_ => TimedOut());
+        var ctx = CreateContext(commands: commands);
+
+        var error = await Assert.ThrowsAsync<InvalidOperationException>(
+            () => new WindowsNodeBootstrapContextStep().RollbackAsync(ctx, CancellationToken.None));
+
+        Assert.Contains(
+            "Could not inspect WSL distributions while cleaning legacy Windows node context",
+            error.Message);
+        Assert.Empty(commands.WslCalls);
+    }
+
+    [Fact]
     public async Task WindowsNodeContext_Rollback_CleansLegacyEffectiveWorkspaceWithoutStateFile()
     {
         var commands = new FakeCommandRunner(
-            _ => Fail("unexpected RunAsync"),
+            arguments =>
+            {
+                Assert.Equal(["--list", "--quiet"], arguments);
+                return Ok("OpenClawGateway\n");
+            },
             (_, command, _) =>
             {
                 if (command.Contains("getent passwd"))
