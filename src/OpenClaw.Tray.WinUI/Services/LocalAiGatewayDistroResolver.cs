@@ -115,7 +115,7 @@ internal sealed class LocalAiGatewayDistroResolver : ILocalAiGatewayDistroResolv
 
         GatewayRecord owner = owners[0];
         _gatewayId = owner.Id;
-        _distroName = owner.SetupManagedDistroName!.Trim();
+        _distroName = GatewayRecordEditing.ResolveManagedDistroName(owner)!.Trim();
     }
 
     public LocalAiGatewayDistroResolution Resolve()
@@ -132,7 +132,7 @@ internal sealed class LocalAiGatewayDistroResolver : ILocalAiGatewayDistroResolv
         if (owners.Count != 1 ||
             !string.Equals(owners[0].Id, _gatewayId, StringComparison.Ordinal) ||
             !string.Equals(
-                owners[0].SetupManagedDistroName?.Trim(),
+                GatewayRecordEditing.ResolveManagedDistroName(owners[0])?.Trim(),
                 _distroName,
                 StringComparison.Ordinal))
         {

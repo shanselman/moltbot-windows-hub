@@ -352,6 +352,24 @@ public sealed class LocalAiGatewayProviderCoordinatorTests
     }
 
     [Fact]
+    public void DistroResolver_ResolvesLegacyManagedOwner()
+    {
+        GatewayRecord owner = new()
+        {
+            Id = "legacy-managed",
+            Url = "ws://localhost:18789",
+            IsLocal = true,
+            FriendlyName = "Local (LegacyGateway)",
+        };
+        var resolver = new LocalAiGatewayDistroResolver(CreateRegistry(owner));
+
+        LocalAiGatewayDistroResolution resolution = resolver.Resolve();
+
+        Assert.True(resolution.Success);
+        Assert.Equal("LegacyGateway", resolution.DistroName);
+    }
+
+    [Fact]
     public void LocalAiSetupRoute_ProvisionsOnlyWhenManagedGatewayIsConclusivelyAbsent()
     {
         LocalAiSetupResolution resolution = LocalAiSetupRoutePolicy.Decide(
