@@ -473,6 +473,50 @@ public sealed class LocalAiGatewayUninstallTests
         Assert.False(context.LocalAiRecoveryReceiptRollbackAllowed);
     }
 
+    [Fact]
+    public async Task Recovery_ProviderCreationRollbackCancellationKeepsReplacementReceipt()
+    {
+        using var temp = new TempDirectory("local-ai-gateway-recovery-");
+        LocalAiResolvedInstall original = await SaveManifestAsync(temp.Path, "openai/gpt-5");
+        string fallback = JsonSerializer.Serialize("openai/gpt-5");
+        var commands = new GatewayStateCommandRunner(providerJson: null, primaryJson: fallback);
+        SetupContext context = CreateRecoveryContext(temp.Path, commands);
+        context.Config.RollbackOnFailure = true;
+        context.LocalAiRecoveryOriginalInstall = original;
+        context.LocalAiRecoveryReceiptRollbackAllowed = true;
+        LocalAiInstallManifest replacementManifest = original.Manifest with
+        {
+            Endpoint = "http://127.0.0.1:39876/v1",
+        };
+        var store = new LocalAiManifestStore(new LocalAiPaths(temp.Path));
+        await store.SaveAsync(replacementManifest);
+        context.LocalAiResolvedInstall = store.ResolveAndValidate(replacementManifest);
+        var configure = new ConfigureLocalAiGatewayStep();
+        StepResult configured = await configure.ExecuteAsync(context, CancellationToken.None);
+        commands.ThrowOnNextCapture = true;
+        var pipeline = new SetupPipeline(
+        [
+            new PreserveLocalAiRecoveryGatewayStep((_, _) =>
+                Task.FromResult(StepResult.Ok("not needed"))),
+            new DelegatingRollbackStep("configured", configure.RollbackAsync),
+            new DelegatingRollbackStep(
+                "fail",
+                (_, _) => Task.CompletedTask,
+                (_, _) => Task.FromResult(StepResult.Fail("forced failure"))),
+        ]);
+
+        PipelineResult result = await pipeline.RunAsync(context);
+
+        Assert.Equal(StepOutcome.Success, configured.Outcome);
+        Assert.Equal(PipelineOutcome.Failed, result.Outcome);
+        Assert.True(LocalAiGatewayProviderDefinition.MatchesProviderJson(
+            commands.ProviderJson!,
+            context.LocalAiResolvedInstall));
+        Assert.Equal(new Uri(replacementManifest.Endpoint!), (await store.LoadAsync())!.Endpoint);
+        Assert.False(context.LocalAiRecoveryProviderTransition);
+        Assert.False(context.LocalAiRecoveryReceiptRollbackAllowed);
+    }
+
     private static SetupContext CreateContext(string localDataDirectory, ICommandRunner commands)
     {
         var config = new SetupConfig();
