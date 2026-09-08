@@ -1,3 +1,17 @@
+// <summary>
+// Setup-time inference verification for the managed llama-server router. Sends one bounded,
+// OpenAI-compatible request that intentionally triggers lazy model loading, then verifies the
+// response plus token and timing evidence. Prompt and response content are never returned or
+// logged; only llama-server's own error text surfaces on failure (LlamaServerInferenceException).
+// Usage:
+//   using var client = new LlamaServerInferenceClient();
+//   LlamaServerInferenceVerification verification = await client.VerifyAsync(
+//       endpoint: new Uri("http://127.0.0.1:18803/v1"),
+//       modelAlias: "local-model",
+//       cancellationToken);
+//   // verification.PromptTokens / CompletionTokens / timing evidence; throws
+//   // LlamaServerInferenceException with the server's own error text on failure.
+// </summary>
 using System.Net.Http.Json;
 using System.Text;
 using System.Text.Json;

@@ -1,3 +1,15 @@
+// <summary>
+// Owns the native llama-server router process for the lifetime of the Windows companion:
+// starts it via the managed process host, polls health until ready, publishes/quiesces the
+// endpoint through ILocalAiEndpointLifecycle, and supervises restarts with bounded attempts,
+// timeouts, and capped rotating logs.
+// Usage:
+//   var runtime = new LlamaServerRuntimeService(new LlamaServerRuntimeOptions { Paths = paths });
+//   runtime.StateChanged += (_, args) => UpdateUi(args.Snapshot);
+//   LocalAiRuntimeSnapshot snapshot = await runtime.EnsureStartedAsync(cancellationToken);
+//   if (snapshot.State is LocalAiRuntimeState.Healthy) { /* endpoint ready at snapshot.Endpoint */ }
+//   await using var _ = runtime; // StopAsync/RestartAsync/RefreshAsync also available on ILocalAiRuntime
+// </summary>
 using OpenClaw.Shared;
 using System.Net;
 using System.Text;

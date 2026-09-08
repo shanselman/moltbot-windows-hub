@@ -1,3 +1,13 @@
+// <summary>
+// Contract for coordinating consumers of the app-owned local AI endpoint with native process
+// changes: QuiesceAsync removes managed routing before a listener can disappear, and
+// PublishAsync publishes routing only after the replacement endpoint is proven healthy.
+// NullLocalAiEndpointLifecycle is the no-op default.
+// Usage:
+//   var lifecycle = new NullLocalAiEndpointLifecycle(); // or the app-owned routing coordinator
+//   await lifecycle.QuiesceAsync(install, cancellationToken);  // remove routing before restart
+//   await lifecycle.PublishAsync(install, cancellationToken);  // publish routing after health proof
+// </summary>
 namespace OpenClaw.Connection.LocalAi;
 
 public sealed record LocalAiEndpointLifecycleResult(bool Success, string? Detail = null)
