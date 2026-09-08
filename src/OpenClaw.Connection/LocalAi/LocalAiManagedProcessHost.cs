@@ -7,10 +7,10 @@
 //   ILocalAiManagedProcessHost host = new WindowsLocalAiManagedProcessHost(logger);
 //   ILocalAiManagedProcess process = await host.StartProcessAsync(
 //       new LocalAiProcessStartSpec(
-//           ExecutablePath: plan.Arguments 0 executable, WorkingDirectory: paths.RootDirectory,
-//           Arguments: args, Environment: env, StandardOutputLogPath: paths.StandardOutputLogPath,
-//           StandardErrorLogPath: paths.StandardErrorLogPath, MaxLogBytes: 8 * 1024 * 1024,
-//           LogBackupCount: 2, MaxLogLineCharacters: 16 * 1024),
+//           ExecutablePath: install.ExecutablePath, WorkingDirectory: Path.GetDirectoryName(install.ExecutablePath)!,
+//           Arguments: launchPlan.Arguments, Environment: launchPlan.Environment,
+//           StandardOutputLogPath: paths.StandardOutputLogPath, StandardErrorLogPath: paths.StandardErrorLogPath,
+//           MaxLogBytes: 8 * 1024 * 1024, LogBackupCount: 2, MaxLogLineCharacters: 16 * 1024),
 //       exited: exit => OnExited(exit),
 //       cancellationToken);
 //   await process.StopAsync(TimeSpan.FromSeconds(10), cancellationToken); // job object kills children
