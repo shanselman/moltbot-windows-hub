@@ -7178,4 +7178,36 @@
   <data name="ExtensionsPage_UnscannedAcknowledge.Content" xml:space="preserve"><value>I understand that detailed metadata was not scanned.</value></data>
   <data name="ExtensionsPage_InstallActionButton.Content" xml:space="preserve"><value>Install</value></data>
   <data name="ExtensionsPage_CancelActionButton.Content" xml:space="preserve"><value>Cancel</value></data>
++  <data name="ExtensionsPage_InstalledPluginsTab.Content" xml:space="preserve"><value>Installed</value></data>
+  <data name="ExtensionsPage_DiscoverPluginsTab.Content" xml:space="preserve"><value>Discover</value></data>
+  <data name="ExtensionsPage_ReviewPluginAction.Content" xml:space="preserve"><value>Review access</value></data>
+  <data name="ExtensionsPage_NoInstalledPlugins.Text" xml:space="preserve"><value>No plugins are installed.</value></data>
+  <data name="ExtensionsPage_SearchPlugins.PlaceholderText" xml:space="preserve"><value>Search ClawHub plugins</value></data>
+  <data name="ExtensionsPage_SearchPlugins.AutomationProperties.Name" xml:space="preserve"><value>Search ClawHub plugins</value></data>
+  <data name="ExtensionsPage_SearchPluginsAction.Content" xml:space="preserve"><value>Search</value></data>
+  <data name="ExtensionsPage_DeclaredAccessHeading.Text" xml:space="preserve"><value>Declared access</value></data>
+  <data name="ExtensionsPage_ClosePluginReviewAction.Content" xml:space="preserve"><value>Close</value></data>
+  <data name="ExtensionsPage_PluginCountFormat" xml:space="preserve"><value>{0} installed plugins</value></data>
+  <data name="ExtensionsPage_PluginsUpgradeRequired" xml:space="preserve"><value>This Gateway does not advertise the required Plugins APIs. Upgrade the Gateway to browse or manage plugins here.</value></data>
+  <data name="ExtensionsPage_StateUnknown" xml:space="preserve"><value>State unknown</value></data>
+  <data name="ExtensionsPage_KindUnknown" xml:space="preserve"><value>Type not reported</value></data>
+  <data name="ExtensionsPage_PluginDiagnosticsFormat" xml:space="preserve"><value>The Gateway reported {0} plugin diagnostics. Review Gateway logs before changing plugins.</value></data>
+  <data name="ExtensionsPage_Error_PluginLoadFormat" xml:space="preserve"><value>Could not load plugins: {0}</value></data>
+  <data name="ExtensionsPage_PluginSearchRequired" xml:space="preserve"><value>Enter a plugin name to search ClawHub.</value></data>
+  <data name="ExtensionsPage_NoPluginSearchResults" xml:space="preserve"><value>No plugins matched your search.</value></data>
+  <data name="ExtensionsPage_Error_PluginSearchFormat" xml:space="preserve"><value>Could not search plugins: {0}</value></data>
+  <data name="ExtensionsPage_PluginInspectUnavailable" xml:space="preserve"><value>The Gateway could not inspect this plugin.</value></data>
+  <data name="ExtensionsPage_Error_PluginInspectFormat" xml:space="preserve"><value>Could not inspect plugin access: {0}</value></data>
+  <data name="ExtensionsPage_OriginUnknown" xml:space="preserve"><value>Origin not reported</value></data>
+  <data name="ExtensionsPage_PluginSurfaceChannels" xml:space="preserve"><value>Channels: {0}</value></data>
+  <data name="ExtensionsPage_PluginSurfaceProviders" xml:space="preserve"><value>Providers: {0}</value></data>
+  <data name="ExtensionsPage_PluginSurfaceTools" xml:space="preserve"><value>Tools: {0}</value></data>
+  <data name="ExtensionsPage_PluginSurfaceHooks" xml:space="preserve"><value>Hooks: {0}</value></data>
+  <data name="ExtensionsPage_PluginSurfaceMcpServers" xml:space="preserve"><value>MCP servers: {0}</value></data>
+  <data name="ExtensionsPage_PluginSurfaceSkills" xml:space="preserve"><value>Skills: {0}</value></data>
+  <data name="ExtensionsPage_PluginSurfaceCli" xml:space="preserve"><value>CLI surfaces: {0}</value></data>
+  <data name="ExtensionsPage_PluginSurfaceConfig" xml:space="preserve"><value>Dangerous configuration flags: {0}</value></data>
+  <data name="ExtensionsPage_PluginNoDeclaredSurfaces" xml:space="preserve"><value>No privileged surfaces were declared.</value></data>
+  <data name="ExtensionsPage_PluginOriginFormat" xml:space="preserve"><value>Origin: {0}</value></data>
+  <data name="ExtensionsPage_PluginTrustFormat" xml:space="preserve"><value>Trust: {0}</value></data>
 </root>

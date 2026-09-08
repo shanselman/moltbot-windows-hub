@@ -197,12 +197,134 @@
             </TabViewItem>
 
             <TabViewItem x:Uid="ExtensionsPage_PluginsTab" Header="Plugins" IsClosable="False">
-                <StackPanel Padding="0,28,0,0" HorizontalAlignment="Center" Spacing="8">
-                    <FontIcon Glyph="&#xE74C;" FontSize="42" HorizontalAlignment="Center"
-                              Foreground="{ThemeResource TextFillColorSecondaryBrush}"/>
-                    <TextBlock x:Uid="ExtensionsPage_PluginsComingNext" Text="Plugin catalog and management are being added next."
-                               TextWrapping="Wrap" TextAlignment="Center" MaxWidth="420"/>
-                </StackPanel>
+                <Grid Padding="0,12,0,0">
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="Auto"/>
+                        <RowDefinition Height="Auto"/>
+                        <RowDefinition Height="Auto"/>
+                        <RowDefinition Height="*"/>
+                    </Grid.RowDefinitions>
+                    <StackPanel Orientation="Horizontal" Spacing="8">
+                        <Button x:Uid="ExtensionsPage_InstalledPluginsTab" Content="Installed"
+                                Click="OnInstalledPluginsClick"/>
+                        <Button x:Uid="ExtensionsPage_DiscoverPluginsTab" Content="Discover"
+                                Click="OnDiscoverPluginsClick"/>
+                    </StackPanel>
+                    <InfoBar x:Name="PluginInfoBar" Grid.Row="1" Margin="0,10,0,0"
+                             IsOpen="False" IsClosable="True" Severity="Informational"/>
+                    <ProgressBar x:Name="PluginsProgress" Grid.Row="2" Margin="0,10,0,0"
+                                 IsIndeterminate="True" Visibility="Collapsed"/>
+
+                    <Grid x:Name="InstalledPluginsPanel" Grid.Row="3" Margin="0,12,0,0">
+                        <Grid.RowDefinitions>
+                            <RowDefinition Height="Auto"/>
+                            <RowDefinition Height="*"/>
+                        </Grid.RowDefinitions>
+                        <TextBlock x:Name="PluginsCountText"
+                                   Foreground="{ThemeResource TextFillColorSecondaryBrush}"/>
+                        <ListView Grid.Row="1" Margin="0,10,0,0" ItemsSource="{Binding InstalledPlugins}">
+                            <ListView.ItemTemplate>
+                                <DataTemplate>
+                                    <Border Background="{ThemeResource CardBackgroundFillColorDefaultBrush}"
+                                            CornerRadius="8" Padding="16" Margin="0,0,0,8"
+                                            HorizontalAlignment="Stretch">
+                                        <Grid ColumnSpacing="12" RowSpacing="5">
+                                            <Grid.ColumnDefinitions>
+                                                <ColumnDefinition Width="*"/>
+                                                <ColumnDefinition Width="Auto"/>
+                                            </Grid.ColumnDefinitions>
+                                            <TextBlock Text="{Binding Name}" FontWeight="SemiBold"/>
+                                            <TextBlock Grid.Column="1" Text="{Binding State}"
+                                                       Foreground="{ThemeResource AccentTextFillColorPrimaryBrush}"/>
+                                            <TextBlock Grid.Row="1" Grid.ColumnSpan="2" Text="{Binding Description}"
+                                                       TextWrapping="Wrap" MaxLines="3"
+                                                       Foreground="{ThemeResource TextFillColorSecondaryBrush}"/>
+                                            <StackPanel Grid.Row="2" Grid.ColumnSpan="2" Orientation="Horizontal" Spacing="12">
+                                                <TextBlock Text="{Binding Version}"/>
+                                                <TextBlock Text="{Binding Kinds}"
+                                                           Foreground="{ThemeResource TextFillColorSecondaryBrush}"/>
+                                                <Button x:Uid="ExtensionsPage_ReviewPluginAction" Content="Review access"
+                                                        Tag="{Binding}" IsEnabled="{Binding CanReview}"
+                                                        Click="OnReviewInstalledPluginClick"/>
+                                            </StackPanel>
+                                        </Grid>
+                                    </Border>
+                                </DataTemplate>
+                            </ListView.ItemTemplate>
+                        </ListView>
+                        <StackPanel x:Name="PluginsEmptyState" Grid.Row="1" Visibility="Collapsed"
+                                    HorizontalAlignment="Center" Margin="0,48,0,0" Spacing="8">
+                            <FontIcon Glyph="&#xE74C;" FontSize="42" HorizontalAlignment="Center"
+                                      Foreground="{ThemeResource TextFillColorSecondaryBrush}"/>
+                            <TextBlock x:Uid="ExtensionsPage_NoInstalledPlugins" Text="No plugins are installed."
+                                       HorizontalAlignment="Center"/>
+                        </StackPanel>
+                    </Grid>
+
+                    <Grid x:Name="DiscoverPluginsPanel" Grid.Row="3" Margin="0,12,0,0" Visibility="Collapsed">
+                        <Grid.RowDefinitions>
+                            <RowDefinition Height="Auto"/>
+                            <RowDefinition Height="Auto"/>
+                            <RowDefinition Height="*"/>
+                        </Grid.RowDefinitions>
+                        <Grid ColumnSpacing="8">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*"/>
+                                <ColumnDefinition Width="Auto"/>
+                            </Grid.ColumnDefinitions>
+                            <TextBox x:Uid="ExtensionsPage_SearchPlugins" x:Name="PluginSearchBox"
+                                     PlaceholderText="Search ClawHub plugins" AutomationProperties.Name="Search ClawHub plugins"
+                                     KeyDown="OnPluginSearchKeyDown"/>
+                            <Button x:Uid="ExtensionsPage_SearchPluginsAction" Grid.Column="1" Content="Search"
+                                    Click="OnSearchPluginsClick"/>
+                        </Grid>
+                        <Border x:Name="PluginReviewPanel" Grid.Row="1" Visibility="Collapsed"
+                                Background="{ThemeResource CardBackgroundFillColorDefaultBrush}"
+                                CornerRadius="8" Padding="16" Margin="0,12,0,0">
+                            <StackPanel Spacing="8">
+                                <TextBlock x:Name="PluginReviewName" FontWeight="SemiBold" FontSize="18"/>
+                                <TextBlock x:Name="PluginReviewDescription" TextWrapping="Wrap"/>
+                                <TextBlock x:Name="PluginReviewVersion"/>
+                                <TextBlock x:Name="PluginReviewOrigin"/>
+                                <TextBlock x:Uid="ExtensionsPage_DeclaredAccessHeading" Text="Declared access"
+                                           FontWeight="SemiBold" Margin="0,4,0,0"/>
+                                <TextBlock x:Name="PluginReviewSurfaces" TextWrapping="Wrap"
+                                           FontFamily="Consolas" IsTextSelectionEnabled="True"/>
+                                <TextBlock x:Name="PluginReviewTrust" TextWrapping="Wrap"
+                                           Foreground="{ThemeResource TextFillColorSecondaryBrush}"/>
+                                <Button x:Uid="ExtensionsPage_ClosePluginReviewAction" Content="Close"
+                                        HorizontalAlignment="Left" Click="OnClosePluginReviewClick"/>
+                            </StackPanel>
+                        </Border>
+                        <ListView Grid.Row="2" Margin="0,10,0,0" ItemsSource="{Binding PluginSearchResults}">
+                            <ListView.ItemTemplate>
+                                <DataTemplate>
+                                    <Border Background="{ThemeResource CardBackgroundFillColorDefaultBrush}"
+                                            CornerRadius="8" Padding="16" Margin="0,0,0,8"
+                                            HorizontalAlignment="Stretch">
+                                        <Grid ColumnSpacing="12" RowSpacing="5">
+                                            <Grid.ColumnDefinitions>
+                                                <ColumnDefinition Width="*"/>
+                                                <ColumnDefinition Width="Auto"/>
+                                            </Grid.ColumnDefinitions>
+                                            <TextBlock Text="{Binding Name}" FontWeight="SemiBold"/>
+                                            <Button x:Uid="ExtensionsPage_ReviewPluginAction" Grid.Column="1" Grid.RowSpan="3"
+                                                    Content="Review access" Tag="{Binding}" IsEnabled="{Binding CanReview}"
+                                                    Click="OnReviewSearchPluginClick" VerticalAlignment="Center"/>
+                                            <TextBlock Grid.Row="1" Text="{Binding Summary}" TextWrapping="Wrap" MaxLines="3"
+                                                       Foreground="{ThemeResource TextFillColorSecondaryBrush}"/>
+                                            <StackPanel Grid.Row="2" Orientation="Horizontal" Spacing="12">
+                                                <TextBlock Text="{Binding Version}"/>
+                                                <TextBlock Text="{Binding Verification}"
+                                                           Foreground="{ThemeResource TextFillColorSecondaryBrush}"/>
+                                            </StackPanel>
+                                        </Grid>
+                                    </Border>
+                                </DataTemplate>
+                            </ListView.ItemTemplate>
+                        </ListView>
+                    </Grid>
+                </Grid>
             </TabViewItem>
         </TabView>
     </Grid>

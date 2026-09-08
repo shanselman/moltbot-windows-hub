@@ -60,7 +60,7 @@ internal sealed record SkillActionOutcome(
         new(false, true, message);
 }
 
-internal sealed class ExtensionsPageViewModel : INavigationAware, IDisposable, INotifyPropertyChanged
+internal sealed partial class ExtensionsPageViewModel : INavigationAware, IDisposable, INotifyPropertyChanged
 {
     private const string AdminScope = "operator.admin";
     private readonly IExtensionsRuntimeSource _runtime;
@@ -194,12 +194,14 @@ internal sealed class ExtensionsPageViewModel : INavigationAware, IDisposable, I
         SelectedAgentId = ResolveAgentId(parameter, AgentIds);
         SubscribeToCurrentClient();
         _ = LoadSkillsAsync();
+        _ = LoadPluginsAsync();
     }
 
     public void Deactivate()
     {
         _active = false;
         Interlocked.Increment(ref _loadGeneration);
+        Interlocked.Increment(ref _pluginLoadGeneration);
         UnsubscribeClient();
     }
 

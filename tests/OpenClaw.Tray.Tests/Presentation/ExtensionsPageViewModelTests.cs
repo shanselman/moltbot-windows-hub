@@ -107,6 +107,91 @@ public sealed class ExtensionsPageViewModelTests
         Assert.Equal("beta-skill", Assert.Single(vm.VisibleSkills).SkillKey);
     }
 
+    [Fact]
+    public async Task PluginCatalog_LoadsOnlyInstalledEntriesAndPreservesDiagnostics()
+    {
+        var client = new FakeExtensionsClient
+        {
+            AdvertisedFeatures = FeaturesWithPlugins(),
+            PluginListResult = new PluginsListResult
+            {
+                MutationAllowed = true,
+                DiagnosticCount = 2,
+                Plugins =
+                [
+                    new PluginCatalogEntry { Id = "installed", Name = "Installed", Installed = true, Enabled = true, Kind = ["provider"] },
+                    new PluginCatalogEntry { Id = "catalog-only", Name = "Catalog", Installed = false },
+                ],
+            },
+        };
+        using var vm = Create(client, ["main"]);
+
+        vm.Activate("extensions");
+        await WaitUntilAsync(() => !vm.IsLoadingPlugins);
+
+        Assert.Equal("installed", Assert.Single(vm.InstalledPlugins).PluginId);
+        Assert.True(vm.PluginMutationAllowed);
+        Assert.Equal(2, vm.PluginDiagnosticCount);
+        Assert.Contains("2", vm.PluginStatusMessage);
+    }
+
+    [Fact]
+    public async Task PluginSearchAndInspect_UseRuntimeIdAndShowExactDeclaredSurfaces()
+    {
+        var client = new FakeExtensionsClient
+        {
+            AdvertisedFeatures = FeaturesWithPlugins(),
+            PluginSearchResult = new PluginsSearchResult
+            {
+                Results =
+                [
+                    new PluginSearchEntry
+                    {
+                        Package = new PluginSearchPackage
+                        {
+                            Name = "@publisher/package",
+                            DisplayName = "Plugin",
+                            RuntimeId = "publisher.plugin",
+                        },
+                    },
+                ],
+            },
+            PluginInspectResult = new PluginInspectResult
+            {
+                Ok = true,
+                Plugin = new PluginInspectEntry { Id = "publisher.plugin", Name = "Plugin" },
+                Declared = new PluginDeclaredSurface
+                {
+                    Providers = ["provider.alpha"],
+                    Tools = ["tool.read", "tool.write"],
+                    McpServers = ["server.one"],
+                },
+                ReviewToken = "exact-review-token",
+            },
+        };
+        using var vm = Create(client, ["main"]);
+        vm.Activate("extensions");
+        await WaitUntilAsync(() => !vm.IsLoadingPlugins);
+
+        await vm.SearchPluginsAsync("publisher");
+        var review = await vm.ReviewPluginAsync(Assert.Single(vm.PluginSearchResults));
+
+        Assert.Equal("publisher.plugin", client.LastInspectPluginId);
+        Assert.NotNull(review);
+        Assert.Contains("provider.alpha", review.DeclaredSurfaces);
+        Assert.Contains("tool.read, tool.write", review.DeclaredSurfaces);
+        Assert.Contains("server.one", review.DeclaredSurfaces);
+        Assert.Equal("exact-review-token", review.ReviewToken);
+        Assert.Equal(client.ConnectionEpoch, review.ConnectionEpoch);
+    }
+
+    private static GatewayFeatureSet FeaturesWithPlugins() => new(
+        [
+            "skills.status", "skills.securityVerdicts",
+            "plugins.list", "plugins.search", "plugins.inspect",
+        ],
+        []);
+
     private static SkillStatusEntry Skill(string key, SkillReadinessState readiness) => new()
     {
         SkillKey = key,
@@ -142,6 +227,10 @@ public sealed class ExtensionsPageViewModelTests
         public Func<string?, Task<SkillsStatusReport>> StatusHandler { get; set; } =
             agentId => Task.FromResult(new SkillsStatusReport { AgentId = agentId });
         public SkillsSearchResult SearchResult { get; set; } = new();
+        public PluginsListResult PluginListResult { get; set; } = new();
+        public PluginsSearchResult PluginSearchResult { get; set; } = new();
+        public PluginInspectResult PluginInspectResult { get; set; } = new();
+        public string? LastInspectPluginId { get; private set; }
         public ClawHubSkillInstallRequest? LastInstallRequest { get; private set; }
         public string? LastStatusAgentId { get; private set; }
         public int StatusCalls { get; private set; }
@@ -208,6 +297,15 @@ public sealed class ExtensionsPageViewModelTests
             Task.FromResult(new SkillMutationResult { Ok = true });
         public Task<SkillMutationResult> SetSkillEnabledDetailedAsync(string skillKey, bool enabled, int timeoutMs = 15000) =>
             Task.FromResult(new SkillMutationResult { Ok = true });
+        public Task<PluginsListResult> ListPluginsAsync(int timeoutMs = 15000) =>
+            Task.FromResult(PluginListResult);
+        public Task<PluginsSearchResult> SearchPluginsAsync(string query, int limit = 20, int timeoutMs = 15000) =>
+            Task.FromResult(PluginSearchResult);
+        public Task<PluginInspectResult> InspectPluginAsync(string pluginId, int timeoutMs = 15000)
+        {
+            LastInspectPluginId = pluginId;
+            return Task.FromResult(PluginInspectResult);
+        }
         public void RaiseSkillsChanged() => SkillsChanged?.Invoke(this, EventArgs.Empty);
         public void SetUserRules(IReadOnlyList<UserNotificationRule>? rules) { }
         public void SetPreferStructuredCategories(bool value) { }

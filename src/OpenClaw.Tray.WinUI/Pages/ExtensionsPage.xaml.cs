@@ -13,7 +13,9 @@ public sealed partial class ExtensionsPage : Page
 {
     private ExtensionsPageViewModel? _viewModel;
     private bool _showingInstalledSkills = true;
+    private bool _showingInstalledPlugins = true;
     private SkillReviewPresentation? _skillReview;
+    private PluginReviewPresentation? _pluginReview;
 
     public ExtensionsPage()
     {
@@ -62,6 +64,21 @@ public sealed partial class ExtensionsPage : Page
         PageInfoBar.IsOpen = !string.IsNullOrWhiteSpace(message);
         PageInfoBar.Message = message ?? string.Empty;
         PageInfoBar.Severity = _viewModel.ErrorMessage is null
+            ? InfoBarSeverity.Informational
+            : InfoBarSeverity.Error;
+
+        PluginsProgress.Visibility = _viewModel.IsLoadingPlugins || _viewModel.IsSearchingPlugins
+            ? Visibility.Visible
+            : Visibility.Collapsed;
+        PluginsCountText.Text = _viewModel.PluginCountText;
+        PluginsEmptyState.Visibility = !_viewModel.IsLoadingPlugins &&
+            _showingInstalledPlugins && !_viewModel.HasInstalledPlugins
+                ? Visibility.Visible
+                : Visibility.Collapsed;
+        var pluginMessage = _viewModel.PluginErrorMessage ?? _viewModel.PluginStatusMessage;
+        PluginInfoBar.IsOpen = !string.IsNullOrWhiteSpace(pluginMessage);
+        PluginInfoBar.Message = pluginMessage ?? string.Empty;
+        PluginInfoBar.Severity = _viewModel.PluginErrorMessage is null
             ? InfoBarSeverity.Informational
             : InfoBarSeverity.Error;
     }
@@ -239,5 +256,87 @@ public sealed partial class ExtensionsPage : Page
             return;
         }
         await global::Windows.System.Launcher.LaunchUriAsync(new Uri(canonical));
+    }
+
+    private void OnInstalledPluginsClick(object sender, RoutedEventArgs e)
+    {
+        _showingInstalledPlugins = true;
+        InstalledPluginsPanel.Visibility = Visibility.Visible;
+        DiscoverPluginsPanel.Visibility = Visibility.Collapsed;
+        UpdateState();
+    }
+
+    private void OnDiscoverPluginsClick(object sender, RoutedEventArgs e)
+    {
+        _showingInstalledPlugins = false;
+        InstalledPluginsPanel.Visibility = Visibility.Collapsed;
+        DiscoverPluginsPanel.Visibility = Visibility.Visible;
+        UpdateState();
+    }
+
+    private void OnSearchPluginsClick(object sender, RoutedEventArgs e) =>
+        AsyncEventHandlerGuard.Run(SearchPluginsAsync, new AppLogger(), nameof(OnSearchPluginsClick));
+
+    private void OnPluginSearchKeyDown(object sender, KeyRoutedEventArgs e)
+    {
+        if (e.Key != global::Windows.System.VirtualKey.Enter)
+            return;
+        e.Handled = true;
+        AsyncEventHandlerGuard.Run(SearchPluginsAsync, new AppLogger(), nameof(OnPluginSearchKeyDown));
+    }
+
+    private Task SearchPluginsAsync() =>
+        _viewModel?.SearchPluginsAsync(PluginSearchBox.Text) ?? Task.CompletedTask;
+
+    private void OnReviewInstalledPluginClick(object sender, RoutedEventArgs e) =>
+        AsyncEventHandlerGuard.Run(
+            () => ReviewInstalledPluginAsync(sender),
+            new AppLogger(),
+            nameof(OnReviewInstalledPluginClick));
+
+    private async Task ReviewInstalledPluginAsync(object sender)
+    {
+        if (_viewModel is null || sender is not Button { Tag: PluginListItemPresentation item })
+            return;
+        ApplyPluginReview(await _viewModel.ReviewPluginAsync(item));
+    }
+
+    private void OnReviewSearchPluginClick(object sender, RoutedEventArgs e) =>
+        AsyncEventHandlerGuard.Run(
+            () => ReviewSearchPluginAsync(sender),
+            new AppLogger(),
+            nameof(OnReviewSearchPluginClick));
+
+    private async Task ReviewSearchPluginAsync(object sender)
+    {
+        if (_viewModel is null || sender is not Button { Tag: PluginSearchItemPresentation item })
+            return;
+        ApplyPluginReview(await _viewModel.ReviewPluginAsync(item));
+    }
+
+    private void ApplyPluginReview(PluginReviewPresentation? review)
+    {
+        if (review is null)
+        {
+            UpdateState();
+            return;
+        }
+        _pluginReview = review;
+        _showingInstalledPlugins = false;
+        InstalledPluginsPanel.Visibility = Visibility.Collapsed;
+        DiscoverPluginsPanel.Visibility = Visibility.Visible;
+        PluginReviewName.Text = review.Name;
+        PluginReviewDescription.Text = review.Description;
+        PluginReviewVersion.Text = LocalizationHelper.Format("ExtensionsPage_ReviewVersionFormat", review.Version);
+        PluginReviewOrigin.Text = LocalizationHelper.Format("ExtensionsPage_PluginOriginFormat", review.Origin);
+        PluginReviewSurfaces.Text = review.DeclaredSurfaces;
+        PluginReviewTrust.Text = LocalizationHelper.Format("ExtensionsPage_PluginTrustFormat", review.Trust);
+        PluginReviewPanel.Visibility = Visibility.Visible;
+    }
+
+    private void OnClosePluginReviewClick(object sender, RoutedEventArgs e)
+    {
+        _pluginReview = null;
+        PluginReviewPanel.Visibility = Visibility.Collapsed;
     }
 }
