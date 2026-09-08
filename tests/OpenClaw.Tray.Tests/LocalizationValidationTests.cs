@@ -623,6 +623,10 @@ public class LocalizationValidationTests
         || key.StartsWith("HubWindow_Role_", StringComparison.Ordinal)
         || key.StartsWith("HubWindow_Bell_", StringComparison.Ordinal)
         || key.StartsWith("NotificationsFlyout_", StringComparison.Ordinal)
+        // Extensions hub strings are seeded in English across every locale for the
+        // first Gateway-parity slice. Key parity is enforced now; translations land
+        // together so users never see a partially translated surface.
+        || key.StartsWith("ExtensionsPage_", StringComparison.Ordinal)
         // V2 onboarding redesign strings (V2_*) are intentionally English-only at first
         // ship. They live in V2Strings.DefaultEnUs and the cutover seeded them into all
         // five .resw files with English values. Translations land in a follow-up.

@@ -79,6 +79,7 @@ public partial class App : Application, OpenClawTray.Services.IAppCommands, IPer
             [typeof(Pages.SettingsPage)] = typeof(SettingsPageViewModel),
             [typeof(Pages.PermissionsPage)] = typeof(PermissionsPageViewModel),
             [typeof(Pages.LocalAiPage)] = typeof(LocalAiPageViewModel),
+            [typeof(Pages.ExtensionsPage)] = typeof(ExtensionsPageViewModel),
         };
 
     /// <summary>The root service provider, or null before startup / after shutdown.</summary>
@@ -466,7 +467,11 @@ public partial class App : Application, OpenClawTray.Services.IAppCommands, IPer
             _settings,
             ExecApprovalsStore,
             this,
-            _localAiRuntime);
+            _localAiRuntime,
+            gatewayClientAccessor: () => _connectionManager?.OperatorClient,
+            agentIdsAccessor: () => _appState?.GetAgentIds() ?? ["main"],
+            resourceAccessor: LocalizationHelper.GetString,
+            resourceFormatter: (key, values) => LocalizationHelper.Format(key, values));
 
         var services = new ServiceCollection();
         services.AddOpenClawTrayCore(context);

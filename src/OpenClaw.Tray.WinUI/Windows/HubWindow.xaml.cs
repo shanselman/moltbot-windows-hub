@@ -866,7 +866,7 @@ public sealed partial class HubWindow : WindowEx
 
             NavChat.Visibility = vis;
             NavSessions.Visibility = vis;
-            NavSkills.Visibility = vis;
+            NavExtensions.Visibility = vis;
             NavChannels.Visibility = vis;
             NavInstances.Visibility = vis;
             NavCron.Visibility = vis;
@@ -1088,7 +1088,6 @@ public sealed partial class HubWindow : WindowEx
             case ChannelsPage channels: channels.Initialize(); break;
             case UsagePage usage: usage.Initialize(); break;
             case CronPage cron: cron.Initialize(); break;
-            case SkillsPage skills: skills.Initialize(); break;
             case ConfigPage config:
                 try { config.Initialize(); }
                 catch (Exception ex)

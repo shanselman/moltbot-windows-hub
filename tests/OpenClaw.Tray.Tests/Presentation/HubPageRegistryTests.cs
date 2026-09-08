@@ -13,6 +13,7 @@ public sealed class HubPageRegistryTests
     [InlineData("nodes", "instances")]
     [InlineData("cron", "agent:alpha:cron")]
     [InlineData("workspace", "agent:alpha:workspace")]
+    [InlineData("skills", "extensions")]
     [InlineData("HOME", "HOME")]
     [InlineData("Cron", "Cron")]
     public void NormalizeTag_PreservesExactCaseSensitiveAliases(string tag, string expected)
@@ -32,7 +33,10 @@ public sealed class HubPageRegistryTests
     [InlineData("agent:main", (int)HubPageKind.Workspace)]
     [InlineData("agent:main:sessions", (int)HubPageKind.Sessions)]
     [InlineData("agent:main:agentevents", (int)HubPageKind.AgentEvents)]
-    [InlineData("agent:main:skills", (int)HubPageKind.Skills)]
+    [InlineData("skills", (int)HubPageKind.Extensions)]
+    [InlineData("extensions", (int)HubPageKind.Extensions)]
+    [InlineData("agent:main:skills", (int)HubPageKind.Extensions)]
+    [InlineData("agent:main:extensions", (int)HubPageKind.Extensions)]
     [InlineData("agent:main:cron", (int)HubPageKind.Cron)]
     [InlineData("agent:main:workspace", (int)HubPageKind.Workspace)]
     public void ResolvePage_OwnsDirectLegacyAndAgentMappings(string tag, int expected)
@@ -58,6 +62,7 @@ public sealed class HubPageRegistryTests
     [InlineData("chat")]
     [InlineData("SESSIONS")]
     [InlineData("skills")]
+    [InlineData("extensions")]
     [InlineData("channels")]
     [InlineData("instances")]
     [InlineData("agentevents")]
@@ -100,14 +105,14 @@ public sealed class HubPageRegistryTests
         Assert.Equal(
             new string?[]
             {
-                "connection", "local-ai", "chat", "sessions", "agentevents", "skills",
+                "connection", "local-ai", "chat", "sessions", "agentevents", "extensions",
                 "agent:alpha:cron", "agent:alpha", "channels", "instances", "config",
                 "usage", "bindings", "permissions", "settings", "notifications",
                 "chat", null
             },
             commands.Select(CommandValue).ToArray());
         Assert.Equal(
-            ["🔌", "AI", "💬", "🧠", "🧠", "🧠", "🧠", "🧠", "📡", "📡", "📡", "📡", "📡", "🛡️", "⚙️", "🔔", "💬", "🌐"],
+            ["🔌", "AI", "💬", "🧠", "🧠", "🧩", "🧠", "🧠", "📡", "📡", "📡", "📡", "📡", "🛡️", "⚙️", "🔔", "💬", "🌐"],
             commands.Select(command => command.Icon).ToArray());
         Assert.Equal("Command_GoToConnection_Title", commands[0].Title);
         Assert.Equal("Command_GoToConnection_Subtitle", commands[0].Subtitle);

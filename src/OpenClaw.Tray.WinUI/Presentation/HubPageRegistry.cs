@@ -24,7 +24,7 @@ internal enum HubPageKind
     Debug,
     Sessions,
     AgentEvents,
-    Skills,
+    Extensions,
     Cron,
     Workspace
 }
@@ -141,6 +141,7 @@ internal static class HubPageRegistry
         "nodes" => "instances",
         "cron" => $"agent:{currentAgentId}:cron",
         "workspace" => $"agent:{currentAgentId}:workspace",
+        "skills" => "extensions",
         _ => tag
     };
 
@@ -164,7 +165,7 @@ internal static class HubPageRegistry
         "home" or "general" => HubPageKind.Connection,
         "conversations" or "sessions" => HubPageKind.Sessions,
         "agentevents" => HubPageKind.AgentEvents,
-        "skills" => HubPageKind.Skills,
+        "skills" or "extensions" => HubPageKind.Extensions,
         "cron" => HubPageKind.Cron,
         "workspace" => HubPageKind.Workspace,
         _ when tag?.StartsWith("agent:", StringComparison.Ordinal) == true => ResolveAgentPage(tag),
@@ -181,7 +182,7 @@ internal static class HubPageRegistry
         {
             "sessions" => HubPageKind.Sessions,
             "agentevents" => HubPageKind.AgentEvents,
-            "skills" => HubPageKind.Skills,
+            "skills" or "extensions" => HubPageKind.Extensions,
             "cron" => HubPageKind.Cron,
             "workspace" => HubPageKind.Workspace,
             _ => null
@@ -206,6 +207,7 @@ internal static class HubPageRegistry
             tag.Equals("chat", StringComparison.OrdinalIgnoreCase) ||
             tag.Equals("sessions", StringComparison.OrdinalIgnoreCase) ||
             tag.Equals("skills", StringComparison.OrdinalIgnoreCase) ||
+            tag.Equals("extensions", StringComparison.OrdinalIgnoreCase) ||
             tag.Equals("channels", StringComparison.OrdinalIgnoreCase) ||
             tag.Equals("instances", StringComparison.OrdinalIgnoreCase) ||
             tag.Equals("agentevents", StringComparison.OrdinalIgnoreCase) ||
@@ -238,7 +240,7 @@ internal static class HubPageRegistry
         HubPageKind.Debug => typeof(DebugPage),
         HubPageKind.Sessions => typeof(SessionsPage),
         HubPageKind.AgentEvents => typeof(AgentEventsPage),
-        HubPageKind.Skills => typeof(SkillsPage),
+        HubPageKind.Extensions => typeof(ExtensionsPage),
         HubPageKind.Cron => typeof(CronPage),
         HubPageKind.Workspace => typeof(WorkspacePage),
         _ => null
@@ -254,7 +256,7 @@ internal static class HubPageRegistry
         AddNavigation(commands, context, "💬", "Command_GoToChat", "chat");
         AddNavigation(commands, context, "🧠", "Command_GoToSessions", "sessions");
         AddNavigation(commands, context, "🧠", "Command_GoToAgentEvents", "agentevents");
-        AddNavigation(commands, context, "🧠", "Command_GoToSkills", "skills");
+        AddNavigation(commands, context, "🧩", "Command_GoToSkills", "extensions");
         commands.Add(new HubCommand(
             "🧠",
             Format(context, "Command_GoToCron_Title", context.CurrentAgentId),

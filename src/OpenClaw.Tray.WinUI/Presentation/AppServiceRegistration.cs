@@ -39,6 +39,18 @@ internal static class AppServiceRegistration
         services.AddSingleton(context.PermissionsRuntimeHost);
         if (context.LocalAiRuntime is not null)
             services.AddSingleton(context.LocalAiRuntime);
+        if (context.GatewayClientAccessor is not null &&
+            context.AgentIdsAccessor is not null &&
+            context.ResourceAccessor is not null &&
+            context.ResourceFormatter is not null)
+        {
+            services.AddSingleton<IExtensionsRuntimeSource>(new ExtensionsRuntimeSource(
+                context.GatewayClientAccessor,
+                context.AgentIdsAccessor,
+                context.ResourceAccessor,
+                context.ResourceFormatter));
+            services.AddTransient<ExtensionsPageViewModel>();
+        }
         // Settings facade over the App-owned SettingsManager. Container-owned so it can dispose
         // its Saved-event subscription during shutdown.
         services.AddSingleton<ISettingsStore, SettingsStore>();

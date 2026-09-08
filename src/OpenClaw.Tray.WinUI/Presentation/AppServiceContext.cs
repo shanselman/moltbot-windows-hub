@@ -1,6 +1,7 @@
 using OpenClaw.Shared.ExecApprovals;
 using OpenClaw.Connection.LocalAi;
 using OpenClawTray.Services;
+using OpenClaw.Shared;
 
 namespace OpenClawTray.Presentation;
 
@@ -18,7 +19,11 @@ internal sealed class AppServiceContext
         SettingsManager settings,
         IExecApprovalsPresentationStore execApprovalsStore,
         IPermissionsPageRuntimeHost permissionsRuntimeHost,
-        ILocalAiRuntime? localAiRuntime = null)
+        ILocalAiRuntime? localAiRuntime = null,
+        Func<IOperatorGatewayClient?>? gatewayClientAccessor = null,
+        Func<IReadOnlyList<string>>? agentIdsAccessor = null,
+        Func<string, string>? resourceAccessor = null,
+        Func<string, object?[], string>? resourceFormatter = null)
     {
         Dispatcher = dispatcher ?? throw new ArgumentNullException(nameof(dispatcher));
         AppCommands = appCommands ?? throw new ArgumentNullException(nameof(appCommands));
@@ -26,6 +31,10 @@ internal sealed class AppServiceContext
         ExecApprovalsStore = execApprovalsStore ?? throw new ArgumentNullException(nameof(execApprovalsStore));
         PermissionsRuntimeHost = permissionsRuntimeHost ?? throw new ArgumentNullException(nameof(permissionsRuntimeHost));
         LocalAiRuntime = localAiRuntime;
+        GatewayClientAccessor = gatewayClientAccessor;
+        AgentIdsAccessor = agentIdsAccessor;
+        ResourceAccessor = resourceAccessor;
+        ResourceFormatter = resourceFormatter;
     }
 
     public IUiDispatcher Dispatcher { get; }
@@ -34,4 +43,8 @@ internal sealed class AppServiceContext
     public IExecApprovalsPresentationStore ExecApprovalsStore { get; }
     public IPermissionsPageRuntimeHost PermissionsRuntimeHost { get; }
     public ILocalAiRuntime? LocalAiRuntime { get; }
+    public Func<IOperatorGatewayClient?>? GatewayClientAccessor { get; }
+    public Func<IReadOnlyList<string>>? AgentIdsAccessor { get; }
+    public Func<string, string>? ResourceAccessor { get; }
+    public Func<string, object?[], string>? ResourceFormatter { get; }
 }

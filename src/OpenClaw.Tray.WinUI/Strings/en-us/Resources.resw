@@ -187,7 +187,7 @@
     <value>Open channel setup for schema-driven auth, QR, login, and dashboard flows where available.</value>
   </data>
   <data name="StatusSkillsTitle.Text" xml:space="preserve">
-    <value>Skills</value>
+    <value>Extensions</value>
   </data>
   <data name="StatusSkillsDescription.Text" xml:space="preserve">
     <value>Open gateway skills configuration when the connected gateway supports it.</value>
@@ -6215,10 +6215,10 @@ Make sure the gateway is running.</value>
     <value>Go to Settings</value>
   </data>
   <data name="Command_GoToSkills_Subtitle" xml:space="preserve">
-    <value>Registered skills</value>
+    <value>Skills and plugins</value>
   </data>
   <data name="Command_GoToSkills_Title" xml:space="preserve">
-    <value>Go to Skills</value>
+    <value>Go to Extensions</value>
   </data>
   <data name="Command_GoToUsage_Subtitle" xml:space="preserve">
     <value>Usage statistics</value>
@@ -7174,4 +7174,72 @@ Make sure the gateway is running.</value>
   <data name="LocalAiPage_UnavailableProbeTitle" xml:space="preserve"><value>Local AI availability could not be verified</value></data>
   <data name="LocalAiPage_CheckingTitle" xml:space="preserve"><value>Checking Local AI availability</value></data>
   <data name="LocalAiPage_CheckingMessage" xml:space="preserve"><value>OpenClaw is verifying whether this device can run Local AI. This only takes a moment.</value></data>
++  <data name="ExtensionsPage_Title.Text" xml:space="preserve"><value>Extensions</value></data>
+  <data name="ExtensionsPage_Description.Text" xml:space="preserve"><value>Browse, install, and manage skills and plugins for your Gateway.</value></data>
+  <data name="ExtensionsPage_SkillsTab.Header" xml:space="preserve"><value>Skills</value></data>
+  <data name="ExtensionsPage_PluginsTab.Header" xml:space="preserve"><value>Plugins</value></data>
+  <data name="ExtensionsPage_InstalledTab.Content" xml:space="preserve"><value>Installed</value></data>
+  <data name="ExtensionsPage_DiscoverTab.Content" xml:space="preserve"><value>Discover</value></data>
+  <data name="ExtensionsPage_Agent.Header" xml:space="preserve"><value>Agent</value></data>
+  <data name="ExtensionsPage_FilterAll.Content" xml:space="preserve"><value>All</value></data>
+  <data name="ExtensionsPage_FilterReady.Content" xml:space="preserve"><value>Ready</value></data>
+  <data name="ExtensionsPage_FilterNeedsSetup.Content" xml:space="preserve"><value>Needs setup</value></data>
+  <data name="ExtensionsPage_FilterDisabled.Content" xml:space="preserve"><value>Disabled</value></data>
+  <data name="ExtensionsPage_UpdateAction.Content" xml:space="preserve"><value>Update</value></data>
+  <data name="ExtensionsPage_OpenClawHubAction.Content" xml:space="preserve"><value>Open in ClawHub</value></data>
+  <data name="ExtensionsPage_OpenAuditAction.Content" xml:space="preserve"><value>Security audit</value></data>
+  <data name="ExtensionsPage_NoInstalledSkills.Text" xml:space="preserve"><value>No skills match this view.</value></data>
+  <data name="ExtensionsPage_SearchSkills.PlaceholderText" xml:space="preserve"><value>Search ClawHub skills</value></data>
+  <data name="ExtensionsPage_SearchSkills.AutomationProperties.Name" xml:space="preserve"><value>Search ClawHub skills</value></data>
+  <data name="ExtensionsPage_SearchAction.Content" xml:space="preserve"><value>Search</value></data>
+  <data name="ExtensionsPage_ReviewAction.Content" xml:space="preserve"><value>Review</value></data>
+  <data name="ExtensionsPage_PluginsComingNext.Text" xml:space="preserve"><value>Plugin catalog and management are being added next.</value></data>
+  <data name="ExtensionsPage_SkillsCountFormat" xml:space="preserve"><value>{0} shown, {1} installed</value></data>
+  <data name="ExtensionsPage_Error_Disconnected" xml:space="preserve"><value>Connect to a Gateway to manage extensions.</value></data>
+  <data name="ExtensionsPage_SkillsUpgradeRequired" xml:space="preserve"><value>This Gateway does not advertise the required Skills APIs. Upgrade the Gateway to browse or manage skills here.</value></data>
+  <data name="ExtensionsPage_AdminRequired" xml:space="preserve"><value>Read-only view. Reconnect with operator.admin scope to install or change extensions.</value></data>
+  <data name="ExtensionsPage_Error_LoadFormat" xml:space="preserve"><value>Could not load skills: {0}</value></data>
+  <data name="ExtensionsPage_Error_SearchFormat" xml:space="preserve"><value>Could not search skills: {0}</value></data>
+  <data name="ExtensionsPage_Error_DetailFormat" xml:space="preserve"><value>Could not load skill details: {0}</value></data>
+  <data name="ExtensionsPage_Error_ActionFormat" xml:space="preserve"><value>The action failed: {0}</value></data>
+  <data name="ExtensionsPage_VersionUnknown" xml:space="preserve"><value>Version unknown</value></data>
+  <data name="ExtensionsPage_TrustUnknown" xml:space="preserve"><value>Trust not reported</value></data>
+  <data name="ExtensionsPage_NoSearchResults" xml:space="preserve"><value>No skills matched your search.</value></data>
+  <data name="ExtensionsPage_SearchIdentityUpgradeRequired" xml:space="preserve"><value>Some results cannot be installed safely because the Gateway did not provide a source-qualified install reference. Upgrade the Gateway.</value></data>
+  <data name="ExtensionsPage_PublisherUnknown" xml:space="preserve"><value>Unknown publisher</value></data>
+  <data name="ExtensionsPage_UnscannedMetadata" xml:space="preserve"><value>Detailed metadata is unavailable for this install-only result.</value></data>
+  <data name="ExtensionsPage_UnscannedWarning" xml:space="preserve"><value>The Gateway marks this as an install-only result. Its detailed metadata was not scanned. Install only if you trust the publisher and package.</value></data>
+  <data name="ExtensionsPage_ActionFailed" xml:space="preserve"><value>The Gateway did not complete the action.</value></data>
+  <data name="ExtensionsPage_InstallSucceeded" xml:space="preserve"><value>Skill installed.</value></data>
+  <data name="ExtensionsPage_UpdateSucceeded" xml:space="preserve"><value>Skill updated.</value></data>
+  <data name="ExtensionsPage_ActionSucceeded" xml:space="preserve"><value>Skill changed.</value></data>
+  <data name="ExtensionsPage_ActionUnconfirmed" xml:space="preserve"><value>The connection changed before the result was confirmed. The installed list was refreshed; check its current state.</value></data>
+  <data name="ExtensionsPage_InstallPolicyBlockedFormat" xml:space="preserve"><value>The Gateway blocked this skill under its install policy: {0}</value></data>
+  <data name="ExtensionsPage_SafeUpdateUnavailable" xml:space="preserve"><value>This skill cannot be updated safely because its source-qualified reference is unavailable.</value></data>
+  <data name="ExtensionsPage_EnableAction" xml:space="preserve"><value>Enable</value></data>
+  <data name="ExtensionsPage_DisableAction" xml:space="preserve"><value>Disable</value></data>
+  <data name="ExtensionsPage_ReadinessReady" xml:space="preserve"><value>Ready</value></data>
+  <data name="ExtensionsPage_ReadinessDisabled" xml:space="preserve"><value>Disabled</value></data>
+  <data name="ExtensionsPage_ReadinessBlocked" xml:space="preserve"><value>Blocked</value></data>
+  <data name="ExtensionsPage_ReadinessIncompatible" xml:space="preserve"><value>Incompatible</value></data>
+  <data name="ExtensionsPage_ReadinessNeedsSetup" xml:space="preserve"><value>Needs setup</value></data>
+  <data name="ExtensionsPage_NoSetupNeeded" xml:space="preserve"><value>Ready for this agent.</value></data>
+  <data name="ExtensionsPage_DisabledDescription" xml:space="preserve"><value>Disabled for this Gateway.</value></data>
+  <data name="ExtensionsPage_BlockedDescription" xml:space="preserve"><value>Blocked by the Gateway or agent policy.</value></data>
+  <data name="ExtensionsPage_IncompatibleDescription" xml:space="preserve"><value>Not compatible with this platform.</value></data>
+  <data name="ExtensionsPage_MissingRequirementsFormat" xml:space="preserve"><value>Missing requirements: {0} command tools, {1} environment values, {2} configuration values.</value></data>
+  <data name="ExtensionsPage_SecurityChecked" xml:space="preserve"><value>Security checked</value></data>
+  <data name="ExtensionsPage_SecurityWarning" xml:space="preserve"><value>Security warning</value></data>
+  <data name="ExtensionsPage_MetadataUnavailable" xml:space="preserve"><value>Compatibility metadata unavailable.</value></data>
+  <data name="ExtensionsPage_MetadataFormat" xml:space="preserve"><value>Platforms: {0}. Systems: {1}.</value></data>
+  <data name="ExtensionsPage_ReviewPublisherFormat" xml:space="preserve"><value>Publisher: {0}</value></data>
+  <data name="ExtensionsPage_ReviewVersionFormat" xml:space="preserve"><value>Version: {0}</value></data>
+  <data name="ExtensionsPage_InstallAction" xml:space="preserve"><value>Install</value></data>
+  <data name="ExtensionsPage_CancelAction" xml:space="preserve"><value>Cancel</value></data>
+  <data name="ExtensionsPage_CloseAction" xml:space="preserve"><value>Close</value></data>
+  <data name="ExtensionsPage_ActionCompleteTitle" xml:space="preserve"><value>Action complete</value></data>
+  <data name="ExtensionsPage_ActionCouldNotCompleteTitle" xml:space="preserve"><value>Action could not complete</value></data>
+  <data name="ExtensionsPage_UnscannedAcknowledge.Content" xml:space="preserve"><value>I understand that detailed metadata was not scanned.</value></data>
+  <data name="ExtensionsPage_InstallActionButton.Content" xml:space="preserve"><value>Install</value></data>
+  <data name="ExtensionsPage_CancelActionButton.Content" xml:space="preserve"><value>Cancel</value></data>
 </root>

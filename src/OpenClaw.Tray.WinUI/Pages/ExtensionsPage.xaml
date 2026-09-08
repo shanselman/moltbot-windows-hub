@@ -1,0 +1,209 @@
+<?xml version="1.0" encoding="utf-8"?>
+<Page
+    x:Class="OpenClawTray.Pages.ExtensionsPage"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+
+    <Grid Padding="24" MaxWidth="1000" HorizontalAlignment="Stretch">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="*"/>
+        </Grid.RowDefinitions>
+
+        <StackPanel Spacing="4" Margin="0,0,0,16">
+            <TextBlock x:Uid="ExtensionsPage_Title" Text="Extensions"
+                       AutomationProperties.AutomationId="ExtensionsPageMarker"
+                       Style="{StaticResource TitleTextBlockStyle}"/>
+            <TextBlock x:Uid="ExtensionsPage_Description"
+                       Text="Browse, install, and manage skills and plugins for your Gateway."
+                       Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                       TextWrapping="Wrap"/>
+        </StackPanel>
+
+        <InfoBar x:Name="PageInfoBar" Grid.Row="1" Margin="0,0,0,12"
+                 IsClosable="True" IsOpen="False" Severity="Informational"/>
+
+        <TabView x:Name="ExtensionsTabs" Grid.Row="2" IsAddTabButtonVisible="False">
+            <TabViewItem x:Uid="ExtensionsPage_SkillsTab" Header="Skills" IsClosable="False">
+                <Grid Padding="0,12,0,0">
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="Auto"/>
+                        <RowDefinition Height="Auto"/>
+                        <RowDefinition Height="*"/>
+                    </Grid.RowDefinitions>
+
+                    <Grid ColumnSpacing="12">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="Auto"/>
+                            <ColumnDefinition Width="Auto"/>
+                            <ColumnDefinition Width="*"/>
+                            <ColumnDefinition Width="Auto"/>
+                        </Grid.ColumnDefinitions>
+                        <Button x:Uid="ExtensionsPage_InstalledTab" x:Name="InstalledSkillsButton"
+                                Content="Installed" Click="OnInstalledSkillsClick"/>
+                        <Button x:Uid="ExtensionsPage_DiscoverTab" x:Name="DiscoverSkillsButton"
+                                Grid.Column="1" Content="Discover" Click="OnDiscoverSkillsClick"/>
+                        <ComboBox x:Uid="ExtensionsPage_Agent" x:Name="AgentCombo"
+                                  Grid.Column="3" Header="Agent" MinWidth="180"
+                                  SelectionChanged="OnAgentSelectionChanged"/>
+                    </Grid>
+
+                    <ProgressBar x:Name="SkillsProgress" Grid.Row="1" Margin="0,10,0,0"
+                                 IsIndeterminate="True" Visibility="Collapsed"/>
+
+                    <Grid x:Name="InstalledSkillsPanel" Grid.Row="2" Margin="0,12,0,0">
+                        <Grid.RowDefinitions>
+                            <RowDefinition Height="Auto"/>
+                            <RowDefinition Height="Auto"/>
+                            <RowDefinition Height="*"/>
+                        </Grid.RowDefinitions>
+                        <Grid ColumnSpacing="12">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*"/>
+                                <ColumnDefinition Width="Auto"/>
+                            </Grid.ColumnDefinitions>
+                            <TextBlock x:Name="SkillsCountText" VerticalAlignment="Center"
+                                       Foreground="{ThemeResource TextFillColorSecondaryBrush}"/>
+                            <ComboBox x:Name="SkillFilterCombo" Grid.Column="1" MinWidth="160"
+                                      SelectionChanged="OnSkillFilterChanged">
+                                <ComboBoxItem x:Uid="ExtensionsPage_FilterAll" Content="All" Tag="All"/>
+                                <ComboBoxItem x:Uid="ExtensionsPage_FilterReady" Content="Ready" Tag="Ready"/>
+                                <ComboBoxItem x:Uid="ExtensionsPage_FilterNeedsSetup" Content="Needs setup" Tag="NeedsSetup"/>
+                                <ComboBoxItem x:Uid="ExtensionsPage_FilterDisabled" Content="Disabled" Tag="Disabled"/>
+                            </ComboBox>
+                        </Grid>
+
+                        <ListView x:Name="InstalledSkillsList" Grid.Row="1" Margin="0,10,0,0"
+                                  ItemsSource="{Binding VisibleSkills}">
+                            <ListView.ItemTemplate>
+                                <DataTemplate>
+                                    <Border Background="{ThemeResource CardBackgroundFillColorDefaultBrush}"
+                                            CornerRadius="8" Padding="16" Margin="0,0,0,8"
+                                            HorizontalAlignment="Stretch">
+                                        <Grid ColumnSpacing="12" RowSpacing="5">
+                                            <Grid.ColumnDefinitions>
+                                                <ColumnDefinition Width="*"/>
+                                                <ColumnDefinition Width="Auto"/>
+                                            </Grid.ColumnDefinitions>
+                                            <TextBlock Text="{Binding Name}" FontWeight="SemiBold"
+                                                       TextWrapping="Wrap"/>
+                                            <TextBlock Grid.Column="1" Text="{Binding ReadinessLabel}"
+                                                       Foreground="{ThemeResource AccentTextFillColorPrimaryBrush}"/>
+                                            <TextBlock Grid.Row="1" Grid.ColumnSpan="2" Text="{Binding Description}"
+                                                       TextWrapping="Wrap" MaxLines="3"
+                                                       Foreground="{ThemeResource TextFillColorSecondaryBrush}"/>
+                                            <TextBlock Grid.Row="2" Grid.ColumnSpan="2" Text="{Binding RequirementsSummary}"
+                                                       TextWrapping="Wrap"
+                                                       Foreground="{ThemeResource TextFillColorTertiaryBrush}"/>
+                                            <StackPanel Grid.Row="3" Grid.ColumnSpan="2" Orientation="Horizontal" Spacing="8">
+                                                <Button Content="{Binding ToggleLabel}" Tag="{Binding}"
+                                                        IsEnabled="{Binding CanToggle}" Click="OnToggleSkillClick"/>
+                                                <Button x:Uid="ExtensionsPage_UpdateAction" Content="Update" Tag="{Binding}"
+                                                        IsEnabled="{Binding CanUpdate}" Click="OnUpdateSkillClick"/>
+                                                <HyperlinkButton x:Uid="ExtensionsPage_OpenClawHubAction" Content="Open in ClawHub"
+                                                                 Tag="{Binding SafeSkillUrl}" IsEnabled="{Binding HasSkillUrl}"
+                                                                 Click="OnOpenExternalLinkClick"/>
+                                                <HyperlinkButton x:Uid="ExtensionsPage_OpenAuditAction" Content="Security audit"
+                                                                 Tag="{Binding SafeSecurityAuditUrl}" IsEnabled="{Binding HasSecurityAuditUrl}"
+                                                                 Click="OnOpenExternalLinkClick"/>
+                                                <TextBlock Text="{Binding SecurityLabel}" VerticalAlignment="Center"
+                                                           Foreground="{ThemeResource TextFillColorSecondaryBrush}"/>
+                                            </StackPanel>
+                                        </Grid>
+                                    </Border>
+                                </DataTemplate>
+                            </ListView.ItemTemplate>
+                        </ListView>
+
+                        <StackPanel x:Name="SkillsEmptyState" Grid.Row="1" Visibility="Collapsed"
+                                    HorizontalAlignment="Center" Margin="0,48,0,0" Spacing="8">
+                            <FontIcon Glyph="&#xEA86;" FontSize="42" HorizontalAlignment="Center"
+                                      Foreground="{ThemeResource TextFillColorSecondaryBrush}"/>
+                            <TextBlock x:Uid="ExtensionsPage_NoInstalledSkills" Text="No skills match this view."
+                                       HorizontalAlignment="Center"/>
+                        </StackPanel>
+                    </Grid>
+
+                    <Grid x:Name="DiscoverSkillsPanel" Grid.Row="2" Margin="0,12,0,0" Visibility="Collapsed">
+                        <Grid.RowDefinitions>
+                            <RowDefinition Height="Auto"/>
+                            <RowDefinition Height="*"/>
+                        </Grid.RowDefinitions>
+                        <Grid ColumnSpacing="8">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*"/>
+                                <ColumnDefinition Width="Auto"/>
+                            </Grid.ColumnDefinitions>
+                            <TextBox x:Uid="ExtensionsPage_SearchSkills" x:Name="SkillSearchBox"
+                                     PlaceholderText="Search ClawHub skills" AutomationProperties.Name="Search ClawHub skills"
+                                     KeyDown="OnSkillSearchKeyDown"/>
+                            <Button x:Uid="ExtensionsPage_SearchAction" Grid.Column="1" Content="Search"
+                                    Click="OnSearchSkillsClick"/>
+                        </Grid>
+                        <Border x:Name="SkillReviewPanel" Grid.Row="1" Visibility="Collapsed"
+                                Background="{ThemeResource CardBackgroundFillColorDefaultBrush}"
+                                CornerRadius="8" Padding="16" Margin="0,12,0,0">
+                            <StackPanel Spacing="8">
+                                <TextBlock x:Name="SkillReviewName" FontWeight="SemiBold" FontSize="18"/>
+                                <TextBlock x:Name="SkillReviewSummary" TextWrapping="Wrap"/>
+                                <TextBlock x:Name="SkillReviewPublisher" TextWrapping="Wrap"/>
+                                <TextBlock x:Name="SkillReviewVersion"/>
+                                <TextBlock x:Name="SkillReviewMetadata" TextWrapping="Wrap"
+                                           Foreground="{ThemeResource TextFillColorSecondaryBrush}"/>
+                                <InfoBar x:Name="UnscannedSkillWarning" IsOpen="False" IsClosable="False"
+                                         Severity="Warning"/>
+                                <CheckBox x:Uid="ExtensionsPage_UnscannedAcknowledge" x:Name="UnscannedSkillAcknowledge"
+                                          Content="I understand that detailed metadata was not scanned."
+                                          Visibility="Collapsed" Checked="OnUnscannedAcknowledgeChanged"
+                                          Unchecked="OnUnscannedAcknowledgeChanged"/>
+                                <StackPanel Orientation="Horizontal" Spacing="8">
+                                    <Button x:Uid="ExtensionsPage_InstallActionButton" x:Name="InstallReviewedSkillButton"
+                                            Content="Install" Click="OnInstallReviewedSkillClick"/>
+                                    <Button x:Uid="ExtensionsPage_CancelActionButton" Content="Cancel"
+                                            Click="OnCancelSkillReviewClick"/>
+                                </StackPanel>
+                            </StackPanel>
+                        </Border>
+                        <ListView Grid.Row="2" Margin="0,10,0,0" ItemsSource="{Binding SkillSearchResults}">
+                            <ListView.ItemTemplate>
+                                <DataTemplate>
+                                    <Border Background="{ThemeResource CardBackgroundFillColorDefaultBrush}"
+                                            CornerRadius="8" Padding="16" Margin="0,0,0,8"
+                                            HorizontalAlignment="Stretch">
+                                        <Grid ColumnSpacing="12" RowSpacing="5">
+                                            <Grid.ColumnDefinitions>
+                                                <ColumnDefinition Width="*"/>
+                                                <ColumnDefinition Width="Auto"/>
+                                            </Grid.ColumnDefinitions>
+                                            <TextBlock Text="{Binding Name}" FontWeight="SemiBold"/>
+                                            <Button x:Uid="ExtensionsPage_ReviewAction" Grid.Column="1" Grid.RowSpan="3"
+                                                    Content="Review" Tag="{Binding}" IsEnabled="{Binding CanReview}"
+                                                    Click="OnReviewSkillClick" VerticalAlignment="Center"/>
+                                            <TextBlock Grid.Row="1" Text="{Binding Summary}" TextWrapping="Wrap" MaxLines="3"
+                                                       Foreground="{ThemeResource TextFillColorSecondaryBrush}"/>
+                                            <StackPanel Grid.Row="2" Orientation="Horizontal" Spacing="12">
+                                                <TextBlock Text="{Binding VersionLabel}"/>
+                                                <TextBlock Text="{Binding TrustLabel}"
+                                                           Foreground="{ThemeResource TextFillColorSecondaryBrush}"/>
+                                            </StackPanel>
+                                        </Grid>
+                                    </Border>
+                                </DataTemplate>
+                            </ListView.ItemTemplate>
+                        </ListView>
+                    </Grid>
+                </Grid>
+            </TabViewItem>
+
+            <TabViewItem x:Uid="ExtensionsPage_PluginsTab" Header="Plugins" IsClosable="False">
+                <StackPanel Padding="0,28,0,0" HorizontalAlignment="Center" Spacing="8">
+                    <FontIcon Glyph="&#xE74C;" FontSize="42" HorizontalAlignment="Center"
+                              Foreground="{ThemeResource TextFillColorSecondaryBrush}"/>
+                    <TextBlock x:Uid="ExtensionsPage_PluginsComingNext" Text="Plugin catalog and management are being added next."
+                               TextWrapping="Wrap" TextAlignment="Center" MaxWidth="420"/>
+                </StackPanel>
+            </TabViewItem>
+        </TabView>
+    </Grid>
+</Page>

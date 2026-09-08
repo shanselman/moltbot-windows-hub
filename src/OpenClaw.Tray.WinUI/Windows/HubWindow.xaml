@@ -426,7 +426,7 @@
             <NavigationViewItem x:Uid="HubWindow_NavigationViewItem_91" x:Name="NavSessions" Tag="sessions" Content="Sessions">
                 <NavigationViewItem.Icon><ImageIcon Source="{StaticResource Sessions_Icon}" AutomationProperties.AccessibilityView="Raw"/></NavigationViewItem.Icon>
             </NavigationViewItem>
-            <NavigationViewItem x:Uid="HubWindow_NavigationViewItem_97" x:Name="NavSkills" Tag="skills" Content="Skills">
+            <NavigationViewItem x:Uid="HubWindow_NavigationViewItem_97" x:Name="NavExtensions" Tag="extensions" Content="Extensions">
                 <NavigationViewItem.Icon><ImageIcon Source="{StaticResource Skills_Icon}" AutomationProperties.AccessibilityView="Raw"/></NavigationViewItem.Icon>
             </NavigationViewItem>
             <NavigationViewItem x:Uid="HubWindow_NavigationViewItem_109" x:Name="NavChannels" Tag="channels" Content="Channels">

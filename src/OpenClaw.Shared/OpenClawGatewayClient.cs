@@ -12,7 +12,7 @@ using System.Threading.Tasks;
 
 namespace OpenClaw.Shared;
 
-public partial class OpenClawGatewayClient : WebSocketClientBase, IOperatorGatewayClient
+public partial class OpenClawGatewayClient : WebSocketClientBase, IOperatorGatewayClient, ISkillsGatewayEvents
 {
     private const string OperatorClientId = "cli";
     private const string OperatorClientMode = "cli";
@@ -228,6 +228,7 @@ public partial class OpenClawGatewayClient : WebSocketClientBase, IOperatorGatew
     public event EventHandler<JsonElement>? CronStatusUpdated;
     public event EventHandler<JsonElement>? CronRunsUpdated;
     public event EventHandler<JsonElement>? SkillsStatusUpdated;
+    public event EventHandler? SkillsChanged;
     public event EventHandler<JsonElement>? ConfigUpdated;
     public event EventHandler<JsonElement>? ConfigSchemaUpdated;
 
@@ -3379,6 +3380,9 @@ public partial class OpenClawGatewayClient : WebSocketClientBase, IOperatorGatew
                 // Gateway pushes cron events when jobs run/change — refresh the list
                 _ = RequestCronListAsync();
                 _ = RequestCronStatusAsync();
+                break;
+            case "skills.changed":
+                SkillsChanged?.Invoke(this, EventArgs.Empty);
                 break;
             case "exec.approval.requested":
             case "exec.approval.resolved":
