@@ -278,7 +278,7 @@ public sealed class SetupWizardRunner
                     !ct.IsCancellationRequested &&
                     isManagedLocalGateway &&
                     GatewayWizardRestartRecoveryPolicy.IsExpectedTerminalRestart(
-                        _ctx.Config.Gateway.Version,
+                        _ctx.Config.Gateway.InstalledVersion,
                         stepId,
                         ex,
                         stepTitle,

@@ -404,40 +404,40 @@ public sealed class ProgramArgumentTests : IDisposable
     }
 
     [Fact]
-    public async Task Main_RejectsRuntimeRejectedReleaseWithoutValidationFlag()
+    public async Task Main_AcceptsOfficialVersionPinWithoutValidationFlag()
     {
         var configPath = Path.Combine(_tempDir, "candidate.json");
         await File.WriteAllTextAsync(
             configPath,
-            """{"Gateway":{"Selection":"exact","Version":"2026.7.1"}}""");
+            """{"Gateway":{"Version":"2026.8.1"}}""");
 
         var exitCode = await Program.Main(["--config", configPath, "--dry-run"]);
 
-        Assert.Equal(2, exitCode);
+        Assert.Equal(0, exitCode);
     }
 
     [Fact]
-    public async Task Main_DoesNotAllowValidationFlagToOverrideRuntimeRejection()
+    public async Task Main_AllowsExactOfficialVersionForCandidateValidation()
     {
         var configPath = Path.Combine(_tempDir, "candidate-validation.json");
         await File.WriteAllTextAsync(
             configPath,
-            """{"Gateway":{"Selection":"exact","Version":"2026.7.1"}}""");
+            """{"Gateway":{"Version":"2026.8.1"}}""");
 
         var exitCode = await Program.Main(
             ["--config", configPath, "--dry-run", "--validate-gateway-candidate"]);
 
-        Assert.Equal(2, exitCode);
+        Assert.Equal(0, exitCode);
     }
 
     [Fact]
-    public async Task Main_RejectsUnembeddedCandidateWithValidationFlag()
+    public async Task Main_AcceptsExactPublishedCandidateWithValidationFlag()
     {
         const string version = "2026.8.1";
         var configPath = Path.Combine(_tempDir, "external-candidate.json");
         await File.WriteAllTextAsync(
             configPath,
-            $"{{\"Gateway\":{{\"Selection\":\"exact\",\"Version\":\"{version}\"}}}}");
+            $"{{\"Gateway\":{{\"Version\":\"{version}\"}}}}");
 
         var exitCode = await Program.Main(
             [
@@ -446,7 +446,7 @@ public sealed class ProgramArgumentTests : IDisposable
                 "--validate-gateway-candidate"
             ]);
 
-        Assert.Equal(2, exitCode);
+        Assert.Equal(0, exitCode);
     }
 
     [Fact]
@@ -457,7 +457,7 @@ public sealed class ProgramArgumentTests : IDisposable
         var packagePath = Path.Combine(_tempDir, "openclaw-current.tgz");
         await File.WriteAllTextAsync(
             configPath,
-            $"{{\"Gateway\":{{\"Selection\":\"exact\",\"Version\":\"{version}\"}}}}");
+            $"{{\"Gateway\":{{\"Version\":\"{version}\"}}}}");
         await File.WriteAllBytesAsync(packagePath, [1, 2, 3]);
 
         var exitCode = await Program.Main(
@@ -492,33 +492,10 @@ public sealed class ProgramArgumentTests : IDisposable
     }
 
     [Fact]
-    public async Task Main_DoesNotAllowCandidatePackageToOverrideEmbeddedRejection()
-    {
-        var configPath = Path.Combine(_tempDir, "rejected-package-candidate.json");
-        var packagePath = Path.Combine(_tempDir, "openclaw-current.tgz");
-        await File.WriteAllTextAsync(
-            configPath,
-            $"{{\"Gateway\":{{\"Selection\":\"exact\",\"Version\":\"{GatewayReleasePolicy.RuntimeRejectedVersion}\"}}}}");
-        await File.WriteAllBytesAsync(packagePath, [1, 2, 3]);
-
-        var exitCode = await Program.Main(
-            [
-                "--config", configPath,
-                "--dry-run",
-                "--headless",
-                "--rollback-on-failure",
-                "--validate-gateway-candidate",
-                "--gateway-candidate-package", packagePath
-            ]);
-
-        Assert.Equal(2, exitCode);
-    }
-
-    [Fact]
     public void SerializeJsonOutput_IncludesRequiresRestart()
     {
         var config = new SetupConfig();
-        GatewayReleasePolicy.ResolveAndApply(config);
+        GatewayInstallPolicy.ValidateAndApply(config);
         var result = new PipelineResult(PipelineOutcome.Failed, "ensure-wsl-platform")
         {
             RequiresRestart = true,
@@ -528,42 +505,5 @@ public sealed class ProgramArgumentTests : IDisposable
             Program.SerializeJsonOutput(result, config, "journal.jsonl"));
         Assert.True(document.RootElement.TryGetProperty("requiresRestart", out var requiresRestart));
         Assert.True(requiresRestart.GetBoolean());
-    }
-
-    [Fact]
-    public void CompatibilityFallbackMessage_NamesExactFallbackAndExplicitSelection()
-    {
-        var config = new SetupConfig();
-        GatewayReleasePolicy.ResolveAndApply(config);
-
-        var message = Program.BuildCompatibilityFallbackMessage(
-            config,
-            GatewayCompatibilityFailureKind.ProtocolMismatch);
-
-        Assert.Contains(GatewayReleasePolicy.FallbackVersion!, message, StringComparison.Ordinal);
-        Assert.Contains("Gateway.Selection", message, StringComparison.Ordinal);
-        Assert.Contains("\"fallback\"", message, StringComparison.Ordinal);
-
-        Assert.True(GatewayReleasePolicy.TryApplyFallback(config, out _));
-        Assert.Contains(
-            "No additional validated fallback",
-            Program.BuildCompatibilityFallbackMessage(
-                config,
-                GatewayCompatibilityFailureKind.ProtocolMismatch),
-            StringComparison.Ordinal);
-    }
-
-    [Fact]
-    public void CompatibilityFallbackMessage_DoesNotOfferFallbackForRuntimeMismatch()
-    {
-        var config = new SetupConfig();
-        GatewayReleasePolicy.ResolveAndApply(config);
-
-        var message = Program.BuildCompatibilityFallbackMessage(
-            config,
-            GatewayCompatibilityFailureKind.InstalledRuntimeMismatch);
-
-        Assert.DoesNotContain("retry explicitly", message, StringComparison.OrdinalIgnoreCase);
-        Assert.Contains("No additional validated fallback", message, StringComparison.Ordinal);
     }
 }

@@ -79,6 +79,14 @@ public class RevocationAndRecoveryTests
             Assert.True(credentials.HasOperatorToken, $"Expected replacement operator token in {credentials.IdentityDir}");
             Assert.True(credentials.HasNodeToken, $"Expected replacement node token in {credentials.IdentityDir}");
 
+            var nodeRequestId = await WaitForFirstPendingNodeRequestIdAsync(env);
+            var approveNode = await _fixture.RunInWslAsync(
+                $"openclaw nodes approve {ShellSingleQuote(nodeRequestId)} --json",
+                TimeSpan.FromSeconds(30),
+                env);
+            AssertCommandSucceeded(approveNode, "approve replacement node command trust");
+            Console.WriteLine($"[E2E] approve replacement node command trust:\n{approveNode.Stdout}");
+
             await _fixture.WaitForConnectionReady(TimeSpan.FromSeconds(120));
             await _fixture.WaitForNodeListReady(TimeSpan.FromSeconds(90));
             using var statusDoc = await _fixture.Client!.CallToolExpectSuccessAsync("app.status");
@@ -116,7 +124,6 @@ public class RevocationAndRecoveryTests
         Assert.True(root.TryGetProperty("operatorScopes", out var scopes), $"operatorScopes missing from app.status: {rawJson}");
         var values = ReadStringArray(scopes);
         Assert.Contains(values, scope => string.Equals(scope, "operator.admin", StringComparison.OrdinalIgnoreCase));
-        Assert.Contains(values, scope => string.Equals(scope, "operator.pairing", StringComparison.OrdinalIgnoreCase));
     }
 
     private async Task AssertGatewayCliStateHealthy()
@@ -185,6 +192,28 @@ public class RevocationAndRecoveryTests
         throw new TimeoutException($"Expected a pending replacement device approval. Last response: {lastOutput}");
     }
 
+    private async Task<string> WaitForFirstPendingNodeRequestIdAsync(Dictionary<string, string> env)
+    {
+        var deadline = DateTime.UtcNow.AddSeconds(45);
+        string lastOutput = "<none>";
+        while (DateTime.UtcNow < deadline)
+        {
+            var pendingNodes = await _fixture.RunInWslAsync(
+                "openclaw nodes pending --json",
+                TimeSpan.FromSeconds(30),
+                env);
+            AssertCommandSucceeded(pendingNodes, "list pending node command-trust approval after replacement");
+            lastOutput = pendingNodes.Stdout;
+            var requestId = TryReadFirstPendingNodeRequestId(lastOutput);
+            if (!string.IsNullOrWhiteSpace(requestId))
+                return requestId;
+
+            await Task.Delay(500);
+        }
+
+        throw new TimeoutException($"Expected a pending replacement node command-trust approval. Last response: {lastOutput}");
+    }
+
     private async Task TryRecoverDeviceAfterRemovalAsync(
         (string GatewayUrl, string? SharedGatewayToken, string ActiveId) gateway,
         Dictionary<string, string> env)
@@ -239,6 +268,24 @@ public class RevocationAndRecoveryTests
         {
             return null;
         }
+    }
+
+    private static string? TryReadFirstPendingNodeRequestId(string output)
+    {
+        var start = output.IndexOf('[');
+        var end = output.LastIndexOf(']');
+        Assert.True(start >= 0 && end > start, $"Expected JSON array in output: {output}");
+        using var doc = JsonDocument.Parse(output[start..(end + 1)]);
+        if (doc.RootElement.ValueKind != JsonValueKind.Array ||
+            doc.RootElement.GetArrayLength() == 0)
+        {
+            return null;
+        }
+
+        var request = doc.RootElement[0];
+        return request.TryGetProperty("requestId", out var requestId)
+            ? requestId.GetString()
+            : null;
     }
 
     private static void AssertNoPendingRequests(string output)

@@ -35,11 +35,12 @@ public sealed class InstallCliStep : SetupStep
     {
         var distro = ctx.DistroName!;
         var user = ctx.Config.Wsl.User;
-        var installVersion = ctx.Config.Gateway.Version;
+        var requestedVersion = ctx.Config.Gateway.Version;
+        var installVersion = requestedVersion;
         var validationPackageStaged = false;
 
         // Download and run install script (URL configurable)
-        var installUrl = ctx.Config.Gateway.InstallUrl ?? GatewayReleasePolicy.DefaultInstallUrl;
+        var installUrl = ctx.Config.Gateway.InstallUrl ?? GatewayInstallPolicy.DefaultInstallUrl;
 
         // Validate URL is HTTPS to prevent downgrade attacks
         if (!Uri.TryCreate(installUrl, UriKind.Absolute, out var parsedUrl) ||
@@ -48,7 +49,7 @@ public sealed class InstallCliStep : SetupStep
             return StepResult.Fail($"Installer URL must be HTTPS: {installUrl}");
         }
 
-        var officialInstaller = GatewayReleasePolicy.IsOfficialInstallerUrl(installUrl);
+        var officialInstaller = GatewayInstallPolicy.IsOfficialInstallerUrl(installUrl);
         if (ctx.Config.Gateway.ValidationPackagePath is { } validationPackagePath)
         {
             var stageResult = await StageValidationPackageAsync(
@@ -73,7 +74,7 @@ public sealed class InstallCliStep : SetupStep
                 installScript = BuildInstallCommand(
                     installUrl,
                     installVersion,
-                    officialInstaller ? GatewayReleasePolicy.NodeVersion : null,
+                    officialInstaller ? GatewayInstallPolicy.NodeVersion : null,
                     installerTempDirectory);
             }
             catch (ArgumentException ex)
@@ -131,16 +132,24 @@ public sealed class InstallCliStep : SetupStep
                 var verify = await ctx.Commands.RunInWslAsync(distro, cmd, TimeSpan.FromSeconds(15), ct: ct);
                 if (verify.ExitCode == 0 && !string.IsNullOrWhiteSpace(verify.Stdout))
                 {
-                    var selectedVersion = ctx.Config.Gateway.Version!;
-                    if (!GatewayReleaseVersion.TryExtract(verify.Stdout, out var installedVersion) ||
-                        !string.Equals(installedVersion, selectedVersion, StringComparison.Ordinal))
+                    if (!GatewayPackageVersion.TryExtract(verify.Stdout, out var installedVersion))
                     {
-                        var actual = string.IsNullOrWhiteSpace(installedVersion) ? "unparseable" : installedVersion;
                         var failure = new GatewayCompatibilityException(
                             GatewayCompatibilityFailureKind.InstalledVersionMismatch,
-                            $"Gateway compatibility check failed: selected version {selectedVersion}, installed CLI reported {actual}.");
+                            "Gateway compatibility check failed: installed CLI version was not a stable release.");
                         return StepResult.Terminal(failure.Message, failure);
                     }
+
+                    if (GatewayPackageVersion.IsExact(requestedVersion) &&
+                        !string.Equals(installedVersion, requestedVersion, StringComparison.Ordinal))
+                    {
+                        var failure = new GatewayCompatibilityException(
+                            GatewayCompatibilityFailureKind.InstalledVersionMismatch,
+                            $"Gateway compatibility check failed: requested version {requestedVersion}, installed CLI reported {installedVersion}.");
+                        return StepResult.Terminal(failure.Message, failure);
+                    }
+
+                    ctx.Config.Gateway.InstalledVersion = installedVersion;
 
                     if (executablePath != null)
                     {
@@ -151,7 +160,7 @@ public sealed class InstallCliStep : SetupStep
 
                     if (officialInstaller)
                     {
-                        var expectedRuntimeVersion = $"v{GatewayReleasePolicy.NodeVersion}";
+                        var expectedRuntimeVersion = $"v{GatewayInstallPolicy.NodeVersion}";
                         var runtimeCommand = $"/home/{user}/.openclaw/tools/node/bin/node --version";
                         var runtime = await ctx.Commands.RunInWslAsync(
                             distro,
@@ -195,14 +204,17 @@ public sealed class InstallCliStep : SetupStep
         string? installerTempDirectory = null)
     {
         var escapedUrl = WslShellQuoting.EscapePosixSingleQuoteInner(installUrl);
-        if (string.IsNullOrWhiteSpace(requestedVersion))
-            throw new ArgumentException("Gateway release policy must resolve an exact version before installation.");
+        var versionArgument = "";
+        if (!string.IsNullOrWhiteSpace(requestedVersion))
+        {
+            var trimmedVersion = requestedVersion.Trim();
+            if (trimmedVersion.Contains('\n') || trimmedVersion.Contains('\r'))
+                throw new ArgumentException("Gateway version cannot contain newlines.");
 
-        var trimmedVersion = requestedVersion.Trim();
-        if (trimmedVersion.Contains('\n') || trimmedVersion.Contains('\r'))
-            throw new ArgumentException("Gateway version cannot contain newlines.");
+            var escapedVersion = WslShellQuoting.EscapePosixSingleQuoteInner(trimmedVersion);
+            versionArgument = $" --version '{escapedVersion}'";
+        }
 
-        var escapedVersion = WslShellQuoting.EscapePosixSingleQuoteInner(trimmedVersion);
         var runtimeArgument = "";
         if (!string.IsNullOrWhiteSpace(nodeVersion))
         {
@@ -213,7 +225,7 @@ public sealed class InstallCliStep : SetupStep
             var escapedNodeVersion = WslShellQuoting.EscapePosixSingleQuoteInner(trimmedNodeVersion);
             runtimeArgument = $" --node-version '{escapedNodeVersion}'";
         }
-        var transferDeadlineArguments = GatewayReleasePolicy.IsOfficialInstallerUrl(installUrl)
+        var transferDeadlineArguments = GatewayInstallPolicy.IsOfficialInstallerUrl(installUrl)
             ? $" --connect-timeout 15 --max-time {DownloadMaxTimeSeconds}"
             : "";
 
@@ -243,13 +255,13 @@ public sealed class InstallCliStep : SetupStep
               echo 'CLI installer download was empty.' >&2
               exit 65
             fi
-            bash -s -- --version '{escapedVersion}'{runtimeArgument} < "$installer"
+            bash -s --{versionArgument}{runtimeArgument} < "$installer"
             """;
     }
 
     internal static string BuildInstallCommandPreview(
         string installUrl,
-        string requestedVersion,
+        string? requestedVersion,
         string? nodeVersion = null)
     {
         var command = BuildInstallCommand(

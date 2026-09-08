@@ -169,10 +169,10 @@ public class SetupAndConnectTests
 
     private static string ResolveNodeCommandsAllowKey()
     {
-        var gatewayVersion =
-            Environment.GetEnvironmentVariable("OPENCLAW_E2E_GATEWAY_VERSION") ??
-            GatewayReleasePolicy.RecommendedVersion;
-        return ConfigureGatewayStep.ResolveNodeCommandsAllowKey(gatewayVersion);
+        var gatewayVersion = Environment.GetEnvironmentVariable("OPENCLAW_E2E_GATEWAY_VERSION");
+        return string.IsNullOrWhiteSpace(gatewayVersion)
+            ? ConfigureGatewayStep.NodeCommandsAllowKey
+            : ConfigureGatewayStep.ResolveNodeCommandsAllowKey(gatewayVersion);
     }
 
     [E2EFact]
@@ -1036,7 +1036,6 @@ public class SetupAndConnectTests
         Assert.True(root.TryGetProperty("operatorScopes", out var scopes), $"operatorScopes missing from app.status: {rawJson}");
         var values = ReadStringArray(scopes);
         Assert.Contains(values, scope => string.Equals(scope, "operator.admin", StringComparison.OrdinalIgnoreCase));
-        Assert.Contains(values, scope => string.Equals(scope, "operator.pairing", StringComparison.OrdinalIgnoreCase));
     }
 
     private async Task AssertGatewayCliStateHealthy()

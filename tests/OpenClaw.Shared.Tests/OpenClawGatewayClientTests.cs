@@ -821,7 +821,7 @@ public class OpenClawGatewayClientTests
     }
 
     [Fact]
-    public void OperatorConnect_FreshDevice_RequestsBootstrapHandoffScopes()
+    public void OperatorConnect_FreshDevice_RequestsFullBootstrapProfileScopes()
     {
         var helper = new GatewayClientTestHelper(tokenIsBootstrapToken: true);
         helper.SetDeviceTokenForTest(null);
@@ -830,9 +830,9 @@ public class OpenClawGatewayClientTests
         var auth = helper.BuildAuthPayload();
 
         Assert.Equal(
-            ["operator.approvals", "operator.read", "operator.talk.secrets", "operator.write"],
+            ["operator.admin", "operator.approvals", "operator.read", "operator.talk.secrets", "operator.write"],
             scopes);
-        Assert.DoesNotContain("operator.admin", scopes);
+        Assert.Contains("operator.admin", scopes);
         Assert.DoesNotContain("operator.pairing", scopes);
         Assert.Equal("test-token", auth["bootstrapToken"]);
         Assert.False(auth.ContainsKey("token"));

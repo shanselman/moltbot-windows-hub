@@ -439,7 +439,7 @@ public sealed class PairOperatorStep : SetupStep
             ctx.Logger.Debug($"Operator connection status: {status}");
             if (status == ConnectionStatus.Connected)
             {
-                var compatibilityFailure = GatewayReleasePolicy.ValidateHandshake(
+                var compatibilityFailure = GatewayInstallPolicy.ValidateHandshake(
                     ctx.Config,
                     ctx.ObservedGatewaySelf);
                 if (compatibilityFailure is null)

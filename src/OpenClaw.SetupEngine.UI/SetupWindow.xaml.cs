@@ -160,7 +160,7 @@ public sealed partial class SetupWindow : Window
         }
         try
         {
-            GatewayReleasePolicy.ResolveAndApply(_config);
+            GatewayInstallPolicy.ValidateAndApply(_config);
         }
         catch (GatewayCompatibilityException ex)
         {
@@ -310,9 +310,6 @@ public sealed partial class SetupWindow : Window
         LocalAiFailureDetail? detail = null,
         bool restartRequired = false)
     {
-        var canRetryFallback =
-            compatibilityFailure is { } failureKind &&
-            GatewayReleasePolicy.CanRetryWithFallback(_config, failureKind);
         NavigateTo(
             typeof(CompletePage),
             new CompletePageArgs(
@@ -323,23 +320,10 @@ public sealed partial class SetupWindow : Window
                 DefaultAutoStart: true,
                 ShowStartupPreference: _showStartupPreferenceOnComplete,
                 ReviewSummary: SetupReviewSummaryBuilder.Build(_config, _dataDir, _localDataDir),
-                CanRetryGatewayFallback: canRetryFallback,
-                GatewayFallbackVersion: canRetryFallback
-                    ? GatewayReleasePolicy.FallbackVersion
-                    : null,
                 Detail: detail)
             {
                 RequiresRestart = restartRequired,
             });
-    }
-
-    public bool TryRetryWithGatewayFallback(out string? error)
-    {
-        if (!GatewayReleasePolicy.TryApplyFallback(_config, out error))
-            return false;
-
-        NavigateToProgress();
-        return true;
     }
 
     private void ShowConfigurationError(string errorMessage)
@@ -505,8 +489,6 @@ public sealed record CompletePageArgs(
     bool DefaultAutoStart = true,
     bool ShowStartupPreference = true,
     SetupReviewSummary? ReviewSummary = null,
-    bool CanRetryGatewayFallback = false,
-    string? GatewayFallbackVersion = null,
     LocalAiFailureDetail? Detail = null)
 {
     public bool RequiresRestart { get; init; }

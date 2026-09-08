@@ -55,20 +55,11 @@ on newer behavior.
 - `https://github.com/openclaw/openclaw/blob/main/src/gateway/server-methods/nodes.ts`
 - `https://github.com/openclaw/openclaw/blob/main/packages/gateway-protocol/src/schema/frames.ts`
 
-The setup engine installs the exact Windows-validated recommendation from
-`src/OpenClaw.SetupEngine/GatewayReleasePolicy.cs`. The policy currently
-requires Gateway protocol v4 and security floor `2026.6.11`. npm dist-tags are
-candidate discovery hints only. Before promoting a newer upstream release,
-verify its tagged protocol source and run exact-version Windows setup,
-pairing, reconnect, recovery, and Gateway-to-node proof.
+The setup engine uses the official installer without `--version`, so npm
+`latest` selects the stable OpenClaw package. Setup records the installed CLI
+version and requires the gateway handshake to report the same version.
 
-The current recommendation is exact release `2026.6.34`; `2026.6.11` is the
-explicit validated fallback. Exact release `2026.7.1` is protocol-v4 compatible
-but runtime-rejected because its clean setup wizard restart did not recover a
-trusted managed endpoint. `2026.7.1-2` is rejected for missing provenance and
-stable release-validation evidence.
-
-The managed gateway release pin is not the WebSocket protocol pin. Windows
+Package selection is independent of the WebSocket protocol range. Windows
 currently advertises `minProtocol: 3` and `maxProtocol: 4`; the gateway reports
 its current protocol constant in `hello-ok.protocol`, not a per-connection
 negotiated value. After the gateway accepts the advertised range, Windows records
@@ -230,11 +221,12 @@ Important approval-time checks:
   - `system.run`, `system.run.prepare`, or `system.which`:
     `operator.pairing` plus `operator.admin`.
 
-This means a QR/setup-code bounded operator handoff token is not enough to
-approve Windows node command trust. The default bootstrap handoff token includes
-`operator.approvals`, `operator.read`, `operator.talk.secrets`, and
-`operator.write`; it intentionally excludes `operator.admin` and
-`operator.pairing`.
+This means a limited QR/setup-code operator handoff token is not enough to
+approve Windows node command trust. The default full-access bootstrap profile
+includes `operator.admin`, `operator.approvals`, `operator.read`,
+`operator.talk.secrets`, and `operator.write`. The limited profile omits
+`operator.admin`. Neither profile hands off `operator.pairing`; admin authority
+is sufficient for the node trust operations used by Windows.
 
 ## Flow 1: shared-token operator connect
 
@@ -280,13 +272,18 @@ bootstrap token is a short-lived bearer credential with a default TTL of 10
 minutes. It is bound to the first device identity and public key that redeems
 it.
 
-Upstream default setup-code profile:
+Upstream default setup-code profile for `wss://` or same-host loopback:
 
 - roles: `node`, `operator`;
-- operator scopes: `operator.approvals`, `operator.read`,
+- operator scopes: `operator.admin`, `operator.approvals`, `operator.read`,
   `operator.talk.secrets`, `operator.write`;
-- no `operator.admin`;
 - no `operator.pairing`.
+
+`openclaw qr --limited` and plaintext LAN setup codes use the limited profile,
+which omits `operator.admin`. The setup-code payload does not identify the
+profile. Its opaque bootstrap token carries the server-enforced scope boundary,
+so clients request the full bootstrap scope set and the gateway strips admin
+when the issued token is limited.
 
 Expected flow:
 
@@ -318,7 +315,7 @@ Required invariant:
 
 - Clear bootstrap only after durable, readable persistence of the role tokens
   required by the active flow. For setup-code pairing, that should include the
-  node token and the bounded operator token when both are returned by
+  node token and the profile-bounded operator token when both are returned by
   `hello-ok`.
 
 ## Flow 3: operator device-token reconnect
@@ -432,7 +429,7 @@ Windows implications:
 
 - Windows nodes declare `system.run`, `system.run.prepare`, and `system.which`
   when system capability is enabled. Those requests require admin to approve.
-- A bounded QR/bootstrap operator token should not auto-approve node command
+- A limited QR/bootstrap operator token should not auto-approve node command
   trust.
 - `GatewayConnectionManager` only auto-approves explicitly typed device-pair
   role upgrades. Node-pair command trust, including reapproval, remains pending
@@ -532,9 +529,10 @@ Existing coverage:
   - Dashboard validation now fetches the generated URL and checks the returned
     HTML for token/auth error markers, not just HTTP status.
   - `app.status` validation includes negotiated operator scopes and asserts the
-    operator has `operator.admin` and `operator.pairing` on the normal local
-    setup/shared-token path. Explicitly configured SetupEngine onboarding may
-    use those scopes to approve command trust without a leftover approval
+    operator has `operator.admin` on the normal full-access local setup or
+    shared-token path. Setup-code handoff never grants `operator.pairing`.
+    Explicitly configured SetupEngine onboarding may use admin authority to
+    approve command trust without a leftover approval
     banner; `GatewayConnectionManager` runtime leaves command-trust approval
     pending for the operator.
 - Test coverage docs explicitly call out that full live gateway/node pairing

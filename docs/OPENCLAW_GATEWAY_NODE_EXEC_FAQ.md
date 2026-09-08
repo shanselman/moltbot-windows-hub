@@ -729,24 +729,23 @@ branch behavior on it. Method and payload compatibility is still a separate
 concern; the client uses feature/error handling and drift tests for the surfaces
 it implements.
 
-### Managed gateway release policy
+### Managed gateway release selection
 
-The Windows setup engine installs exact recommended OpenClaw release
-`2026.6.34` for a new app-managed WSL gateway. Release `2026.6.11` is the
-security floor and distinct validated fallback. Setup never selects that
-fallback automatically.
+The Windows setup engine uses the official installer without a version
+argument, so npm `latest` selects the stable OpenClaw package for a new
+app-managed WSL gateway. Setup records the installed version and requires the
+gateway handshake to report that same version over protocol v4.
 
-This managed-setup policy does not force every remote gateway to use the
-recommended release. Windows can connect to an existing gateway with a
-different release if the protocol and methods it uses are compatible. Custom
-installer URLs require an exact version, are labeled unverified, and still
-must pass the exact protocol and server-version checks.
+Windows can connect to an existing gateway with a different release if the
+protocol and methods it uses are compatible. Custom installer URLs require an
+exact version, are labeled unverified, and must pass the same installed-version
+and protocol checks.
 
 At tag `v2026.6.11`, upstream protocol constants were protocol 4 with minimum
 general/probe protocol 4. Its documentation already showed clients advertising
 a 3 through 4 range. That tag did not yet define a separate
 `MIN_NODE_PROTOCOL_VERSION`; the node-specific minimum of 3 was added upstream
-later. The release pin and the connect range must therefore be reported
+later. The installed release and the connect range must therefore be reported
 independently.
 
 **Evidence:** Windows connect ranges are in
@@ -755,8 +754,8 @@ and
 [`OpenClawGatewayClient.cs`](https://github.com/openclaw/openclaw-windows-node/blob/d7d153ca5d409487e06ef584b1de1184520e90e6/src/OpenClaw.Shared/OpenClawGatewayClient.cs#L1492-L1510).
 The current upstream constants are in
 [`version.ts`](https://github.com/openclaw/openclaw/blob/db90dff1396fecbf7029e9e9ea19d6c6ca3e644e/packages/gateway-protocol/src/version.ts).
-The managed release policy is in
-[`GatewayReleasePolicy.cs`](../src/OpenClaw.SetupEngine/GatewayReleasePolicy.cs).
+The managed install checks are in
+[`GatewayInstallPolicy.cs`](../src/OpenClaw.SetupEngine/GatewayInstallPolicy.cs).
 
 ## What deployment combinations are valid?
 
@@ -806,4 +805,4 @@ Any layer can deny. A later layer cannot widen an earlier deny.
 | Windows local approval | `ExecApprovalsCoordinator`, `ExecApprovalsStore`, `ExecReusableCommandBinder`, `CanonicalCmdCarrier`, `CmdPayloadTokenizer` | comparable node-host exec approval contracts |
 | Windows sandbox | `MxcCommandRunner`, `MxcPolicyBuilder`, `DirectAppContainerExecutor` | separate agent sandbox backend interfaces |
 | Protocol version | connect payloads | `packages/gateway-protocol/src/version.ts` |
-| Managed gateway release | `GatewayReleasePolicy.cs`, setup engine | OpenClaw tags `v2026.6.34` and `v2026.6.11` |
+| Managed gateway release | `GatewayInstallPolicy.cs`, setup engine | npm `latest` and the installed package metadata |

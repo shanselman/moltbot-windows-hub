@@ -522,10 +522,10 @@ public sealed class MxcSetupAndConnectTests
         AssertNoPendingRequests(nodes.Stdout);
         Assert.Contains("windows", nodes.Stdout, StringComparison.OrdinalIgnoreCase);
 
-        var gatewayVersion =
-            Environment.GetEnvironmentVariable("OPENCLAW_E2E_GATEWAY_VERSION") ??
-            GatewayReleasePolicy.RecommendedVersion;
-        var nodeCommandsAllowKey = ConfigureGatewayStep.ResolveNodeCommandsAllowKey(gatewayVersion);
+        var gatewayVersion = Environment.GetEnvironmentVariable("OPENCLAW_E2E_GATEWAY_VERSION");
+        var nodeCommandsAllowKey = string.IsNullOrWhiteSpace(gatewayVersion)
+            ? ConfigureGatewayStep.NodeCommandsAllowKey
+            : ConfigureGatewayStep.ResolveNodeCommandsAllowKey(gatewayVersion);
         var allowCommands = await _fixture.RunInWslAsync(
             $"openclaw config get {nodeCommandsAllowKey} --json",
             TimeSpan.FromSeconds(30),
@@ -749,7 +749,6 @@ public sealed class MxcSetupAndConnectTests
         Assert.True(root.TryGetProperty("operatorScopes", out var scopes), $"operatorScopes missing from app.status: {rawJson}");
         var values = ReadStringArray(scopes);
         Assert.Contains(values, scope => string.Equals(scope, "operator.admin", StringComparison.OrdinalIgnoreCase));
-        Assert.Contains(values, scope => string.Equals(scope, "operator.pairing", StringComparison.OrdinalIgnoreCase));
     }
 
     private static string[] ReadStringArray(JsonElement element)

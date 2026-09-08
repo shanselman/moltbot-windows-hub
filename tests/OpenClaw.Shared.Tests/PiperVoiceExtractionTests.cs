@@ -178,9 +178,16 @@ public sealed class PiperVoiceExtractionTests
         {
             if (File.Exists(pidPath))
             {
-                var text = await File.ReadAllTextAsync(pidPath);
-                if (int.TryParse(text, out var processId))
-                    return processId;
+                try
+                {
+                    var text = await File.ReadAllTextAsync(pidPath);
+                    if (int.TryParse(text, out var processId))
+                        return processId;
+                }
+                catch (IOException)
+                {
+                    // The fixture may have created the file but still hold its write handle.
+                }
             }
 
             await Task.Delay(10);
