@@ -14,80 +14,115 @@ public partial class OpenClawGatewayClient
     public Task<SkillsStatusReport> GetSkillsStatusAsync(
         string? agentId = null,
         int timeoutMs = 15000) =>
-        _skillsGatewayApi.GetStatusAsync(agentId, timeoutMs);
+        SupportsExtensionMethod("skills.status")
+            ? _skillsGatewayApi.GetStatusAsync(agentId, timeoutMs)
+            : Task.FromResult(SkillsStatusReport.Unsupported);
 
     public Task<SkillsSearchResult> SearchSkillsAsync(
         string? query = null,
         int limit = 20,
         int timeoutMs = 15000) =>
-        _skillsGatewayApi.SearchAsync(query, limit, timeoutMs);
+        SupportsExtensionMethod("skills.search")
+            ? _skillsGatewayApi.SearchAsync(query, limit, timeoutMs)
+            : Task.FromResult(SkillsSearchResult.Unsupported);
 
     public Task<SkillsDetailResult> GetSkillDetailAsync(
         string installReference,
         int timeoutMs = 15000) =>
-        _skillsGatewayApi.GetDetailAsync(installReference, timeoutMs);
+        SupportsExtensionMethod("skills.detail")
+            ? _skillsGatewayApi.GetDetailAsync(installReference, timeoutMs)
+            : Task.FromResult(SkillsDetailResult.Unsupported);
 
     public Task<SkillsSecurityVerdictsResult> GetSkillSecurityVerdictsAsync(
         string? agentId = null,
         int timeoutMs = 15000) =>
-        _skillsGatewayApi.GetSecurityVerdictsAsync(agentId, timeoutMs);
+        SupportsExtensionMethod("skills.securityVerdicts")
+            ? _skillsGatewayApi.GetSecurityVerdictsAsync(agentId, timeoutMs)
+            : Task.FromResult(SkillsSecurityVerdictsResult.Unsupported);
 
     public Task<SkillCardResult> GetSkillCardAsync(
         string skillKey,
         string? agentId = null,
         int timeoutMs = 15000) =>
-        _skillsGatewayApi.GetCardAsync(skillKey, agentId, timeoutMs);
+        SupportsExtensionMethod("skills.skillCard")
+            ? _skillsGatewayApi.GetCardAsync(skillKey, agentId, timeoutMs)
+            : Task.FromResult(SkillCardResult.Unsupported);
 
     public Task<SkillMutationResult> InstallClawHubSkillAsync(
         ClawHubSkillInstallRequest request,
         int timeoutMs = 120000) =>
-        _skillsGatewayApi.InstallAsync(request, timeoutMs);
+        SupportsExtensionMethod("skills.install")
+            ? _skillsGatewayApi.InstallAsync(request, timeoutMs)
+            : Task.FromResult(SkillMutationResult.Unsupported);
 
     public Task<SkillMutationResult> UpdateClawHubSkillAsync(
         ClawHubSkillUpdateRequest request,
         int timeoutMs = 120000) =>
-        _skillsGatewayApi.UpdateAsync(request, timeoutMs);
+        SupportsExtensionMethod("skills.update")
+            ? _skillsGatewayApi.UpdateAsync(request, timeoutMs)
+            : Task.FromResult(SkillMutationResult.Unsupported);
 
     public Task<SkillMutationResult> SetSkillEnabledDetailedAsync(
         string skillKey,
         bool enabled,
         int timeoutMs = 15000) =>
-        _skillsGatewayApi.SetEnabledAsync(skillKey, enabled, timeoutMs);
+        SupportsExtensionMethod("skills.update")
+            ? _skillsGatewayApi.SetEnabledAsync(skillKey, enabled, timeoutMs)
+            : Task.FromResult(SkillMutationResult.Unsupported);
 
     public Task<PluginsListResult> ListPluginsAsync(int timeoutMs = 15000) =>
-        _pluginsGatewayApi.ListAsync(timeoutMs);
+        SupportsExtensionMethod("plugins.list")
+            ? _pluginsGatewayApi.ListAsync(timeoutMs)
+            : Task.FromResult(PluginsListResult.Unsupported);
 
     public Task<PluginsSearchResult> SearchPluginsAsync(
         string query,
         int limit = 20,
         int timeoutMs = 15000) =>
-        _pluginsGatewayApi.SearchAsync(query, limit, timeoutMs);
+        SupportsExtensionMethod("plugins.search")
+            ? _pluginsGatewayApi.SearchAsync(query, limit, timeoutMs)
+            : Task.FromResult(PluginsSearchResult.Unsupported);
 
     public Task<PluginInspectResult> InspectPluginAsync(
         string pluginId,
         int timeoutMs = 15000) =>
-        _pluginsGatewayApi.InspectAsync(pluginId, timeoutMs);
+        SupportsExtensionMethod("plugins.inspect")
+            ? _pluginsGatewayApi.InspectAsync(pluginId, timeoutMs)
+            : Task.FromResult(PluginInspectResult.Unsupported);
 
     public Task<PluginMutationResult> InstallPluginAsync(
         PluginInstallRequest request,
         int timeoutMs = 120000) =>
-        _pluginsGatewayApi.InstallAsync(request, timeoutMs);
+        SupportsExtensionMethod("plugins.install")
+            ? _pluginsGatewayApi.InstallAsync(request, timeoutMs)
+            : Task.FromResult(PluginMutationResult.Unsupported);
 
     public Task<PluginMutationResult> SetPluginEnabledAsync(
         PluginSetEnabledRequest request,
         int timeoutMs = 30000) =>
-        _pluginsGatewayApi.SetEnabledAsync(request, timeoutMs);
+        SupportsExtensionMethod("plugins.setEnabled")
+            ? _pluginsGatewayApi.SetEnabledAsync(request, timeoutMs)
+            : Task.FromResult(PluginMutationResult.Unsupported);
 
     public Task<PluginMutationResult> UninstallPluginAsync(
         string pluginId,
         int timeoutMs = 120000) =>
-        _pluginsGatewayApi.UninstallAsync(pluginId, timeoutMs);
+        SupportsExtensionMethod("plugins.uninstall")
+            ? _pluginsGatewayApi.UninstallAsync(pluginId, timeoutMs)
+            : Task.FromResult(PluginMutationResult.Unsupported);
 
     private void CaptureAdvertisedFeatures(JsonElement helloOk) =>
         Volatile.Write(ref _advertisedFeatures, GatewayFeatureSet.FromHelloOk(helloOk));
 
     private void ResetAdvertisedFeatures() =>
         Volatile.Write(ref _advertisedFeatures, GatewayFeatureSet.Empty);
+
+    private bool SupportsExtensionMethod(string method)
+    {
+        if (!HasHandshakeSnapshot)
+            throw new InvalidOperationException("Gateway handshake is not ready");
+        return AdvertisedFeatures.SupportsMethod(method);
+    }
 
     private void EnsureExtensionMethodSupported(string method)
     {

@@ -329,7 +329,8 @@ public partial class OpenClawGatewayClient : WebSocketClientBase, IOperatorGatew
         _pluginsGatewayApi = new PluginsGatewayApi(
             SendWizardRequestAsync,
             EnsureExtensionMethodSupported,
-            () => ConnectionEpoch);
+            () => ConnectionEpoch,
+            SendExtensionMutationRequestAsync);
     }
 
     /// <summary>
@@ -1194,7 +1195,24 @@ public partial class OpenClawGatewayClient : WebSocketClientBase, IOperatorGatew
     /// Sends a wizard RPC request and waits for the response payload.
     /// Used for wizard.start, wizard.next, wizard.cancel, wizard.status.
     /// </summary>
-    public async Task<JsonElement> SendWizardRequestAsync(string method, object? parameters = null, int timeoutMs = 30000)
+    public Task<JsonElement> SendWizardRequestAsync(
+        string method,
+        object? parameters = null,
+        int timeoutMs = 30000) =>
+        SendWizardRequestCoreAsync(method, parameters, timeoutMs, expectedConnectionEpoch: null);
+
+    private Task<JsonElement> SendExtensionMutationRequestAsync(
+        string method,
+        object? parameters,
+        int timeoutMs,
+        long expectedConnectionEpoch) =>
+        SendWizardRequestCoreAsync(method, parameters, timeoutMs, expectedConnectionEpoch);
+
+    private async Task<JsonElement> SendWizardRequestCoreAsync(
+        string method,
+        object? parameters,
+        int timeoutMs,
+        long? expectedConnectionEpoch)
     {
         if (!IsConnected)
             throw new InvalidOperationException("Gateway connection is not open");
@@ -1205,7 +1223,23 @@ public partial class OpenClawGatewayClient : WebSocketClientBase, IOperatorGatew
 
         try
         {
-            await SendRawAsync(SerializeRequest(requestId, method, parameters));
+            var serializedRequest = SerializeRequest(requestId, method, parameters);
+            if (expectedConnectionEpoch.HasValue)
+            {
+                var sent = await SendRawAsync(
+                    serializedRequest,
+                    expectedConnectionEpoch.Value,
+                    CancellationToken).ConfigureAwait(false);
+                if (!sent)
+                {
+                    throw new InvalidOperationException(
+                        "Plugin operation expired after the Gateway connection changed.");
+                }
+            }
+            else
+            {
+                await SendRawAsync(serializedRequest).ConfigureAwait(false);
+            }
             return await pending.Task.WaitAsync(TimeSpan.FromMilliseconds(timeoutMs), CancellationToken);
         }
         catch (TimeoutException ex)

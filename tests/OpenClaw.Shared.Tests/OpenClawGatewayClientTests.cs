@@ -48,6 +48,11 @@ public class OpenClawGatewayClientTests
                 identityPath: CreateTempIdentityPath());
         }
 
+        public GatewayClientTestHelper(OpenClawGatewayClient client)
+        {
+            _client = client;
+        }
+
         public string ClassifyNotification(string text)
         {
             var (_, type) = NotificationCategorizer.ClassifyByKeywords(text);
@@ -551,6 +556,54 @@ public class OpenClawGatewayClientTests
 
     }
 
+    private sealed class PausingGatewayClient : OpenClawGatewayClient
+    {
+        private readonly TaskCompletionSource<bool> _mutationSendEntered =
+            new(TaskCreationOptions.RunContinuationsAsynchronously);
+        private readonly TaskCompletionSource<bool> _continueMutationSend =
+            new(TaskCreationOptions.RunContinuationsAsynchronously);
+        private bool _pauseMutationSend;
+
+        public PausingGatewayClient(string gatewayUrl, string identityPath)
+            : base(gatewayUrl, "test-token", new TestLogger(), identityPath: identityPath)
+        {
+        }
+
+        public Task MutationSendEntered => _mutationSendEntered.Task;
+
+        public void ArmMutationSendPause() => _pauseMutationSend = true;
+
+        public void AdvanceConnectionEpochForTest()
+        {
+            var field = typeof(WebSocketClientBase).GetField(
+                "_connectionGeneration",
+                System.Reflection.BindingFlags.NonPublic |
+                System.Reflection.BindingFlags.Instance);
+            field!.SetValue(this, ConnectionEpoch + 1);
+        }
+
+        public void ContinueMutationSend() => _continueMutationSend.TrySetResult(true);
+
+        protected override async Task<bool> SendRawAsync(
+            string message,
+            long expectedConnectionGeneration,
+            CancellationToken cancellationToken)
+        {
+            if (_pauseMutationSend &&
+                (message.Contains("plugins.install", StringComparison.Ordinal) ||
+                 message.Contains("plugins.setEnabled", StringComparison.Ordinal)))
+            {
+                _mutationSendEntered.TrySetResult(true);
+                await _continueMutationSend.Task.WaitAsync(cancellationToken);
+            }
+
+            return await base.SendRawAsync(
+                message,
+                expectedConnectionGeneration,
+                cancellationToken);
+        }
+    }
+
     private static string CreateTempIdentityPath() =>
         Path.Combine(Path.GetTempPath(), "OpenClawGatewayClientTests", Guid.NewGuid().ToString("N"));
 
@@ -731,7 +784,97 @@ public class OpenClawGatewayClientTests
     }
 
     [Fact]
-    public async Task ExtensionMethod_NotAdvertised_FailsBeforeSending()
+    public async Task InstallPluginAsync_RejectsReconnectBetweenConsentCheckAndFinalWrite()
+    {
+        using var server = new LoopbackWebSocketServer();
+        using var identity = new TempDirectory("plugin-install-race-");
+        await server.StartAsync();
+        using var client = new PausingGatewayClient(server.WebSocketUrl, identity.Path);
+        var helper = new GatewayClientTestHelper(client);
+        await client.ConnectAsync();
+        helper.TrackPendingRequest("connect-plugins-race", "connect");
+        helper.ProcessRawMessage("""
+        {
+          "type": "res",
+          "id": "connect-plugins-race",
+          "ok": true,
+          "payload": {
+            "type": "hello-ok",
+            "protocol": 4,
+            "features": {
+              "methods": ["plugins.install"],
+              "events": []
+            },
+            "snapshot": {}
+          }
+        }
+        """);
+        var request = PluginInstallRequest.FromClawHub("@openclaw/voice-call") with
+        {
+            AcknowledgeCapabilities = new PluginCapabilityAcknowledgement(
+                "review-token",
+                client.ConnectionEpoch),
+        };
+        client.ArmMutationSendPause();
+
+        var installTask = client.InstallPluginAsync(request, timeoutMs: 10_000);
+        await client.MutationSendEntered.WaitAsync(TimeSpan.FromSeconds(2));
+        client.AdvanceConnectionEpochForTest();
+        client.ContinueMutationSend();
+
+        var exception = await Assert.ThrowsAsync<InvalidOperationException>(() => installTask);
+        Assert.Contains("expired", exception.Message, StringComparison.OrdinalIgnoreCase);
+        using var noRequestTimeout = new CancellationTokenSource(TimeSpan.FromMilliseconds(250));
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(
+            () => server.ReceiveTextAsync(noRequestTimeout.Token));
+    }
+
+    [Fact]
+    public async Task SetPluginEnabledAsync_RejectsReconnectBetweenConsentCheckAndFinalWrite()
+    {
+        using var server = new LoopbackWebSocketServer();
+        using var identity = new TempDirectory("plugin-enable-race-");
+        await server.StartAsync();
+        using var client = new PausingGatewayClient(server.WebSocketUrl, identity.Path);
+        var helper = new GatewayClientTestHelper(client);
+        await client.ConnectAsync();
+        helper.TrackPendingRequest("connect-plugin-enable-race", "connect");
+        helper.ProcessRawMessage("""
+        {
+          "type": "res",
+          "id": "connect-plugin-enable-race",
+          "ok": true,
+          "payload": {
+            "type": "hello-ok",
+            "protocol": 4,
+            "features": {
+              "methods": ["plugins.setEnabled"],
+              "events": []
+            },
+            "snapshot": {}
+          }
+        }
+        """);
+        var request = new PluginSetEnabledRequest(
+            "voice-call",
+            Enabled: true,
+            new PluginCapabilityAcknowledgement("review-token", client.ConnectionEpoch));
+        client.ArmMutationSendPause();
+
+        var enableTask = client.SetPluginEnabledAsync(request, timeoutMs: 10_000);
+        await client.MutationSendEntered.WaitAsync(TimeSpan.FromSeconds(2));
+        client.AdvanceConnectionEpochForTest();
+        client.ContinueMutationSend();
+
+        var exception = await Assert.ThrowsAsync<InvalidOperationException>(() => enableTask);
+        Assert.Contains("expired", exception.Message, StringComparison.OrdinalIgnoreCase);
+        using var noRequestTimeout = new CancellationTokenSource(TimeSpan.FromMilliseconds(250));
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(
+            () => server.ReceiveTextAsync(noRequestTimeout.Token));
+    }
+
+    [Fact]
+    public async Task ExtensionMethods_NotAdvertised_ReturnUnsupportedWithoutSending()
     {
         using var server = new LoopbackWebSocketServer();
         using var identity = new TempDirectory("extension-gate-");
@@ -750,13 +893,19 @@ public class OpenClawGatewayClientTests
           "payload": {
             "type": "hello-ok",
             "protocol": 4,
-            "features": { "methods": ["skills.status"], "events": [] },
+            "features": { "methods": [], "events": [] },
             "snapshot": {}
           }
         }
         """);
 
-        await Assert.ThrowsAsync<NotSupportedException>(() => client.ListPluginsAsync());
+        Assert.False((await client.ListPluginsAsync()).IsSupported);
+        Assert.False((await client.GetSkillsStatusAsync()).IsSupported);
+        Assert.False((await client.SetSkillEnabledDetailedAsync("weather", enabled: false)).IsSupported);
+        Assert.False(await client.SetSkillEnabledAsync("weather", enabled: false));
+        using var noRequestTimeout = new CancellationTokenSource(TimeSpan.FromMilliseconds(250));
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(
+            () => server.ReceiveTextAsync(noRequestTimeout.Token));
     }
 
     [Fact]

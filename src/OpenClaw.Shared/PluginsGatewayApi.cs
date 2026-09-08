@@ -5,14 +5,17 @@ namespace OpenClaw.Shared;
 internal sealed class PluginsGatewayApi : GatewayExtensionApi
 {
     private readonly Func<long> _getConnectionEpoch;
+    private readonly Func<string, object?, int, long, Task<JsonElement>> _sendMutationRequest;
 
     internal PluginsGatewayApi(
         Func<string, object?, int, Task<JsonElement>> sendRequest,
         Action<string> ensureMethodSupported,
-        Func<long> getConnectionEpoch)
+        Func<long> getConnectionEpoch,
+        Func<string, object?, int, long, Task<JsonElement>> sendMutationRequest)
         : base(sendRequest, ensureMethodSupported)
     {
         _getConnectionEpoch = getConnectionEpoch;
+        _sendMutationRequest = sendMutationRequest;
     }
 
     internal async Task<PluginsListResult> ListAsync(int timeoutMs)
@@ -47,7 +50,7 @@ internal sealed class PluginsGatewayApi : GatewayExtensionApi
         int timeoutMs)
     {
         ArgumentNullException.ThrowIfNull(request);
-        ValidateAcknowledgement(request.AcknowledgeCapabilities);
+        var connectionEpoch = CaptureMutationEpoch(request.AcknowledgeCapabilities);
         var parameters = new Dictionary<string, object?>();
         switch (request.Source)
         {
@@ -69,7 +72,7 @@ internal sealed class PluginsGatewayApi : GatewayExtensionApi
         if (request.AcknowledgeInstallPolicyWarning)
             parameters["acknowledgeInstallPolicyWarning"] = true;
         AddAcknowledgement(parameters, request.AcknowledgeCapabilities);
-        return SendAsync<PluginMutationResult>("plugins.install", parameters, timeoutMs);
+        return SendMutationAsync("plugins.install", parameters, timeoutMs, connectionEpoch);
     }
 
     internal Task<PluginMutationResult> SetEnabledAsync(
@@ -78,33 +81,50 @@ internal sealed class PluginsGatewayApi : GatewayExtensionApi
     {
         ArgumentNullException.ThrowIfNull(request);
         RequireNonEmpty(request.PluginId, nameof(request.PluginId));
-        ValidateAcknowledgement(request.AcknowledgeCapabilities);
+        var connectionEpoch = CaptureMutationEpoch(request.AcknowledgeCapabilities);
         var parameters = new Dictionary<string, object?>
         {
             ["pluginId"] = request.PluginId,
             ["enabled"] = request.Enabled,
         };
         AddAcknowledgement(parameters, request.AcknowledgeCapabilities);
-        return SendAsync<PluginMutationResult>("plugins.setEnabled", parameters, timeoutMs);
+        return SendMutationAsync("plugins.setEnabled", parameters, timeoutMs, connectionEpoch);
     }
 
     internal Task<PluginMutationResult> UninstallAsync(string pluginId, int timeoutMs)
     {
         RequireNonEmpty(pluginId, nameof(pluginId));
-        return SendAsync<PluginMutationResult>(
-            "plugins.uninstall", new { pluginId }, timeoutMs);
+        return SendMutationAsync(
+            "plugins.uninstall", new { pluginId }, timeoutMs, _getConnectionEpoch());
     }
 
-    private void ValidateAcknowledgement(PluginCapabilityAcknowledgement? acknowledgement)
+    private long CaptureMutationEpoch(PluginCapabilityAcknowledgement? acknowledgement)
     {
+        var connectionEpoch = _getConnectionEpoch();
         if (acknowledgement is null)
-            return;
+            return connectionEpoch;
         RequireNonEmpty(acknowledgement.ReviewToken, nameof(acknowledgement.ReviewToken));
-        if (acknowledgement.ConnectionEpoch != _getConnectionEpoch())
+        if (acknowledgement.ConnectionEpoch != connectionEpoch)
         {
             throw new InvalidOperationException(
                 "Plugin capability review expired after the Gateway connection changed.");
         }
+        return connectionEpoch;
+    }
+
+    private async Task<PluginMutationResult> SendMutationAsync(
+        string method,
+        object? parameters,
+        int timeoutMs,
+        long connectionEpoch)
+    {
+        EnsureMethodSupported(method);
+        var payload = await _sendMutationRequest(
+            method,
+            parameters,
+            timeoutMs,
+            connectionEpoch).ConfigureAwait(false);
+        return DeserializePayload<PluginMutationResult>(payload, method);
     }
 
     private static void AddAcknowledgement(

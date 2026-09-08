@@ -18,8 +18,17 @@ internal abstract class GatewayExtensionApi
     protected async Task<T> SendAsync<T>(string method, object? parameters, int timeoutMs)
         where T : class
     {
-        _ensureMethodSupported(method);
+        EnsureMethodSupported(method);
         var payload = await _sendRequest(method, parameters, timeoutMs).ConfigureAwait(false);
+        return DeserializePayload<T>(payload, method);
+    }
+
+    protected void EnsureMethodSupported(string method) =>
+        _ensureMethodSupported(method);
+
+    protected static T DeserializePayload<T>(JsonElement payload, string method)
+        where T : class
+    {
         try
         {
             return JsonSerializer.Deserialize<T>(payload, JsonSerializerOptionsCache.GatewayProtocol)
