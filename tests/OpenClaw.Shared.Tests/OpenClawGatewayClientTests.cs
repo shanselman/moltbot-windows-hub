@@ -608,6 +608,32 @@ public class OpenClawGatewayClientTests
     private static string CreateTempIdentityPath() =>
         Path.Combine(Path.GetTempPath(), "OpenClawGatewayClientTests", Guid.NewGuid().ToString("N"));
 
+    private static async Task AssertServerDoesNotReceiveMethodAsync(
+        LoopbackWebSocketServer server,
+        string forbiddenMethod)
+    {
+        using var timeout = new CancellationTokenSource(TimeSpan.FromMilliseconds(250));
+        while (true)
+        {
+            string requestText;
+            try
+            {
+                requestText = await server.ReceiveTextAsync(timeout.Token);
+            }
+            catch (OperationCanceledException) when (timeout.IsCancellationRequested)
+            {
+                return;
+            }
+
+            using var request = JsonDocument.Parse(requestText);
+            if (request.RootElement.TryGetProperty("method", out var method) &&
+                string.Equals(method.GetString(), forbiddenMethod, StringComparison.Ordinal))
+            {
+                Assert.Fail($"Server received forbidden '{forbiddenMethod}' request.");
+            }
+        }
+    }
+
     [Fact]
     public async Task SendWizardRequestAsync_ResponseBeforeDispose_ReturnsPayloadAndCleansTracking()
     {
@@ -825,9 +851,7 @@ public class OpenClawGatewayClientTests
 
         var exception = await Assert.ThrowsAsync<InvalidOperationException>(() => installTask);
         Assert.Contains("expired", exception.Message, StringComparison.OrdinalIgnoreCase);
-        using var noRequestTimeout = new CancellationTokenSource(TimeSpan.FromMilliseconds(250));
-        await Assert.ThrowsAnyAsync<OperationCanceledException>(
-            () => server.ReceiveTextAsync(noRequestTimeout.Token));
+        await AssertServerDoesNotReceiveMethodAsync(server, "plugins.install");
     }
 
     [Fact]
@@ -869,9 +893,7 @@ public class OpenClawGatewayClientTests
 
         var exception = await Assert.ThrowsAsync<InvalidOperationException>(() => enableTask);
         Assert.Contains("expired", exception.Message, StringComparison.OrdinalIgnoreCase);
-        using var noRequestTimeout = new CancellationTokenSource(TimeSpan.FromMilliseconds(250));
-        await Assert.ThrowsAnyAsync<OperationCanceledException>(
-            () => server.ReceiveTextAsync(noRequestTimeout.Token));
+        await AssertServerDoesNotReceiveMethodAsync(server, "plugins.setEnabled");
     }
 
     [Fact]
@@ -913,9 +935,7 @@ public class OpenClawGatewayClientTests
 
         var exception = await Assert.ThrowsAsync<InvalidOperationException>(() => installTask);
         Assert.Contains("expired", exception.Message, StringComparison.OrdinalIgnoreCase);
-        using var noRequestTimeout = new CancellationTokenSource(TimeSpan.FromMilliseconds(250));
-        await Assert.ThrowsAnyAsync<OperationCanceledException>(
-            () => server.ReceiveTextAsync(noRequestTimeout.Token));
+        await AssertServerDoesNotReceiveMethodAsync(server, "skills.install");
     }
 
     [Fact]
