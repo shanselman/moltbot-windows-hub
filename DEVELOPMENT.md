@@ -317,32 +317,43 @@ Generating the optional `.appxsym` symbol package additionally requires
 `mspdbcmf.exe` from the Visual Studio **Desktop development with C++** workload;
 without it the build logs a warning and skips symbols.
 
-#### The Store package replaces an Inno install
+#### The Store package alongside an existing Inno install
 
-The Store package and the Inno installer produce the same application, so they
-are not supported side by side. Both register the `openclaw` protocol and both
-can claim autostart, and production builds of either share the `OpenClawTray`
-single-instance mutex. MSIX full-trust apps are not namespace-isolated for named
-objects, so the second launch hands its activation to whichever instance is
-already running. With both installed, opening the Store app usually surfaces the
-Inno one instead.
+The Store package and the Inno installer produce the same application. Both can
+be installed at once, and uninstalling the Inno build first is **not** required.
+They cannot both run at once, though, and nothing in either build arbitrates
+between them yet.
 
-Uninstall the Inno build before installing the Store package. That transfer is
-safe today:
+What the two installs share: the `openclaw` protocol registration, the
+`OpenClawTray` single-instance mutex, per-user data under `%APPDATA%\OpenClawTray`,
+the local gateway port, and the WSL gateway distro. MSIX full-trust apps are not
+namespace-isolated for named objects, so the mutex really is shared. Package
+identity, install directory, and AppUserModelID are the only axes that differ.
 
-- Settings, gateway records, and device identities under
-  `%APPDATA%\OpenClawTray` are preserved. Inno uninstall removes only the
-  install directory, and a packaged process reads the existing per-user data
-  through the merged MSIX view, so pairing carries over without re-pairing.
-- Uninstall asks whether to also remove the local WSL gateway. **No** is the
-  default and keeps the gateway. Answer **No** when reinstalling; **Yes** is a
-  deliberate destructive choice that unregisters the distro.
-- A silent uninstall (`/SILENT`, `/VERYSILENT`) always removes the local
-  gateway, so do not use it to move to the Store package.
+Consequences to expect while both are installed:
 
-Detecting a legacy install from the packaged app, obtaining consent, and
-removing it automatically belong to a migration service that does not exist
-yet. Until it ships, uninstalling first is the supported path.
+- The first one launched holds the mutex. The second forwards its activation to
+  the running instance and exits, so opening the Store entry while the Inno build
+  is running surfaces the Inno window with no error shown.
+- Both can register autostart, so which build starts at logon is a race. The
+  Inno build uses a logon scheduled task; the packaged build uses the manifest's
+  `windows.startupTask`. Neither build suppresses the other, so the race persists
+  across reboots.
+- Settings, gateway records, and device identities carry over either way. A
+  packaged process reads the existing per-user data through the merged MSIX view,
+  so there is no re-pairing.
+- A running Store app blocks the Inno uninstaller, because `installer.iss` sets
+  `AppMutex` to the shared mutex name. Quit the Store app before uninstalling.
+- Inno uninstall asks whether to also remove the local WSL gateway. **No** is the
+  default and keeps it. A silent uninstall (`/SILENT`, `/VERYSILENT`) always
+  removes the gateway.
+
+To make the Store build the one that runs, quit the Inno build and launch the
+Store entry, or uninstall the Inno build.
+
+Detecting a legacy install from the packaged app, suppressing its autostart,
+telling the user which install is active, and removing it with consent are
+tracked as separate migration work and are not implemented here.
 
 #### Dev identity and side-by-side installs
 
