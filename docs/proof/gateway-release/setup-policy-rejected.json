@@ -1,0 +1,7 @@
+{
+  "DistroName": "OpenClawGatewayProofRejected",
+  "Gateway": {
+    "Selection": "exact",
+    "Version": "2026.9.3"
+  }
+}

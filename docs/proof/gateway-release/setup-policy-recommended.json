@@ -1,0 +1,6 @@
+{
+  "DistroName": "OpenClawGatewayProofRecommended",
+  "Gateway": {
+    "Selection": "recommended"
+  }
+}
