@@ -9,6 +9,28 @@ public class WizardPayloadHelpersTests
     private static JsonElement Parse(string json)
         => JsonDocument.Parse(json).RootElement;
 
+    [Fact]
+    public void ExtractCurrentStepValidationError_returns_error_for_rejected_answer()
+    {
+        var payload = Parse("""{"done":false,"error":"Model ID is required","step":{"id":"model","type":"text"}}""");
+
+        Assert.Equal(
+            "Model ID is required",
+            WizardPayloadHelpers.ExtractCurrentStepValidationError(payload, "model"));
+    }
+
+    [Theory]
+    [InlineData("other")]
+    [InlineData("")]
+    public void ExtractCurrentStepValidationError_ignores_non_current_steps(string currentStepId)
+    {
+        var payload = Parse("""{"done":false,"error":"Model ID is required","step":{"id":"model","type":"text"}}""");
+
+        Assert.Equal(
+            string.Empty,
+            WizardPayloadHelpers.ExtractCurrentStepValidationError(payload, currentStepId));
+    }
+
     // ---- ExtractStepMessage -----------------------------------------------
 
     [Fact]

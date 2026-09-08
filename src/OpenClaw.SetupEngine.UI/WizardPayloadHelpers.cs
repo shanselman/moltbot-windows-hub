@@ -9,6 +9,29 @@ namespace OpenClaw.SetupEngine.UI;
 internal static class WizardPayloadHelpers
 {
     /// <summary>
+    /// Returns a validation error only when the gateway kept the client on the
+    /// current step. This distinguishes rejected answers from terminal errors.
+    /// </summary>
+    public static string ExtractCurrentStepValidationError(JsonElement payload, string currentStepId)
+    {
+        if (payload.ValueKind != JsonValueKind.Object
+            || string.IsNullOrWhiteSpace(currentStepId)
+            || !payload.TryGetProperty("error", out var error)
+            || error.ValueKind != JsonValueKind.String
+            || string.IsNullOrWhiteSpace(error.GetString())
+            || !payload.TryGetProperty("step", out var step)
+            || step.ValueKind != JsonValueKind.Object
+            || !step.TryGetProperty("id", out var id)
+            || id.ValueKind != JsonValueKind.String
+            || !string.Equals(id.GetString(), currentStepId, StringComparison.Ordinal))
+        {
+            return string.Empty;
+        }
+
+        return error.GetString()!;
+    }
+
+    /// <summary>
     /// Reads the <c>message</c> field of a wizard step. Upstream is supposed to
     /// send a string; the Gemini CLI OAuth plugin (and possibly others) nests a
     /// note object instead, e.g.

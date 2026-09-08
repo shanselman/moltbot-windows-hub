@@ -1530,6 +1530,21 @@ public sealed class AppRefactorContractTests
     }
 
     [Fact]
+    public void WizardValidationError_RemainsVisibleAfterContinueStateRefresh()
+    {
+        var root = TestRepositoryPaths.GetRepositoryRoot();
+        var source = File.ReadAllText(Path.Combine(root, "src", "OpenClaw.SetupEngine.UI", "Pages", "WizardPage.xaml.cs"));
+        var applyPayload = ExtractMethod(source, "ApplyPayloadAsync");
+
+        AssertInOrder(
+            applyPayload,
+            "ExtractCurrentStepValidationError",
+            "UpdateContinueState();",
+            "ErrorText.Text = validationError;",
+            "ErrorText.Visibility = Visibility.Visible;");
+    }
+
+    [Fact]
     public void WizardResetInputs_RemovesOverflowMoreButton()
     {
         var root = TestRepositoryPaths.GetRepositoryRoot();

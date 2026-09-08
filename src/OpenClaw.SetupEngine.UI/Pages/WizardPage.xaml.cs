@@ -298,6 +298,20 @@ public sealed partial class WizardPage : Page
                 return;
             }
 
+            var validationError = WizardPayloadHelpers.ExtractCurrentStepValidationError(payload, _stepId);
+            if (!string.IsNullOrWhiteSpace(validationError))
+            {
+                BusyRing.Visibility = Visibility.Collapsed;
+                BusyRing.IsActive = false;
+                StatusText.Text = "A few quick questions to connect your agent";
+                SecondaryButton.IsEnabled = true;
+                ShowRecoveryActions();
+                UpdateContinueState();
+                ErrorText.Text = validationError;
+                ErrorText.Visibility = Visibility.Visible;
+                return;
+            }
+
             if (!payload.TryGetProperty("step", out var step))
             {
                 ShowError("Gateway wizard returned an invalid response.");
@@ -851,7 +865,8 @@ public sealed partial class WizardPage : Page
             if (generation != _operationGeneration)
                 return;
 
-            AppendTranscriptTurn(answeredQuestion, answeredLabel);
+            if (string.IsNullOrWhiteSpace(WizardPayloadHelpers.ExtractCurrentStepValidationError(payload, _stepId)))
+                AppendTranscriptTurn(answeredQuestion, answeredLabel);
             await ApplyPayloadAsync(payload);
             ScrollActiveIntoView();
         }
@@ -1056,7 +1071,7 @@ public sealed partial class WizardPage : Page
             return true;
 
         if (_stepType == "text")
-            return !WizardSelection.ShouldDisableContinue(_stepType, value?.ToString());
+            return WizardSelection.CanSubmitTextAnswer(_stepType);
 
         return !WizardSelection.ShouldDisableContinue(_stepType, GetSelectedOptionValues(), _options.Select(o => o.Value).ToArray());
     }
@@ -1083,7 +1098,7 @@ public sealed partial class WizardPage : Page
             return;
 
         PrimaryButton.IsEnabled = _stepType == "text"
-            ? !WizardSelection.ShouldDisableContinue(_stepType, _sensitive ? SecretInput.Password : TextInput.Text)
+            ? WizardSelection.CanSubmitTextAnswer(_stepType)
             : !WizardSelection.ShouldDisableContinue(
                 _stepType,
                 GetSelectedOptionValues(),

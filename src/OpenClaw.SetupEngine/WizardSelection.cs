@@ -39,6 +39,9 @@ public static class WizardSelection
     public static bool ShouldDisableContinue(string stepType, IReadOnlyCollection<string> selectedValues, IReadOnlyCollection<string> optionValues) =>
         RequiresSelection(stepType) && !HasValidSelection(stepType, selectedValues, optionValues);
 
-    public static bool ShouldDisableContinue(string stepType, string? textInput) =>
-        stepType == "text" && string.IsNullOrWhiteSpace(textInput);
+    // Text validation belongs to the gateway because the wire protocol does not
+    // expose whether a text step is required. Always submit the current value so
+    // optional empty answers can advance and required fields can return their
+    // authoritative validation message.
+    public static bool CanSubmitTextAnswer(string stepType) => stepType == "text";
 }

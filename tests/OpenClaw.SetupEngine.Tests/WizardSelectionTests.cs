@@ -57,12 +57,11 @@ public class WizardSelectionTests
     }
 
     [Theory]
-    [InlineData(null, true)]
-    [InlineData("", true)]
-    [InlineData("   ", true)]
-    [InlineData("value", false)]
-    public void ContinueDisabled_ForEmptyTextInput(string? input, bool expectedDisabled)
+    [InlineData("text", true)]
+    [InlineData("select", false)]
+    [InlineData("note", false)]
+    public void TextAnswers_AreSubmittedForGatewayValidation(string stepType, bool expected)
     {
-        Assert.Equal(expectedDisabled, WizardSelection.ShouldDisableContinue("text", input));
+        Assert.Equal(expected, WizardSelection.CanSubmitTextAnswer(stepType));
     }
 }
