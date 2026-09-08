@@ -1946,9 +1946,11 @@ public class SetupStepsTests : IDisposable
             null,
             GatewayInstallPolicy.NodeVersion);
 
-        Assert.Equal(
-            "curl -fsSL --proto '=https' --tlsv1.2 'https://openclaw.ai/install-cli.sh' | bash -s -- --node-version '22.22.3'",
+        Assert.Contains(
+            $"bash -s -- --node-version '{GatewayInstallPolicy.NodeVersion}' < \"$installer\"",
             command);
+        Assert.DoesNotContain(" --version ", command, StringComparison.Ordinal);
+        Assert.DoesNotContain("| bash", command, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -2379,8 +2381,8 @@ public class SetupStepsTests : IDisposable
         Assert.Equal("2026.8.1", config.Gateway.InstalledVersion);
         Assert.Contains(
             commands.WslCalls,
-            call => call.Command.StartsWith("curl ", StringComparison.Ordinal) &&
-                    !call.Command.Contains("--version", StringComparison.Ordinal));
+            call => call.Command.Contains("curl -fsSL", StringComparison.Ordinal) &&
+                    !call.Command.Contains(" --version '", StringComparison.Ordinal));
     }
 
     [Fact]

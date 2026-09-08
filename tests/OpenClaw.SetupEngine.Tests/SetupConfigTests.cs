@@ -549,7 +549,7 @@ public class SetupConfigTests : IDisposable
 
         Assert.Contains("Exact OpenClaw package 2026.8.2", exact.InstallerDescription);
         Assert.Equal("2026.8.2", exact.InstallerBadge);
-        Assert.Contains("--version 2026.8.2", exact.ExactCommands);
+        Assert.Contains("--version '2026.8.2'", exact.ExactCommands);
         Assert.Contains("OpenClaw beta channel", beta.InstallerDescription);
         Assert.Equal("npm beta", beta.InstallerBadge);
         Assert.DoesNotContain("candidate", exact.InstallerDescription, StringComparison.OrdinalIgnoreCase);
