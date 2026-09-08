@@ -337,14 +337,20 @@ Consequences to expect while both are installed:
   the running instance and exits, so opening the Store entry while the Inno build
   is running surfaces the Inno window with no error shown.
 - Both can register autostart, so which build starts at logon is a race. The
-  Inno build uses a logon scheduled task; the packaged build uses the manifest's
-  `windows.startupTask`. Neither build suppresses the other, so the race persists
-  across reboots.
+  Inno installer's "Start when Windows starts" task creates a Startup folder
+  shortcut (`installer.iss:124`, `{userstartup}`); the Inno app's own Settings
+  toggle creates a logon scheduled task and an `HKCU\...\Run` value; the packaged
+  build uses the manifest's `windows.startupTask`. Neither build suppresses the
+  other, so the race persists across reboots. Windows Settings lists all of them
+  under the same name, and a Startup folder shortcut is labelled by its target
+  executable, so they cannot be told apart there.
 - Settings, gateway records, and device identities carry over either way. A
   packaged process reads the existing per-user data through the merged MSIX view,
   so there is no re-pairing.
-- A running Store app blocks the Inno uninstaller, because `installer.iss` sets
-  `AppMutex` to the shared mutex name. Quit the Store app before uninstalling.
+- A running Store app blocks the Inno installer **and** uninstaller, because
+  `installer.iss` sets `AppMutex` to the shared mutex name. Both abort with
+  "Setup has detected that OpenClaw Companion is currently running". Quit the
+  Store app before installing or uninstalling the Inno build.
 - Inno uninstall asks whether to also remove the local WSL gateway. **No** is the
   default and keeps it. A silent uninstall (`/SILENT`, `/VERYSILENT`) always
   removes the gateway.
