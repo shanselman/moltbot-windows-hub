@@ -6,13 +6,15 @@ using System.Text.Json;
 
 namespace OpenClaw.SetupEngine.Tests;
 
+[Collection(EnvironmentVariableCollection.Name)]
 public sealed class LocalAiGatewayUninstallTests
 {
     [Fact]
     public async Task FreshProcessUninstall_RemovesExactManagedProviderAndPrimary()
     {
         using var temp = new TempDirectory("local-ai-gateway-uninstall-");
-        LocalAiResolvedInstall install = await SaveManifestAsync(temp.Path);
+        (LocalAiResolvedInstall install, IDisposable hubCacheScope) = await SaveManifestAsync(temp.Path);
+        using var _hubCacheScope = hubCacheScope;
         string provider = LocalAiGatewayProviderDefinition.BuildProviderJson(install);
         string primary = JsonSerializer.Serialize(
             LocalAiGatewayProviderDefinition.BuildPrimaryModel(install));
@@ -32,7 +34,8 @@ public sealed class LocalAiGatewayUninstallTests
     public async Task FreshProcessUninstall_AcceptsCliRedactedManagedApiKey()
     {
         using var temp = new TempDirectory("local-ai-gateway-uninstall-");
-        LocalAiResolvedInstall install = await SaveManifestAsync(temp.Path);
+        (LocalAiResolvedInstall install, IDisposable hubCacheScope) = await SaveManifestAsync(temp.Path);
+        using var _hubCacheScope = hubCacheScope;
         string provider = LocalAiGatewayProviderDefinition.BuildProviderJson(install).Replace(
             "\"api\":\"openai-completions\",\"apiKey\":\"llama-local\"",
             $"\"apiKey\":\"{LocalAiGatewayProviderDefinition.CliRedactedApiKey}\",\"api\":\"openai-completions\"",
@@ -53,7 +56,8 @@ public sealed class LocalAiGatewayUninstallTests
     public async Task FreshProcessUninstall_RestoresRecordedFallbackPrimary()
     {
         using var temp = new TempDirectory("local-ai-gateway-uninstall-");
-        LocalAiResolvedInstall install = await SaveManifestAsync(temp.Path, "openai/gpt-5");
+        (LocalAiResolvedInstall install, IDisposable hubCacheScope) = await SaveManifestAsync(temp.Path, "openai/gpt-5");
+        using var _hubCacheScope = hubCacheScope;
         string provider = LocalAiGatewayProviderDefinition.BuildProviderJson(install);
         string primary = JsonSerializer.Serialize(
             LocalAiGatewayProviderDefinition.BuildPrimaryModel(install));
@@ -73,7 +77,8 @@ public sealed class LocalAiGatewayUninstallTests
     public async Task FreshProcessUninstall_PreservesDriftAndFailsClosed()
     {
         using var temp = new TempDirectory("local-ai-gateway-uninstall-");
-        LocalAiResolvedInstall install = await SaveManifestAsync(temp.Path);
+        (LocalAiResolvedInstall install, IDisposable hubCacheScope) = await SaveManifestAsync(temp.Path);
+        using var _hubCacheScope = hubCacheScope;
         string expectedProvider = LocalAiGatewayProviderDefinition.BuildProviderJson(install);
         string driftedProvider = expectedProvider.Replace(
             "http://127.0.0.1:28765/v1",
@@ -99,7 +104,8 @@ public sealed class LocalAiGatewayUninstallTests
     public async Task FreshProcessUninstall_PreservesStateWhenSnapshotFails()
     {
         using var temp = new TempDirectory("local-ai-gateway-uninstall-");
-        LocalAiResolvedInstall install = await SaveManifestAsync(temp.Path);
+        (LocalAiResolvedInstall install, IDisposable hubCacheScope) = await SaveManifestAsync(temp.Path);
+        using var _hubCacheScope = hubCacheScope;
         string provider = LocalAiGatewayProviderDefinition.BuildProviderJson(install);
         string primary = JsonSerializer.Serialize(
             LocalAiGatewayProviderDefinition.BuildPrimaryModel(install));
@@ -129,49 +135,76 @@ public sealed class LocalAiGatewayUninstallTests
             localDataDir: localDataDirectory);
     }
 
-    private static async Task<LocalAiResolvedInstall> SaveManifestAsync(
+    /// <summary>
+    /// Saves a manifest whose model lives in an isolated, per-test Hugging Face hub
+    /// cache directory (via a temporary <c>HF_HUB_CACHE</c> override). The returned
+    /// scope must be kept alive (e.g. via <c>using</c>) for as long as the manifest may
+    /// still be reloaded and revalidated.
+    /// </summary>
+    private static async Task<(LocalAiResolvedInstall Install, IDisposable HubCacheScope)> SaveManifestAsync(
         string localDataDirectory,
         string? fallbackModel = null)
     {
-        var paths = new LocalAiPaths(localDataDirectory);
-        const string revision = "5bc3e238d916f48a861bac2f8a1990a0e9b7e98d";
-        var manifest = new LocalAiInstallManifest
+        var hubCacheScope = new EnvironmentScope("HF_HUB_CACHE", Path.Combine(localDataDirectory, "hf-cache"));
+        try
         {
-            EngineVersion = "b10488",
-            Architecture = "arm64",
-            HardwareProfileId = "rtx-spark-n1x",
-            RuntimeId = "b10488-cuda13-arm64",
-            ModelCatalogId = LocalModelCatalog.Qwen35BModelId,
-            SelectedGpuId = "GPU-SPARK",
-            ExecutablePath = Path.Combine("engines", "llama-b10488", "llama-server.exe"),
-            RuntimeAssets =
-            [
-                new LocalAiAssetReceipt
-                {
-                    FileName = "llama-runtime.zip",
-                    SourceUrl = "https://github.com/ggml-org/llama.cpp/releases/download/b10488/llama-runtime.zip",
-                    SizeBytes = 1,
-                    Sha256 = new string('a', 64),
-                },
-            ],
-            ModelPath = Path.Combine("models", "Qwen3.6-35B-A3B-UD-Q4_K_M.gguf"),
-            ModelId = $"unsloth/Qwen3.6-35B-A3B-MTP-GGUF@{revision}",
-            ModelAlias = LocalModelCatalog.Qwen35BModelId,
-            ModelAsset = new LocalAiAssetReceipt
+            var paths = new LocalAiPaths(localDataDirectory);
+            const string repositoryId = "unsloth/Qwen3.6-35B-A3B-MTP-GGUF";
+            const string revision = "5bc3e238d916f48a861bac2f8a1990a0e9b7e98d";
+            const string fileName = "Qwen3.6-35B-A3B-UD-Q4_K_M.gguf";
+            Assert.True(HuggingFaceHubCache.TryGetSnapshotPaths(
+                Path.Combine(localDataDirectory, "hf-cache"),
+                repositoryId,
+                revision,
+                fileName,
+                out string modelPath,
+                out _,
+                out string pathError), pathError);
+            var manifest = new LocalAiInstallManifest
             {
-                FileName = "Qwen3.6-35B-A3B-UD-Q4_K_M.gguf",
-                SourceUrl = $"https://huggingface.co/unsloth/Qwen3.6-35B-A3B-MTP-GGUF/resolve/{revision}/Qwen3.6-35B-A3B-UD-Q4_K_M.gguf?download=true",
-                SizeBytes = 1,
-                Sha256 = new string('b', 64),
-            },
-            RequestedPort = 0,
-            Endpoint = "http://127.0.0.1:28765/v1",
-            GatewayFallbackModel = fallbackModel,
-            ContextLength = LocalModelCatalog.NativeContextTokens,
-        };
-        var store = new LocalAiManifestStore(paths);
-        await store.SaveAsync(manifest);
-        return (await store.LoadAsync())!;
+                EngineVersion = "b10488",
+                Architecture = "arm64",
+                HardwareProfileId = "rtx-spark-n1x",
+                RuntimeId = "b10488-cuda13-arm64",
+                ModelCatalogId = LocalModelCatalog.Qwen35BModelId,
+                SelectedGpuId = "GPU-SPARK",
+                ExecutablePath = Path.Combine("engines", "llama-b10488", "llama-server.exe"),
+                RuntimeAssets =
+                [
+                    new LocalAiAssetReceipt
+                    {
+                        FileName = "llama-runtime.zip",
+                        SourceUrl = "https://github.com/ggml-org/llama.cpp/releases/download/b10488/llama-runtime.zip",
+                        SizeBytes = 1,
+                        Sha256 = new string('a', 64),
+                    },
+                ],
+                ModelPath = modelPath,
+                ModelCacheRoot = Path.Combine(localDataDirectory, "hf-cache"),
+                ModelId = $"{repositoryId}@{revision}",
+                ModelAlias = LocalModelCatalog.Qwen35BModelId,
+                ModelAsset = new LocalAiAssetReceipt
+                {
+                    FileName = fileName,
+                    SourceUrl = $"https://huggingface.co/{repositoryId}/resolve/{revision}/{fileName}?download=true",
+                    SizeBytes = 1,
+                    Sha256 = new string('b', 64),
+                },
+                RequestedPort = 0,
+                Endpoint = "http://127.0.0.1:28765/v1",
+                GatewayFallbackModel = fallbackModel,
+                ContextLength = LocalModelCatalog.NativeContextTokens,
+            };
+            var store = new LocalAiManifestStore(paths);
+            await store.SaveAsync(manifest);
+            LocalAiResolvedInstall install = (await store.LoadAsync())!;
+            return (install, hubCacheScope);
+        }
+        catch
+        {
+            hubCacheScope.Dispose();
+            throw;
+        }
     }
 
     private sealed class GatewayStateCommandRunner(

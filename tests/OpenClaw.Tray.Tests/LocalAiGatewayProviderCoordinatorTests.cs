@@ -410,7 +410,9 @@ public sealed class LocalAiGatewayProviderCoordinatorTests
             SelectedGpuId = "GPU-SPARK",
             ExecutablePath = "engines/llama-server.exe",
             RuntimeAssets = ImmutableArray<LocalAiAssetReceipt>.Empty,
-            ModelPath = "models/model.gguf",
+            ModelPath =
+                @"C:\hf-cache\models--owner--model\snapshots\0123456789abcdef0123456789abcdef01234567\model.gguf",
+            ModelCacheRoot = @"C:\hf-cache",
             ModelId = "owner/model@0123456789abcdef0123456789abcdef01234567",
             ModelAlias = LocalModelCatalog.Qwen35BModelId,
             ModelAsset = new LocalAiAssetReceipt

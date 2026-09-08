@@ -109,7 +109,16 @@ public sealed class LocalAiGpuRestartEndpointTests
             "b10488",
             "win-arm64");
         string executable = Path.Combine(engineDirectory, "llama-server.exe");
-        string modelPath = Path.Combine(localDataDirectory, "LocalAI", "models", model.Weights.RelativePath);
+        string cacheRoot = Path.Combine(localDataDirectory, "hf-cache");
+        var source = Assert.IsType<HuggingFaceRevisionSource>(model.Weights.Source);
+        Assert.True(HuggingFaceHubCache.TryGetSnapshotPaths(
+            cacheRoot,
+            source.RepositoryId,
+            source.RevisionSha,
+            model.Weights.RelativePath,
+            out string modelPath,
+            out _,
+            out string pathError), pathError);
         var receipt = new LocalAiAssetReceipt
         {
             FileName = "artifact.bin",
@@ -126,7 +135,8 @@ public sealed class LocalAiGpuRestartEndpointTests
             SelectedGpuId = "GPU-SPARK",
             ExecutablePath = Path.GetRelativePath(Path.Combine(localDataDirectory, "LocalAI"), executable),
             RuntimeAssets = ImmutableArray.Create(receipt),
-            ModelPath = Path.GetRelativePath(Path.Combine(localDataDirectory, "LocalAI"), modelPath),
+            ModelPath = modelPath,
+            ModelCacheRoot = cacheRoot,
             ModelId = model.Id,
             ModelAlias = model.Id,
             ModelAsset = receipt with { FileName = Path.GetFileName(modelPath) },

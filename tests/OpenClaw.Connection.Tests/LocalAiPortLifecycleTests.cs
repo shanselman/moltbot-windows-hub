@@ -9,8 +9,27 @@ using System.Text.Json.Nodes;
 
 namespace OpenClaw.Connection.Tests;
 
-public sealed class LocalAiPortLifecycleTests
+/// <summary>
+/// Every test in this class runs against an isolated, per-test Hugging Face hub cache.
+/// Without the class-level override the manifest paths would resolve into the developer's
+/// real <c>~/.cache/huggingface/hub</c> -- which on a machine that has actually run Local
+/// AI holds the very repository these manifests name.
+/// </summary>
+[Collection(EnvironmentVariableCollection.Name)]
+public sealed class LocalAiPortLifecycleTests : IDisposable
 {
+    private readonly TempDirectory _hubCache = new("local-ai-hub-cache-");
+    private readonly EnvironmentScope _hubCacheScope;
+
+    public LocalAiPortLifecycleTests() =>
+        _hubCacheScope = new EnvironmentScope("HF_HUB_CACHE", _hubCache.Path);
+
+    public void Dispose()
+    {
+        _hubCacheScope.Dispose();
+        _hubCache.Dispose();
+    }
+
     [Theory]
     [InlineData(0, true)]
     [InlineData(1, true)]
@@ -44,6 +63,32 @@ public sealed class LocalAiPortLifecycleTests
 
         LocalAiResolvedInstall saved = (await store.LoadAsync())!;
         Assert.Equal("openai/gpt-5", saved.Manifest.GatewayFallbackModel);
+    }
+
+    [SymbolicLinkFact]
+    public async Task Manifest_RoundTripsStandardHubSnapshotSymlink()
+    {
+        using var temp = new TempDirectory("local-ai-manifest-link-");
+        string cacheRoot = Path.Combine(temp.Path, "hf-cache");
+        using var env = new EnvironmentScope("HF_HUB_CACHE", cacheRoot);
+        LocalAiInstallManifest manifest = ValidManifest(cacheRoot);
+        string snapshotDirectory = Path.GetDirectoryName(manifest.ModelPath)!;
+        string repositoryDirectory = Directory.GetParent(
+            Directory.GetParent(snapshotDirectory)!.FullName)!.FullName;
+        string blobsDirectory = Path.Combine(repositoryDirectory, "blobs");
+        string blobPath = Path.Combine(blobsDirectory, manifest.ModelAsset.Sha256);
+        Directory.CreateDirectory(blobsDirectory);
+        Directory.CreateDirectory(snapshotDirectory);
+        await File.WriteAllTextAsync(blobPath, "verified model");
+        SymbolicLinkSupport.CreateSymbolicLink(
+            manifest.ModelPath,
+            Path.GetRelativePath(snapshotDirectory, blobPath));
+
+        var store = new LocalAiManifestStore(new LocalAiPaths(temp.Path));
+        await store.SaveAsync(manifest);
+        LocalAiResolvedInstall saved = (await store.LoadAsync())!;
+
+        Assert.Equal(manifest.ModelPath, saved.ModelPath);
     }
 
     [Fact]
@@ -144,7 +189,8 @@ public sealed class LocalAiPortLifecycleTests
     public async Task AutomaticPort_IsBoundByChildAndPersistedOnlyAfterOwnedHealth()
     {
         using var temp = new TempDirectory("local-ai-port-");
-        LocalAiPaths paths = await PrepareInstallAsync(temp);
+        (LocalAiPaths paths, IDisposable hubCacheScope) = await PrepareInstallAsync(temp);
+        using var _hubCacheScope = hubCacheScope;
         var events = new List<string>();
         var platform = new FakePlatform();
         var host = new FakeProcessHost(platform, events, selectedPort: 28_765);
@@ -172,7 +218,8 @@ public sealed class LocalAiPortLifecycleTests
         bool pathMatches)
     {
         using var temp = new TempDirectory("local-ai-port-");
-        LocalAiPaths paths = await PrepareInstallAsync(temp);
+        (LocalAiPaths paths, IDisposable hubCacheScope) = await PrepareInstallAsync(temp);
+        using var _hubCacheScope = hubCacheScope;
         var events = new List<string>();
         var platform = new FakePlatform();
         var host = new FakeProcessHost(platform, events, selectedPort: 28_774);
@@ -203,7 +250,8 @@ public sealed class LocalAiPortLifecycleTests
     public async Task Refresh_UpdatesPublicationWhenManagedModelReadinessChanges()
     {
         using var temp = new TempDirectory("local-ai-port-");
-        LocalAiPaths paths = await PrepareInstallAsync(temp);
+        (LocalAiPaths paths, IDisposable hubCacheScope) = await PrepareInstallAsync(temp);
+        using var _hubCacheScope = hubCacheScope;
         var events = new List<string>();
         var platform = new FakePlatform();
         var host = new FakeProcessHost(platform, events, selectedPort: 28_773);
@@ -250,7 +298,8 @@ public sealed class LocalAiPortLifecycleTests
         LocalAiRuntimeState expectedState)
     {
         using var temp = new TempDirectory("local-ai-port-");
-        LocalAiPaths paths = await PrepareInstallAsync(temp);
+        (LocalAiPaths paths, IDisposable hubCacheScope) = await PrepareInstallAsync(temp);
+        using var _hubCacheScope = hubCacheScope;
         var events = new List<string>();
         var platform = new FakePlatform();
         var host = new FakeProcessHost(platform, events, selectedPort: 28_775);
@@ -290,7 +339,8 @@ public sealed class LocalAiPortLifecycleTests
     public async Task Refresh_QuiesceFailureStopsUnverifiedManagedProcess()
     {
         using var temp = new TempDirectory("local-ai-port-");
-        LocalAiPaths paths = await PrepareInstallAsync(temp);
+        (LocalAiPaths paths, IDisposable hubCacheScope) = await PrepareInstallAsync(temp);
+        using var _hubCacheScope = hubCacheScope;
         var events = new List<string>();
         var platform = new FakePlatform();
         var host = new FakeProcessHost(platform, events, selectedPort: 28_776);
@@ -321,7 +371,8 @@ public sealed class LocalAiPortLifecycleTests
     public async Task Refresh_QuiesceExceptionStopsManagedProcessBeforePropagating()
     {
         using var temp = new TempDirectory("local-ai-port-");
-        LocalAiPaths paths = await PrepareInstallAsync(temp);
+        (LocalAiPaths paths, IDisposable hubCacheScope) = await PrepareInstallAsync(temp);
+        using var _hubCacheScope = hubCacheScope;
         var events = new List<string>();
         var platform = new FakePlatform();
         var host = new FakeProcessHost(platform, events, selectedPort: 28_779);
@@ -352,7 +403,8 @@ public sealed class LocalAiPortLifecycleTests
     public async Task Refresh_RecoveryRebindsFreshlyVerifiedEndpointBeforePublishing()
     {
         using var temp = new TempDirectory("local-ai-port-");
-        LocalAiPaths paths = await PrepareInstallAsync(temp);
+        (LocalAiPaths paths, IDisposable hubCacheScope) = await PrepareInstallAsync(temp);
+        using var _hubCacheScope = hubCacheScope;
         var events = new List<string>();
         var platform = new FakePlatform();
         var host = new FakeProcessHost(platform, events, selectedPort: 28_777);
@@ -388,7 +440,8 @@ public sealed class LocalAiPortLifecycleTests
     public async Task Refresh_RecoveryPublishFailureRemainsFailedAndQuiesced()
     {
         using var temp = new TempDirectory("local-ai-port-");
-        LocalAiPaths paths = await PrepareInstallAsync(temp);
+        (LocalAiPaths paths, IDisposable hubCacheScope) = await PrepareInstallAsync(temp);
+        using var _hubCacheScope = hubCacheScope;
         var events = new List<string>();
         var platform = new FakePlatform();
         var host = new FakeProcessHost(platform, events, selectedPort: 28_778);
@@ -420,7 +473,8 @@ public sealed class LocalAiPortLifecycleTests
     public async Task AutomaticPort_NeverProbesListenerWithoutMatchingProcessStartTime()
     {
         using var temp = new TempDirectory("local-ai-port-");
-        LocalAiPaths paths = await PrepareInstallAsync(temp);
+        (LocalAiPaths paths, IDisposable hubCacheScope) = await PrepareInstallAsync(temp);
+        using var _hubCacheScope = hubCacheScope;
         var platform = new FakePlatform();
         var host = new FakeProcessHost(
             platform,
@@ -448,7 +502,8 @@ public sealed class LocalAiPortLifecycleTests
     public async Task FixedPortConflict_QuiescesEndpointConsumerBeforeReturning()
     {
         using var temp = new TempDirectory("local-ai-port-");
-        LocalAiPaths paths = await PrepareInstallAsync(temp);
+        (LocalAiPaths paths, IDisposable hubCacheScope) = await PrepareInstallAsync(temp);
+        using var _hubCacheScope = hubCacheScope;
         const int fixedPort = 28_770;
         var store = new LocalAiManifestStore(paths);
         LocalAiResolvedInstall install = (await store.LoadAsync())!;
@@ -485,7 +540,8 @@ public sealed class LocalAiPortLifecycleTests
     public async Task PreparationFailure_QuiescesEndpointConsumerBeforeReturning()
     {
         using var temp = new TempDirectory("local-ai-port-");
-        LocalAiPaths paths = await PrepareInstallAsync(temp);
+        (LocalAiPaths paths, IDisposable hubCacheScope) = await PrepareInstallAsync(temp);
+        using var _hubCacheScope = hubCacheScope;
         LocalAiResolvedInstall install = (await new LocalAiManifestStore(paths).LoadAsync())!;
         File.Delete(install.ExecutablePath);
         var events = new List<string>();
@@ -509,7 +565,8 @@ public sealed class LocalAiPortLifecycleTests
     public async Task AutomaticPort_RejectsWildcardChildListenerWithoutProbing()
     {
         using var temp = new TempDirectory("local-ai-port-");
-        LocalAiPaths paths = await PrepareInstallAsync(temp);
+        (LocalAiPaths paths, IDisposable hubCacheScope) = await PrepareInstallAsync(temp);
+        using var _hubCacheScope = hubCacheScope;
         var events = new List<string>();
         var platform = new FakePlatform();
         var host = new FakeProcessHost(
@@ -538,7 +595,8 @@ public sealed class LocalAiPortLifecycleTests
     public async Task Stop_QuiescesEndpointConsumerBeforeListenerDisappears()
     {
         using var temp = new TempDirectory("local-ai-port-");
-        LocalAiPaths paths = await PrepareInstallAsync(temp);
+        (LocalAiPaths paths, IDisposable hubCacheScope) = await PrepareInstallAsync(temp);
+        using var _hubCacheScope = hubCacheScope;
         var events = new List<string>();
         var platform = new FakePlatform();
         var host = new FakeProcessHost(platform, events, selectedPort: 28_769);
@@ -561,7 +619,8 @@ public sealed class LocalAiPortLifecycleTests
     public async Task PublishFailure_StopsChildAndLeavesEndpointConsumerQuiesced()
     {
         using var temp = new TempDirectory("local-ai-port-");
-        LocalAiPaths paths = await PrepareInstallAsync(temp);
+        (LocalAiPaths paths, IDisposable hubCacheScope) = await PrepareInstallAsync(temp);
+        using var _hubCacheScope = hubCacheScope;
         var events = new List<string>();
         var platform = new FakePlatform();
         var host = new FakeProcessHost(platform, events, selectedPort: 28_767);
@@ -611,19 +670,36 @@ public sealed class LocalAiPortLifecycleTests
             platform,
             client);
 
-    private static async Task<LocalAiPaths> PrepareInstallAsync(TempDirectory temp)
+    /// <summary>
+    /// Prepares a managed install whose model lives in an isolated, per-test Hugging
+    /// Face hub cache directory (via a temporary <c>HF_HUB_CACHE</c> override), since
+    /// the model path is no longer contained within the Local AI root. The returned
+    /// scope must be kept alive (e.g. via <c>using</c>) for as long as the manifest may
+    /// still be reloaded and revalidated.
+    /// </summary>
+    private static async Task<(LocalAiPaths Paths, IDisposable HubCacheScope)> PrepareInstallAsync(TempDirectory temp)
     {
-        var paths = new LocalAiPaths(temp.Path);
-        LocalAiInstallManifest manifest = ValidManifest();
-        string executable = paths.ResolveContainedPath(manifest.ExecutablePath, nameof(manifest.ExecutablePath));
-        string model = paths.ResolveContainedPath(manifest.ModelPath, nameof(manifest.ModelPath));
-        Directory.CreateDirectory(Path.GetDirectoryName(executable)!);
-        Directory.CreateDirectory(Path.GetDirectoryName(model)!);
-        await File.WriteAllTextAsync(executable, "test executable");
-        await using (var stream = new FileStream(model, FileMode.CreateNew, FileAccess.Write, FileShare.None))
-            stream.SetLength(manifest.ModelAsset.SizeBytes);
-        await new LocalAiManifestStore(paths).SaveAsync(manifest);
-        return paths;
+        string cacheRoot = Path.Combine(temp.Path, "hf-cache");
+        var hubCacheScope = new EnvironmentScope("HF_HUB_CACHE", cacheRoot);
+        try
+        {
+            var paths = new LocalAiPaths(temp.Path);
+            LocalAiInstallManifest manifest = ValidManifest(cacheRoot);
+            string executable = paths.ResolveContainedPath(manifest.ExecutablePath, nameof(manifest.ExecutablePath));
+            string model = manifest.ModelPath;
+            Directory.CreateDirectory(Path.GetDirectoryName(executable)!);
+            Directory.CreateDirectory(Path.GetDirectoryName(model)!);
+            await File.WriteAllTextAsync(executable, "test executable");
+            await using (var stream = new FileStream(model, FileMode.CreateNew, FileAccess.Write, FileShare.None))
+                stream.SetLength(manifest.ModelAsset.SizeBytes);
+            await new LocalAiManifestStore(paths).SaveAsync(manifest);
+            return (paths, hubCacheScope);
+        }
+        catch
+        {
+            hubCacheScope.Dispose();
+            throw;
+        }
     }
 
     private static string ArgumentAfter(IReadOnlyList<string> arguments, string name)
@@ -648,7 +724,7 @@ public sealed class LocalAiPortLifecycleTests
     public async Task Router_LaunchesRetiredQwen9BInstallAfterUpgrade()
     {
         using var temp = new TempDirectory("local-ai-legacy-model-");
-        var paths = new LocalAiPaths(temp.Path);
+        using var hubCacheScope = LegacyHubCacheScope(temp, out LocalAiPaths paths);
         var store = new LocalAiManifestStore(paths);
         await store.SaveAsync(LegacyQwen9BManifest());
         JsonObject legacyJson = (JsonNode.Parse(await File.ReadAllTextAsync(paths.ManifestPath)) as JsonObject)!;
@@ -698,7 +774,7 @@ public sealed class LocalAiPortLifecycleTests
     public async Task Router_RejectsRetiredQwen9BReceiptWithUnsupportedProfile()
     {
         using var temp = new TempDirectory("local-ai-legacy-profile-");
-        var paths = new LocalAiPaths(temp.Path);
+        using var hubCacheScope = LegacyHubCacheScope(temp, out LocalAiPaths paths);
         var store = new LocalAiManifestStore(paths);
         await store.SaveAsync(LegacyQwen9BManifest() with
         {
@@ -715,14 +791,60 @@ public sealed class LocalAiPortLifecycleTests
         Assert.Contains("qualified catalog profile", error.Message, StringComparison.Ordinal);
     }
 
+    /// <summary>
+    /// Stages an isolated, per-test Hugging Face hub cache containing the retired
+    /// Qwen3.5 9B weights file, so its legacy receipt resolves under the schema-v4
+    /// absolute <c>ModelPath</c> layout. The returned scope must be kept alive
+    /// (e.g. via <c>using</c>) for as long as the manifest may still be reloaded
+    /// and revalidated.
+    /// </summary>
+    private static IDisposable LegacyHubCacheScope(TempDirectory temp, out LocalAiPaths paths)
+    {
+        string cacheRoot = Path.Combine(temp.Path, "hf-cache");
+        var hubCacheScope = new EnvironmentScope("HF_HUB_CACHE", cacheRoot);
+        try
+        {
+            Assert.True(
+                HuggingFaceHubCache.TryGetSnapshotPaths(
+                    cacheRoot,
+                    "unsloth/Qwen3.5-9B-MTP-GGUF",
+                    "9716a636ee4bddc3fed678220b7a33dd2a4160ae",
+                    "Qwen3.5-9B-Q4_K_M.gguf",
+                    out string legacyModelPath,
+                    out _,
+                    out string pathError),
+                pathError);
+            Directory.CreateDirectory(Path.GetDirectoryName(legacyModelPath)!);
+            using (var stream = new FileStream(legacyModelPath, FileMode.CreateNew, FileAccess.Write, FileShare.None))
+                stream.SetLength(5_868_826_976);
+            paths = new LocalAiPaths(temp.Path);
+            return hubCacheScope;
+        }
+        catch
+        {
+            hubCacheScope.Dispose();
+            throw;
+        }
+    }
+
     private static LocalAiInstallManifest LegacyQwen9BManifest()
     {
         LlamaRuntimeVariant runtime = LlamaRuntimeCatalog.Find(
             System.Runtime.InteropServices.Architecture.Arm64)!;
+        Assert.True(
+            HuggingFaceHubCache.TryGetSnapshotPaths(
+                HuggingFaceHubCache.ResolveCacheRoot(),
+                "unsloth/Qwen3.5-9B-MTP-GGUF",
+                "9716a636ee4bddc3fed678220b7a33dd2a4160ae",
+                "Qwen3.5-9B-Q4_K_M.gguf",
+                out string legacyModelPath,
+                out _,
+                out string pathError),
+            pathError);
         return ValidManifest() with
         {
             ModelCatalogId = LocalModelCatalog.Qwen9BModelId,
-            ModelPath = Path.Combine("models", "Qwen3.5-9B-Q4_K_M.gguf"),
+            ModelPath = legacyModelPath,
             ModelId = "unsloth/Qwen3.5-9B-MTP-GGUF@9716a636ee4bddc3fed678220b7a33dd2a4160ae",
             ModelAlias = LocalModelCatalog.Qwen9BModelId,
             ModelAsset = new LocalAiAssetReceipt
@@ -748,10 +870,23 @@ public sealed class LocalAiPortLifecycleTests
         };
     }
 
-    private static LocalAiInstallManifest ValidManifest()
+    private static LocalAiInstallManifest ValidManifest() => ValidManifest(HuggingFaceHubCache.ResolveCacheRoot());
+
+    private static LocalAiInstallManifest ValidManifest(string cacheRoot)
     {
         LlamaRuntimeVariant runtime = LlamaRuntimeCatalog.Find(
             System.Runtime.InteropServices.Architecture.Arm64)!;
+        const string repositoryId = "unsloth/Qwen3.6-35B-A3B-MTP-GGUF";
+        const string revisionSha = "5bc3e238d916f48a861bac2f8a1990a0e9b7e98d";
+        const string fileName = "Qwen3.6-35B-A3B-UD-Q4_K_M.gguf";
+        Assert.True(HuggingFaceHubCache.TryGetSnapshotPaths(
+            cacheRoot,
+            repositoryId,
+            revisionSha,
+            fileName,
+            out string modelPath,
+            out _,
+            out string pathError), pathError);
         return new LocalAiInstallManifest
         {
             EngineVersion = LlamaRuntimeCatalog.ReleaseTag,
@@ -770,12 +905,13 @@ public sealed class LocalAiPortLifecycleTests
                 SizeBytes = artifact.SizeBytes,
                 Sha256 = artifact.Sha256.Value,
             }).ToImmutableArray(),
-            ModelPath = Path.Combine("models", "Qwen3.6-35B-A3B-UD-Q4_K_M.gguf"),
-            ModelId = "unsloth/Qwen3.6-35B-A3B-MTP-GGUF@5bc3e238d916f48a861bac2f8a1990a0e9b7e98d",
+            ModelPath = modelPath,
+            ModelCacheRoot = cacheRoot,
+            ModelId = $"{repositoryId}@{revisionSha}",
             ModelAlias = "qwen3.6-35b-a3b-mtp-q4-k-m",
             ModelAsset = new LocalAiAssetReceipt
             {
-                FileName = "Qwen3.6-35B-A3B-UD-Q4_K_M.gguf",
+                FileName = fileName,
                 SourceUrl = "https://huggingface.co/unsloth/Qwen3.6-35B-A3B-MTP-GGUF/resolve/5bc3e238d916f48a861bac2f8a1990a0e9b7e98d/Qwen3.6-35B-A3B-UD-Q4_K_M.gguf?download=true",
                 SizeBytes = 22_663_387_424,
                 Sha256 = "0b21525e972670ed59e1812e170b27c26355381f0656ecc4e25617ece7dac58b",

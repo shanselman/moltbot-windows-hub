@@ -11,15 +11,33 @@ internal enum HuggingFaceModelInstallDisposition
     ReusedVerified,
 }
 
-internal sealed record HuggingFaceModelInstallProgress(long CompletedBytes, long TotalBytes)
+/// <summary>
+/// Distinguishes the two long-running phases so the UI can label them apart. Verifying
+/// a multi-gigabyte candidate takes minutes and must not be reported as a download.
+/// </summary>
+internal enum HuggingFaceModelInstallPhase
+{
+    Downloading,
+    Verifying,
+}
+
+internal sealed record HuggingFaceModelInstallProgress(
+    long CompletedBytes,
+    long TotalBytes,
+    HuggingFaceModelInstallPhase Phase = HuggingFaceModelInstallPhase.Downloading)
 {
     public double Fraction => TotalBytes > 0
         ? Math.Clamp((double)CompletedBytes / TotalBytes, 0, 1)
         : 0;
 }
 
+/// <param name="CacheRoot">
+/// The hub cache root this model was installed into, recorded so later validation does
+/// not depend on the ambient <c>HF_HUB_CACHE</c>/<c>HF_HOME</c> environment.
+/// </param>
 internal sealed record HuggingFaceModelInstallResult(
     string ModelPath,
+    string CacheRoot,
     HuggingFaceModelInstallDisposition Disposition,
     bool CreatedThisRun);
 
@@ -106,15 +124,15 @@ internal sealed class HuggingFaceModelInstaller : IHuggingFaceModelAcquirer
                 "The Local AI model must be an immutable Hugging Face weights artifact.");
         }
 
-        if (!LocalAiPathPolicy.TryResolve(localDataDirectory, component, out LocalAiSetupPaths paths, out string pathError) ||
-            !LocalAiPathPolicy.TryGetModelPaths(
-                paths,
+        string cacheRoot = HuggingFaceHubCache.ResolveCacheRoot();
+        if (!HuggingFaceHubCache.TryGetSnapshotPaths(
+                cacheRoot,
                 source.RepositoryId,
                 source.RevisionSha,
                 model.Weights.RelativePath,
                 out string modelPath,
                 out string partialPath,
-                out pathError))
+                out string pathError))
         {
             throw new HuggingFaceModelInstallException(pathError);
         }
@@ -126,44 +144,77 @@ internal sealed class HuggingFaceModelInstaller : IHuggingFaceModelAcquirer
 
         if (File.Exists(modelPath))
         {
-            if (await VerifyFileAsync(modelPath, model.Weights, cancellationToken).ConfigureAwait(false))
+            if (await VerifyFileAsync(cacheRoot, modelPath, model.Weights, progress, cancellationToken)
+                    .ConfigureAwait(false))
             {
                 return new HuggingFaceModelInstallResult(
                     modelPath,
+                    cacheRoot,
                     HuggingFaceModelInstallDisposition.ReusedVerified,
                     CreatedThisRun: false);
             }
 
-            if (!LocalAiPathPolicy.TryValidateManagedDeleteTarget(
-                    localDataDirectory,
-                    modelPath,
-                    out string invalidModelPath,
-                    out pathError))
-            {
-                throw new HuggingFaceModelInstallException(pathError);
-            }
-            File.Delete(invalidModelPath);
+            RemoveUnverifiedSnapshot(cacheRoot, modelPath);
         }
 
-        Directory.CreateDirectory(Path.GetDirectoryName(modelPath)!);
+        // The snapshot directory is created lazily, immediately before the first write,
+        // so an install that fails earlier leaves no empty revision behind in this
+        // shared cache for `hf cache scan` and friends to report.
+        if (!HuggingFaceHubCache.TryValidateManagedPath(
+                cacheRoot,
+                modelPath,
+                out modelPath,
+                out pathError) ||
+            !HuggingFaceHubCache.TryValidateManagedPath(
+                cacheRoot,
+                partialPath,
+                out partialPath,
+                out pathError))
+        {
+            throw new HuggingFaceModelInstallException(pathError);
+        }
+
+        // A standard hub-cache download made by huggingface_hub, the hf CLI, or
+        // llama.cpp lands in the content-addressed blobs store or under another
+        // revision's snapshot. Reuse it instead of re-downloading when it
+        // matches the pinned size and SHA-256 digest exactly.
+        if (await TryReuseVerifiedCandidateAsync(
+                cacheRoot,
+                source,
+                model.Weights,
+                modelPath,
+                progress,
+                cancellationToken).ConfigureAwait(false))
+        {
+            // The link is this run's creation: deleting it on rollback removes only the
+            // extra directory entry, never the pre-existing blob it points at.
+            return new HuggingFaceModelInstallResult(
+                modelPath,
+                cacheRoot,
+                HuggingFaceModelInstallDisposition.ReusedVerified,
+                CreatedThisRun: true);
+        }
+
         var promoted = false;
         var preservePartial = false;
         try
         {
             bool verifiedCompletePartial = File.Exists(partialPath) &&
                 new FileInfo(partialPath).Length == model.Weights.SizeBytes &&
-                await VerifyFileAsync(partialPath, model.Weights, cancellationToken).ConfigureAwait(false);
+                await VerifyFileAsync(cacheRoot, partialPath, model.Weights, progress, cancellationToken)
+                    .ConfigureAwait(false);
             if (!verifiedCompletePartial)
             {
                 if (File.Exists(partialPath) &&
                     new FileInfo(partialPath).Length >= model.Weights.SizeBytes)
                 {
-                    TryDeletePartial(localDataDirectory, partialPath);
+                    TryDeletePartial(cacheRoot, partialPath);
                 }
 
+                Directory.CreateDirectory(Path.GetDirectoryName(partialPath)!);
                 await DownloadAndVerifyAsync(
+                        cacheRoot,
                         model.Weights,
-                        localDataDirectory,
                         partialPath,
                         progress,
                         cancellationToken)
@@ -171,13 +222,8 @@ internal sealed class HuggingFaceModelInstaller : IHuggingFaceModelAcquirer
             }
 
             cancellationToken.ThrowIfCancellationRequested();
-            if (!LocalAiPathPolicy.TryResolve(
-                    localDataDirectory,
-                    component,
-                    out LocalAiSetupPaths revalidatedPaths,
-                    out pathError) ||
-                !LocalAiPathPolicy.TryGetModelPaths(
-                    revalidatedPaths,
+            if (!HuggingFaceHubCache.TryGetSnapshotPaths(
+                    cacheRoot,
                     source.RepositoryId,
                     source.RevisionSha,
                     model.Weights.RelativePath,
@@ -185,7 +231,17 @@ internal sealed class HuggingFaceModelInstaller : IHuggingFaceModelAcquirer
                     out string revalidatedPartialPath,
                     out pathError) ||
                 !string.Equals(modelPath, revalidatedModelPath, StringComparison.OrdinalIgnoreCase) ||
-                !string.Equals(partialPath, revalidatedPartialPath, StringComparison.OrdinalIgnoreCase))
+                !string.Equals(partialPath, revalidatedPartialPath, StringComparison.OrdinalIgnoreCase) ||
+                !HuggingFaceHubCache.TryValidateManagedPath(
+                    cacheRoot,
+                    modelPath,
+                    out string writableModelPath,
+                    out pathError) ||
+                !HuggingFaceHubCache.TryValidateManagedPath(
+                    cacheRoot,
+                    partialPath,
+                    out string writablePartialPath,
+                    out pathError))
             {
                 throw new HuggingFaceModelInstallException(
                     string.IsNullOrWhiteSpace(pathError)
@@ -199,10 +255,11 @@ internal sealed class HuggingFaceModelInstaller : IHuggingFaceModelAcquirer
                     "The Local AI model target appeared while the download was in progress.");
             }
 
-            File.Move(partialPath, modelPath);
+            File.Move(writablePartialPath, writableModelPath);
             promoted = true;
             return new HuggingFaceModelInstallResult(
                 modelPath,
+                cacheRoot,
                 HuggingFaceModelInstallDisposition.Downloaded,
                 CreatedThisRun: true);
         }
@@ -220,7 +277,40 @@ internal sealed class HuggingFaceModelInstaller : IHuggingFaceModelAcquirer
         finally
         {
             if (!promoted && !preservePartial)
-                TryDeletePartial(localDataDirectory, partialPath);
+            {
+                TryDeletePartial(cacheRoot, partialPath);
+                TryRemoveEmptySnapshotDirectory(cacheRoot, partialPath);
+            }
+        }
+    }
+
+    /// <summary>
+    /// Removes the pinned revision's snapshot directory when this run created it and
+    /// left nothing in it. The hub cache is shared, so a failed install must not leave a
+    /// bogus empty revision for other tools' cache scans to report.
+    /// </summary>
+    private static void TryRemoveEmptySnapshotDirectory(string cacheRoot, string partialPath)
+    {
+        try
+        {
+            if (Path.GetDirectoryName(partialPath) is not { Length: > 0 } snapshotDirectory ||
+                !HuggingFaceHubCache.TryValidateManagedPath(
+                    cacheRoot,
+                    snapshotDirectory,
+                    out string validatedDirectory,
+                    out _) ||
+                !Directory.Exists(validatedDirectory))
+            {
+                return;
+            }
+
+            // A non-recursive delete fails on a non-empty directory, which is exactly the
+            // guard wanted: anything else in this revision belongs to somebody else.
+            Directory.Delete(validatedDirectory);
+        }
+        catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
+        {
+            // Best-effort cleanup must not mask the acquisition result.
         }
     }
 
@@ -230,8 +320,8 @@ internal sealed class HuggingFaceModelInstaller : IHuggingFaceModelAcquirer
         if (!install.CreatedThisRun)
             return;
 
-        if (!LocalAiPathPolicy.TryValidateManagedDeleteTarget(
-                localDataDirectory,
+        if (!HuggingFaceHubCache.TryValidateManagedPath(
+                install.CacheRoot,
                 install.ModelPath,
                 out string deletePath,
                 out string error))
@@ -241,6 +331,7 @@ internal sealed class HuggingFaceModelInstaller : IHuggingFaceModelAcquirer
 
         if (File.Exists(deletePath))
             File.Delete(deletePath);
+        TryRemoveEmptySnapshotDirectory(install.CacheRoot, deletePath);
     }
 
     public void RemovePartialModel(
@@ -252,19 +343,15 @@ internal sealed class HuggingFaceModelInstaller : IHuggingFaceModelAcquirer
         ArgumentNullException.ThrowIfNull(model);
         if (model.Weights.Source is not HuggingFaceRevisionSource source)
             throw new InvalidDataException("The Local AI model does not have immutable Hugging Face provenance.");
-        if (!LocalAiPathPolicy.TryResolve(
-                localDataDirectory,
-                component,
-                out LocalAiSetupPaths paths,
-                out string error) ||
-            !LocalAiPathPolicy.TryGetModelPaths(
-                paths,
+        string cacheRoot = HuggingFaceHubCache.ResolveCacheRoot();
+        if (!HuggingFaceHubCache.TryGetSnapshotPaths(
+                cacheRoot,
                 source.RepositoryId,
                 source.RevisionSha,
                 model.Weights.RelativePath,
                 out _,
                 out string partialPath,
-                out error))
+                out string error))
         {
             throw new InvalidDataException(
                 string.IsNullOrWhiteSpace(error) ? "The Local AI partial model path is invalid." : error);
@@ -274,8 +361,8 @@ internal sealed class HuggingFaceModelInstaller : IHuggingFaceModelAcquirer
             throw new InvalidDataException("The Local AI partial model path is an existing directory.");
         if (File.Exists(partialPath))
         {
-            if (!LocalAiPathPolicy.TryValidateManagedDeleteTarget(
-                    localDataDirectory,
+            if (!HuggingFaceHubCache.TryValidateManagedPath(
+                    cacheRoot,
                     partialPath,
                     out string deletePath,
                     out error))
@@ -286,9 +373,42 @@ internal sealed class HuggingFaceModelInstaller : IHuggingFaceModelAcquirer
         }
     }
 
+    /// <summary>
+    /// Deletes a pinned snapshot entry whose content failed the pinned size and digest
+    /// check. A plain file is removed under the strict managed-path rules. The one
+    /// standard exception is a snapshot symbolic link into this repository's own
+    /// <c>blobs</c> directory: <c>huggingface_hub</c> writes exactly that, and refusing
+    /// to unlink it would leave setup permanently stuck on a bad blob. Only the link is
+    /// removed; the blob it names is left for its owner to manage.
+    /// </summary>
+    private static void RemoveUnverifiedSnapshot(string cacheRoot, string modelPath)
+    {
+        if (HuggingFaceHubCache.TryValidateManagedPath(
+                cacheRoot,
+                modelPath,
+                out string deletePath,
+                out string error))
+        {
+            File.Delete(deletePath);
+            return;
+        }
+
+        if (!HuggingFaceHubCache.TryValidateSnapshotReadPath(
+                cacheRoot,
+                modelPath,
+                out string linkPath,
+                out _) ||
+            new FileInfo(linkPath).LinkTarget is null)
+        {
+            throw new HuggingFaceModelInstallException(error);
+        }
+
+        File.Delete(linkPath);
+    }
+
     private async Task DownloadAndVerifyAsync(
+        string cacheRoot,
         PinnedArtifact artifact,
-        string localDataDirectory,
         string partialPath,
         IProgress<HuggingFaceModelInstallProgress>? progress,
         CancellationToken cancellationToken)
@@ -298,8 +418,8 @@ internal sealed class HuggingFaceModelInstaller : IHuggingFaceModelAcquirer
             try
             {
                 await DownloadAndVerifyAttemptAsync(
+                        cacheRoot,
                         artifact,
-                        localDataDirectory,
                         partialPath,
                         progress,
                         cancellationToken)
@@ -317,9 +437,85 @@ internal sealed class HuggingFaceModelInstaller : IHuggingFaceModelAcquirer
         }
     }
 
-    private async Task DownloadAndVerifyAttemptAsync(
+    /// <summary>
+    /// Looks for the pinned model content outside the pinned revision's snapshot:
+    /// the content-addressed blob named by the pinned SHA-256 and same-named
+    /// snapshot entries in other revisions of the repository. A candidate is
+    /// accepted only after the standard snapshot-read validation (which accepts
+    /// the one snapshot-to-blob symlink layout and rejects anything else) plus the
+    /// pinned size and digest check. Accepted content is hardlinked into the
+    /// pinned snapshot path so the manifest keeps its canonical form and rollback
+    /// removes only the link, never the pre-existing blob.
+    /// </summary>
+    private static async Task<bool> TryReuseVerifiedCandidateAsync(
+        string cacheRoot,
+        HuggingFaceRevisionSource source,
         PinnedArtifact artifact,
-        string localDataDirectory,
+        string modelPath,
+        IProgress<HuggingFaceModelInstallProgress>? progress,
+        CancellationToken cancellationToken)
+    {
+        if (!HuggingFaceHubCache.TryGetReuseCandidates(
+                cacheRoot,
+                source.RepositoryId,
+                Path.GetFileName(artifact.RelativePath),
+                artifact.Sha256,
+                out IReadOnlyList<string> candidates,
+                out _))
+        {
+            return false;
+        }
+
+        foreach (string candidate in candidates)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            if (!await VerifyFileAsync(cacheRoot, candidate, artifact, progress, cancellationToken)
+                    .ConfigureAwait(false))
+            {
+                continue;
+            }
+
+            try
+            {
+                // A verified candidate may itself be the standard snapshot-to-blob
+                // symbolic link. Hard-linking a reparse point would only duplicate the
+                // link, so resolve it to the blob and link the content instead.
+                if (!TryResolveLinkSource(cacheRoot, candidate, out string linkSource))
+                    continue;
+
+                Directory.CreateDirectory(Path.GetDirectoryName(modelPath)!);
+                if (HuggingFaceHubCache.TryCreateHardLink(modelPath, linkSource))
+                    return true;
+            }
+            catch (IOException) { }
+            catch (UnauthorizedAccessException) { }
+            catch (NotSupportedException) { }
+            // A candidate that cannot be linked must not block the download path.
+        }
+
+        return false;
+    }
+
+    /// <summary>
+    /// Resolves a verified reuse candidate to the concrete file whose content should be
+    /// hard-linked: the candidate itself when it is a regular file, or the blob a
+    /// standard snapshot link points at. The resolved target must still pass the strict
+    /// managed-path rules, so a link out of the cache can never become a hard link.
+    /// </summary>
+    private static bool TryResolveLinkSource(string cacheRoot, string candidate, out string linkSource)
+    {
+        linkSource = candidate;
+        if (new FileInfo(candidate).LinkTarget is null)
+            return true;
+
+        FileSystemInfo? target = new FileInfo(candidate).ResolveLinkTarget(returnFinalTarget: true);
+        return target is not null &&
+            HuggingFaceHubCache.TryValidateManagedPath(cacheRoot, target.FullName, out linkSource, out _);
+    }
+
+    private async Task DownloadAndVerifyAttemptAsync(
+        string cacheRoot,
+        PinnedArtifact artifact,
         string partialPath,
         IProgress<HuggingFaceModelInstallProgress>? progress,
         CancellationToken cancellationToken)
@@ -327,8 +523,18 @@ internal sealed class HuggingFaceModelInstaller : IHuggingFaceModelAcquirer
         long resumeOffset = File.Exists(partialPath) ? new FileInfo(partialPath).Length : 0;
         if (resumeOffset < 0 || resumeOffset >= artifact.SizeBytes)
         {
-            TryDeletePartial(localDataDirectory, partialPath);
+            TryDeletePartial(cacheRoot, partialPath);
             resumeOffset = 0;
+        }
+
+        // Hashing a multi-gigabyte partial takes minutes, so it happens before the
+        // request is sent: holding an unread response body open for that long invites
+        // the server to drop the connection and waste the whole attempt.
+        using var hash = IncrementalHash.CreateHash(HashAlgorithmName.SHA256);
+        if (resumeOffset > 0)
+        {
+            await HashExistingPartialAsync(cacheRoot, partialPath, hash, progress, artifact.SizeBytes, cancellationToken)
+                .ConfigureAwait(false);
         }
 
         using HttpResponseMessage response = await SendWithValidatedRedirectsAsync(
@@ -360,7 +566,10 @@ internal sealed class HuggingFaceModelInstaller : IHuggingFaceModelAcquirer
         }
         else
         {
+            // The server ignored the range: the body restarts from zero, so the digest
+            // of the bytes already hashed above must be discarded.
             resumeOffset = 0;
+            hash.GetHashAndReset();
         }
 
         long expectedBodyBytes = artifact.SizeBytes - resumeOffset;
@@ -370,13 +579,18 @@ internal sealed class HuggingFaceModelInstaller : IHuggingFaceModelAcquirer
                 $"The Hugging Face response declared {contentLength} bytes; expected {expectedBodyBytes} bytes.");
         }
 
-        using var hash = IncrementalHash.CreateHash(HashAlgorithmName.SHA256);
-        if (append)
-            await HashExistingPartialAsync(partialPath, hash, cancellationToken).ConfigureAwait(false);
-
         await using var source = await response.Content.ReadAsStreamAsync(cancellationToken).ConfigureAwait(false);
+        if (!HuggingFaceHubCache.TryValidateManagedPath(
+                cacheRoot,
+                partialPath,
+                out string writablePartialPath,
+                out string pathError))
+        {
+            throw new HuggingFaceModelInstallException(pathError);
+        }
+
         await using var destination = new FileStream(
-            partialPath,
+            writablePartialPath,
             append ? FileMode.Append : FileMode.Create,
             FileAccess.Write,
             FileShare.None,
@@ -507,44 +721,90 @@ internal sealed class HuggingFaceModelInstaller : IHuggingFaceModelAcquirer
         (int)statusCode is >= 500 and <= 599;
 
     private static async Task HashExistingPartialAsync(
+        string cacheRoot,
         string partialPath,
         IncrementalHash hash,
+        IProgress<HuggingFaceModelInstallProgress>? progress,
+        long totalBytes,
         CancellationToken cancellationToken)
     {
-        await using var stream = new FileStream(
-            partialPath,
-            FileMode.Open,
-            FileAccess.Read,
-            FileShare.Read,
-            BufferSize,
-            FileOptions.Asynchronous | FileOptions.SequentialScan);
+        if (!HuggingFaceHubCache.TryOpenSnapshotReadPath(
+                cacheRoot,
+                partialPath,
+                out FileStream? stream,
+                out _,
+                out string error))
+        {
+            throw new HuggingFaceModelInstallException(error);
+        }
+
+        await using FileStream validatedStream = stream!;
+        await HashStreamAsync(validatedStream, hash.AppendData, progress, totalBytes, cancellationToken)
+            .ConfigureAwait(false);
+    }
+
+    /// <summary>
+    /// Verifies one file against its pinned size and SHA-256 digest, reporting hashing
+    /// progress. Multi-gigabyte weights take minutes to hash, so a silent verification
+    /// is indistinguishable from a hang.
+    /// </summary>
+    internal static async Task<bool> VerifyFileAsync(
+        string cacheRoot,
+        string path,
+        PinnedArtifact artifact,
+        IProgress<HuggingFaceModelInstallProgress>? progress,
+        CancellationToken cancellationToken)
+    {
+        if (!HuggingFaceHubCache.TryOpenSnapshotReadPath(
+                cacheRoot,
+                path,
+                out FileStream? stream,
+                out _,
+                out _))
+        {
+            return false;
+        }
+
+        await using FileStream validatedStream = stream!;
+        if (validatedStream.Length != artifact.SizeBytes)
+            return false;
+
+        using var hash = IncrementalHash.CreateHash(HashAlgorithmName.SHA256);
+        await HashStreamAsync(validatedStream, hash.AppendData, progress, artifact.SizeBytes, cancellationToken)
+            .ConfigureAwait(false);
+        return CryptographicOperations.FixedTimeEquals(
+            hash.GetHashAndReset(),
+            Convert.FromHexString(artifact.Sha256.Value));
+    }
+
+    private static async Task HashStreamAsync(
+        Stream stream,
+        Action<byte[], int, int> append,
+        IProgress<HuggingFaceModelInstallProgress>? progress,
+        long totalBytes,
+        CancellationToken cancellationToken)
+    {
         var buffer = new byte[BufferSize];
+        long hashed = 0;
+        long lastReported = 0;
+        progress?.Report(new HuggingFaceModelInstallProgress(0, totalBytes, HuggingFaceModelInstallPhase.Verifying));
         while (true)
         {
             int read = await stream.ReadAsync(buffer, cancellationToken).ConfigureAwait(false);
             if (read == 0)
-                return;
-            hash.AppendData(buffer, 0, read);
+                break;
+
+            append(buffer, 0, read);
+            hashed += read;
+            if (hashed - lastReported >= ProgressIntervalBytes)
+            {
+                progress?.Report(new HuggingFaceModelInstallProgress(
+                    hashed,
+                    totalBytes,
+                    HuggingFaceModelInstallPhase.Verifying));
+                lastReported = hashed;
+            }
         }
-    }
-
-    internal static async Task<bool> VerifyFileAsync(
-        string path,
-        PinnedArtifact artifact,
-        CancellationToken cancellationToken)
-    {
-        if (new FileInfo(path).Length != artifact.SizeBytes)
-            return false;
-
-        await using var stream = new FileStream(
-            path,
-            FileMode.Open,
-            FileAccess.Read,
-            FileShare.Read,
-            BufferSize,
-            FileOptions.Asynchronous | FileOptions.SequentialScan);
-        byte[] actual = await SHA256.HashDataAsync(stream, cancellationToken).ConfigureAwait(false);
-        return CryptographicOperations.FixedTimeEquals(actual, Convert.FromHexString(artifact.Sha256.Value));
     }
 
     private void Report(
@@ -557,12 +817,12 @@ internal sealed class HuggingFaceModelInstaller : IHuggingFaceModelAcquirer
         ProgressChanged?.Invoke(this, value);
     }
 
-    private static void TryDeletePartial(string localDataDirectory, string partialPath)
+    private static void TryDeletePartial(string cacheRoot, string partialPath)
     {
         try
         {
-            if (LocalAiPathPolicy.TryValidateManagedDeleteTarget(
-                    localDataDirectory,
+            if (HuggingFaceHubCache.TryValidateManagedPath(
+                    cacheRoot,
                     partialPath,
                     out string deletePath,
                     out _) &&

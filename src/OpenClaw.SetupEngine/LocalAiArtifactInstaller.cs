@@ -1,3 +1,4 @@
+using OpenClaw.Shared.IO;
 using System.IO.Compression;
 using System.Net;
 using System.Security.Cryptography;
@@ -55,7 +56,6 @@ internal sealed record LocalAiArtifactRollbackMetadata(string CreatedDirectory);
 internal sealed record LocalAiArtifactInstallResult(
     LocalAiComponentIdentity Component,
     string InstallDirectory,
-    string ModelsDirectory,
     IReadOnlyList<LocalAiVerifiedArchive> VerifiedArchives,
     LocalAiArtifactRollbackMetadata Rollback);
 
@@ -219,7 +219,6 @@ internal sealed class LocalAiArtifactInstaller
             var result = new LocalAiArtifactInstallResult(
                 component,
                 paths.InstallDirectory,
-                paths.ModelsDirectory,
                 verifiedArchives.AsReadOnly(),
                 new LocalAiArtifactRollbackMetadata(paths.InstallDirectory));
 
@@ -600,7 +599,7 @@ internal sealed class LocalAiArtifactInstaller
                 segment.EndsWith('.') ||
                 segment.Contains(':') ||
                 segment.IndexOfAny(Path.GetInvalidFileNameChars()) >= 0 ||
-                LocalAiPathPolicy.IsWindowsDeviceName(segment))
+                WindowsPathSafety.IsWindowsDeviceName(segment))
             {
                 throw new LocalAiArtifactInstallException(
                     $"Local AI archive entry '{entryName}' contains an unsafe path segment.");

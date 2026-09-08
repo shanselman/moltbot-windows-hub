@@ -14,16 +14,21 @@ internal sealed record LocalAiReconcileResult(
 
 internal interface ILocalAiModelFileVerifier
 {
-    Task<bool> VerifyAsync(string path, PinnedArtifact artifact, CancellationToken cancellationToken);
+    Task<bool> VerifyAsync(
+        string cacheRoot,
+        string path,
+        PinnedArtifact artifact,
+        CancellationToken cancellationToken);
 }
 
 internal sealed class LocalAiModelFileVerifier : ILocalAiModelFileVerifier
 {
     public Task<bool> VerifyAsync(
+        string cacheRoot,
         string path,
         PinnedArtifact artifact,
         CancellationToken cancellationToken) =>
-        HuggingFaceModelInstaller.VerifyFileAsync(path, artifact, cancellationToken);
+        HuggingFaceModelInstaller.VerifyFileAsync(cacheRoot, path, artifact, progress: null, cancellationToken);
 }
 
 /// <summary>
@@ -60,6 +65,11 @@ internal sealed class LocalAiInstallReconciler
         ArgumentException.ThrowIfNullOrWhiteSpace(selectedGpuId);
 
         var paths = new LocalAiPaths(localDataDirectory);
+        // An installation from before the model moved into the shared hub cache is
+        // upgraded in place rather than rejected: its weights are already downloaded.
+        await LocalAiManifestMigration
+            .TryUpgradeLegacyManifestAsync(paths, cancellationToken)
+            .ConfigureAwait(false);
         var manifestStore = new LocalAiManifestStore(paths);
         LocalAiResolvedInstall? install = await manifestStore
             .LoadAsync(cancellationToken)
@@ -82,7 +92,11 @@ internal sealed class LocalAiInstallReconciler
         }
 
         if (!await _modelVerifier
-                .VerifyAsync(install.ModelPath, plan.Model.Weights, cancellationToken)
+                .VerifyAsync(
+                    install.Manifest.ModelCacheRoot,
+                    install.ModelPath,
+                    plan.Model.Weights,
+                    cancellationToken)
                 .ConfigureAwait(false))
         {
             throw new InvalidDataException(
@@ -111,6 +125,7 @@ internal sealed class LocalAiInstallReconciler
             Rollback: null);
         var modelInstall = new HuggingFaceModelInstallResult(
             install.ModelPath,
+            install.Manifest.ModelCacheRoot,
             HuggingFaceModelInstallDisposition.ReusedVerified,
             CreatedThisRun: false);
         return new LocalAiReconcileResult(true, install, runtimeInstall, modelInstall);
@@ -166,8 +181,8 @@ internal sealed class LocalAiInstallReconciler
         }
 
         if (plan.Model.Weights.Source is not HuggingFaceRevisionSource source ||
-            !LocalAiPathPolicy.TryGetModelPaths(
-                setupPaths,
+            !HuggingFaceHubCache.TryGetSnapshotPaths(
+                install.Manifest.ModelCacheRoot,
                 source.RepositoryId,
                 source.RevisionSha,
                 plan.Model.Weights.RelativePath,

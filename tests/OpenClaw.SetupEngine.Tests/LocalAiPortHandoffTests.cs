@@ -7,6 +7,7 @@ using System.Runtime.InteropServices;
 
 namespace OpenClaw.SetupEngine.Tests;
 
+[Collection(EnvironmentVariableCollection.Name)]
 public sealed class LocalAiPortHandoffTests
 {
     [Fact]
@@ -57,13 +58,16 @@ public sealed class LocalAiPortHandoffTests
     public async Task PersistStep_RecordsRequestButNotEndpointBeforeHealth()
     {
         using var temp = new TempDirectory("local-ai-handoff-");
+        using var env = new EnvironmentScope("HF_HUB_CACHE", Path.Combine(temp.Path, "hf-cache"));
         SetupContext context = CreateContext(
             new LocalAiConfig { Enabled = true, Port = 0 },
             temp.Path);
         context.LocalAiEligibility = LocalInferenceEligibility.Evaluate(CreateSparkHardware());
         context.LocalAiPort = 0;
         context.LocalAiRuntimeInstall = RuntimeInstall(temp.Path);
-        context.LocalAiModelInstall = ModelInstall(temp.Path, context.LocalAiEligibility.Plan!.Model);
+        context.LocalAiModelInstall = ModelInstall(
+            Path.Combine(temp.Path, "hf-cache"),
+            context.LocalAiEligibility.Plan!.Model);
 
         StepResult result = await new PersistLocalAiManifestStep().ExecuteAsync(
             context,
@@ -80,6 +84,7 @@ public sealed class LocalAiPortHandoffTests
     public async Task PersistStep_CarriesDeterministicallySelectedGpuIntoRouterEnvironment()
     {
         using var temp = new TempDirectory("local-ai-handoff-");
+        using var env = new EnvironmentScope("HF_HUB_CACHE", Path.Combine(temp.Path, "hf-cache"));
         SetupContext context = CreateContext(
             new LocalAiConfig
             {
@@ -93,7 +98,9 @@ public sealed class LocalAiPortHandoffTests
             context.Config.LocalAi.SelectedModelId);
         context.LocalAiPort = 0;
         context.LocalAiRuntimeInstall = RuntimeInstall(temp.Path);
-        context.LocalAiModelInstall = ModelInstall(temp.Path, context.LocalAiEligibility.Plan!.Model);
+        context.LocalAiModelInstall = ModelInstall(
+            Path.Combine(temp.Path, "hf-cache"),
+            context.LocalAiEligibility.Plan!.Model);
 
         StepResult result = await new PersistLocalAiManifestStep().ExecuteAsync(
             context,
@@ -106,6 +113,29 @@ public sealed class LocalAiPortHandoffTests
         Assert.Equal("GPU-a", context.LocalAiEligibility.SelectedGpu?.StableId);
         Assert.Equal("GPU-a", saved.Manifest.SelectedGpuId);
         Assert.Equal("GPU-a", launch.Environment["CUDA_VISIBLE_DEVICES"]);
+    }
+
+    [Fact]
+    public async Task AcquireModelStep_RollbackKeepsVerifiedDownloadOnLaterStepFailure()
+    {
+        // Rollback of this step only ever runs after the model was already downloaded
+        // and digest-verified -- it fires when some *later*, unrelated step (e.g. GPU or
+        // inference verification) fails. Deleting a multi-gigabyte verified file at that
+        // point would force a needless re-download on retry, so it must be kept on disk.
+        using var temp = new TempDirectory("local-ai-handoff-");
+        string cacheRoot = Path.Combine(temp.Path, "hf-cache");
+        using var env = new EnvironmentScope("HF_HUB_CACHE", cacheRoot);
+        SetupContext context = CreateContext(new LocalAiConfig { Enabled = true, Port = 0 }, temp.Path);
+        context.LocalAiEligibility = LocalInferenceEligibility.Evaluate(CreateSparkHardware());
+        HuggingFaceModelInstallResult install = ModelInstall(cacheRoot, context.LocalAiEligibility.Plan!.Model);
+        Directory.CreateDirectory(Path.GetDirectoryName(install.ModelPath)!);
+        await File.WriteAllTextAsync(install.ModelPath, "verified-model-bytes");
+        context.LocalAiModelInstall = install;
+
+        await new AcquireLocalAiModelStep().RollbackAsync(context, CancellationToken.None);
+
+        Assert.True(File.Exists(install.ModelPath));
+        Assert.Null(context.LocalAiModelInstall);
     }
 
     private static SetupContext CreateContext(LocalAiConfig localAi, string? localDataDirectory = null)
@@ -191,11 +221,20 @@ public sealed class LocalAiPortHandoffTests
     }
 
     private static HuggingFaceModelInstallResult ModelInstall(
-        string localDataDirectory,
-        LocalModelInfo model) => new(
-            Path.Combine(localDataDirectory, "LocalAI", "models", model.Weights.RelativePath),
-            HuggingFaceModelInstallDisposition.Downloaded,
-            CreatedThisRun: true);
+        string cacheRoot,
+        LocalModelInfo model)
+    {
+        var source = Assert.IsType<HuggingFaceRevisionSource>(model.Weights.Source);
+        Assert.True(HuggingFaceHubCache.TryGetSnapshotPaths(
+            cacheRoot,
+            source.RepositoryId,
+            source.RevisionSha,
+            model.Weights.RelativePath,
+            out string modelPath,
+            out _,
+            out string error), error);
+        return new(modelPath, cacheRoot, HuggingFaceModelInstallDisposition.Downloaded, CreatedThisRun: true);
+    }
 
     private sealed class FakeHardwareProbe(HostHardwareInfo hardware) : IHostHardwareProbe
     {

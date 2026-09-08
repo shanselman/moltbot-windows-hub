@@ -14,4 +14,12 @@
     <ProjectReference Include="..\..\src\OpenClaw.Shared\OpenClaw.Shared.csproj" />
   </ItemGroup>
 
+  <ItemGroup>
+    <!--
+      Only the xUnit attribute/extensibility surface, so shared fixtures can define
+      capability-gated Fact attributes. This stays a library, not a test container.
+    -->
+    <PackageReference Include="xunit.extensibility.core" Version="2.9.3" />
+  </ItemGroup>
+
 </Project>

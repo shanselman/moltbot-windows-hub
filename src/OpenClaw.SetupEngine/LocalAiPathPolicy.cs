@@ -1,3 +1,5 @@
+using static OpenClaw.Shared.IO.WindowsPathSafety;
+
 namespace OpenClaw.SetupEngine;
 
 /// <summary>
@@ -15,7 +17,6 @@ internal sealed record LocalAiSetupPaths(
     string EnginesDirectory,
     string StagingDirectory,
     string InstallDirectory,
-    string ModelsDirectory,
     string LogsDirectory);
 
 /// <summary>
@@ -42,9 +43,9 @@ internal static class LocalAiPathPolicy
             return false;
         }
 
-        if (!IsSafeWindowsPathSegment(identity.Name) ||
-            !IsSafeWindowsPathSegment(identity.Version) ||
-            !IsSafeWindowsPathSegment(identity.RuntimeIdentifier))
+        if (!IsSafeSegment(identity.Name) ||
+            !IsSafeSegment(identity.Version) ||
+            !IsSafeSegment(identity.RuntimeIdentifier))
         {
             error = "Local AI component identity contains an invalid path segment.";
             return false;
@@ -56,7 +57,6 @@ internal static class LocalAiPathPolicy
         string engines;
         string staging;
         string installDirectory;
-        string models;
         string logs;
         try
         {
@@ -70,7 +70,6 @@ internal static class LocalAiPathPolicy
                 identity.Name,
                 identity.Version,
                 identity.RuntimeIdentifier));
-            models = NormalizePath(Path.Combine(root, "models"));
             logs = NormalizePath(Path.Combine(root, "logs"));
         }
         catch (Exception ex) when (ex is ArgumentException or NotSupportedException or PathTooLongException)
@@ -92,7 +91,6 @@ internal static class LocalAiPathPolicy
                      engines,
                      staging,
                      installDirectory,
-                     models,
                      logs,
                  })
         {
@@ -112,7 +110,6 @@ internal static class LocalAiPathPolicy
             engines,
             staging,
             installDirectory,
-            models,
             logs);
         error = "";
         return true;
@@ -127,7 +124,7 @@ internal static class LocalAiPathPolicy
         ArgumentNullException.ThrowIfNull(paths);
         downloadPath = "";
 
-        if (!IsSafeWindowsPathSegment(archiveFileName))
+        if (!IsSafeSegment(archiveFileName))
         {
             error = "Local AI archive file name contains an invalid path segment.";
             return false;
@@ -154,69 +151,6 @@ internal static class LocalAiPathPolicy
         if (!TryValidateExistingPathChain(paths.RootDirectory, downloadPath, out error))
         {
             downloadPath = "";
-            return false;
-        }
-
-        error = "";
-        return true;
-    }
-
-    public static bool TryGetModelPaths(
-        LocalAiSetupPaths paths,
-        string repositoryId,
-        string revision,
-        string fileName,
-        out string modelPath,
-        out string partialPath,
-        out string error)
-    {
-        ArgumentNullException.ThrowIfNull(paths);
-        modelPath = "";
-        partialPath = "";
-
-        string[] repositorySegments = repositoryId?.Split('/') ?? [];
-        if (repositorySegments.Length != 2 ||
-            repositorySegments.Any(segment => !IsSafeWindowsPathSegment(segment)) ||
-            revision is null || revision.Length != 40 || !revision.All(IsLowerHex) ||
-            !IsSafeWindowsPathSegment(fileName) ||
-            !string.Equals(Path.GetExtension(fileName), ".gguf", StringComparison.OrdinalIgnoreCase))
-        {
-            error = "Local AI model identity contains an invalid path segment.";
-            return false;
-        }
-
-        try
-        {
-            string modelDirectory = NormalizePath(Path.Combine(
-                paths.ModelsDirectory,
-                repositorySegments[0],
-                repositorySegments[1],
-                revision));
-            modelPath = NormalizePath(Path.Combine(modelDirectory, fileName));
-            partialPath = NormalizePath(Path.Combine(modelDirectory, fileName + ".partial"));
-        }
-        catch (Exception ex) when (ex is ArgumentException or NotSupportedException or PathTooLongException)
-        {
-            error = $"Invalid Local AI model path: {ex.Message}";
-            return false;
-        }
-
-        if (!IsStrictDescendant(modelPath, paths.ModelsDirectory) ||
-            !IsStrictDescendant(partialPath, paths.ModelsDirectory) ||
-            !IsStrictDescendant(modelPath, paths.RootDirectory) ||
-            !IsStrictDescendant(partialPath, paths.RootDirectory))
-        {
-            modelPath = "";
-            partialPath = "";
-            error = "Local AI model path escaped the app-owned model directory.";
-            return false;
-        }
-
-        if (!TryValidateExistingPathChain(paths.RootDirectory, modelPath, out error) ||
-            !TryValidateExistingPathChain(paths.RootDirectory, partialPath, out error))
-        {
-            modelPath = "";
-            partialPath = "";
             return false;
         }
 
@@ -538,48 +472,4 @@ internal static class LocalAiPathPolicy
         }
     }
 
-    private static string NormalizePath(string path)
-        => Path.TrimEndingDirectorySeparator(Path.GetFullPath(path));
-
-    private static bool IsSafeWindowsPathSegment(string value)
-        => !string.IsNullOrWhiteSpace(value) &&
-           string.Equals(value, value.Trim(), StringComparison.Ordinal) &&
-           value is not "." and not ".." &&
-           !value.EndsWith('.') &&
-           !Path.IsPathRooted(value) &&
-           value.IndexOfAny(Path.GetInvalidFileNameChars()) < 0 &&
-           !value.Contains(Path.DirectorySeparatorChar) &&
-           !value.Contains(Path.AltDirectorySeparatorChar) &&
-           !IsWindowsDeviceName(value);
-
-    internal static bool IsWindowsDeviceName(string segment)
-    {
-        var baseName = segment.Split('.')[0];
-        return baseName.Equals("CON", StringComparison.OrdinalIgnoreCase) ||
-               baseName.Equals("PRN", StringComparison.OrdinalIgnoreCase) ||
-               baseName.Equals("AUX", StringComparison.OrdinalIgnoreCase) ||
-               baseName.Equals("NUL", StringComparison.OrdinalIgnoreCase) ||
-               IsNumberedDevice(baseName, "COM") ||
-               IsNumberedDevice(baseName, "LPT");
-    }
-
-    private static bool IsLowerHex(char value) =>
-        value is >= '0' and <= '9' or >= 'a' and <= 'f';
-
-    private static bool IsNumberedDevice(string value, string prefix)
-        => value.Length == 4 &&
-           value.StartsWith(prefix, StringComparison.OrdinalIgnoreCase) &&
-           value[3] is >= '1' and <= '9';
-
-    private static bool IsSameOrDescendant(string candidate, string root)
-        => PathEquals(candidate, root) || IsStrictDescendant(candidate, root);
-
-    private static bool IsStrictDescendant(string candidate, string root)
-        => candidate.StartsWith(EnsureTrailingDirectorySeparator(root), PathComparison);
-
-    private static string EnsureTrailingDirectorySeparator(string path)
-        => Path.EndsInDirectorySeparator(path) ? path : path + Path.DirectorySeparatorChar;
-
-    private static bool PathEquals(string? left, string right)
-        => string.Equals(left, right, PathComparison);
 }
