@@ -237,13 +237,14 @@ The development machine must also have
 Microsoft Store distribution resolves this framework dependency automatically;
 direct `Add-AppxPackage` sideloading requires it to be installed first.
 
-Uninstall an existing Inno build before switching that identity to MSIX. The
-Inno uninstaller removes its host `HKCU\...\Run` value; MSIX virtualizes HKCU
-writes and cannot remove that host value without a restricted capability that
-is inappropriate for the Store package. The packaged app deliberately leaves the
-legacy scheduled task in place: deleting it would silently disable an Inno
-install the user has not agreed to replace, so that cleanup belongs to a
-migration flow that asks first.
+A production-identity MSIX can be installed while an Inno build is still present;
+see "The Store package alongside an existing Inno install" below for what the two
+share and how they interfere. The packaged app deliberately leaves the legacy
+scheduled task and `HKCU\...\Run` value in place: MSIX virtualizes HKCU writes and
+cannot remove the host value without a restricted capability that is inappropriate
+for the Store package, and deleting the task would silently disable an Inno install
+the user has not agreed to replace. That cleanup belongs to a migration flow that
+asks first, tracked in #1374.
 Packaged builds register launch-at-login through the manifest
 `windows.startupTask` extension and the Windows `StartupTask` API. Unpackaged
 Inno builds retain the existing scheduled-task and registry fallback until that
@@ -353,7 +354,7 @@ Store entry, or uninstall the Inno build.
 
 Detecting a legacy install from the packaged app, suppressing its autostart,
 telling the user which install is active, and removing it with consent are
-tracked as separate migration work and are not implemented here.
+tracked in #1374 and are not implemented here.
 
 #### Dev identity and side-by-side installs
 
