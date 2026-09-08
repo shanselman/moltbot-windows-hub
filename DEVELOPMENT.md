@@ -208,6 +208,160 @@ Use the local helper to build unsigned installer EXEs without waiting for CI:
 
 `-Fast` uses ZIP/no-solid compression for quick local iteration. CI release builds keep the default LZMA solid compression and Azure signing.
 
+#### Local development MSIX
+
+The development MSIX is opt-in and does not replace the Inno or Updatum
+release paths. Create and trust its local signing certificate once from an
+elevated PowerShell:
+
+```powershell
+.\scripts\setup-dev-msix-cert.ps1
+```
+
+Then build the signed package:
+
+```powershell
+.\build.ps1 -Project WinUI -Msix Dev
+```
+
+`-Msix Dev` implies `-DevBuild`, uses the side-by-side development package
+identity, publishes the .NET runtime self-contained, advances the installed
+development package revision, and prints the generated package path. The
+development certificate has a distinct local-only publisher and a
+non-exportable private key; only its thumbprint is stored under
+`%LOCALAPPDATA%\OpenClawDevelopment\MSIX`. Future Microsoft Store submissions
+use the Partner Center identity and signing process instead.
+
+The development machine must also have
+`Microsoft.VCLibs.140.00.UWPDesktop` version `14.0.33728.0` or newer installed.
+Microsoft Store distribution resolves this framework dependency automatically;
+direct `Add-AppxPackage` sideloading requires it to be installed first.
+
+A production-identity MSIX can be installed while an Inno build is still present;
+see "The Store package alongside an existing Inno install" below for what the two
+share and how they interfere. The packaged app deliberately leaves the legacy
+scheduled task and `HKCU\...\Run` value in place: MSIX virtualizes HKCU writes and
+cannot remove the host value without a restricted capability that is inappropriate
+for the Store package, and deleting the task would silently disable an Inno install
+the user has not agreed to replace. That cleanup belongs to a migration flow that
+asks first, tracked in #1374.
+Packaged builds register launch-at-login through the manifest
+`windows.startupTask` extension and the Windows `StartupTask` API. Unpackaged
+Inno builds retain the existing scheduled-task and registry fallback until that
+installer path is retired.
+
+Remove the development certificate and machine trust when it is no longer
+needed:
+
+```powershell
+.\scripts\setup-dev-msix-cert.ps1 -Remove
+```
+
+#### Microsoft Store packages
+
+Store submissions use the release identity and are signed by Partner Center, so
+they share no state with the development certificate above:
+
+```powershell
+.\build.ps1 -Project WinUI -Msix Store
+```
+
+The two `-Msix` modes are mutually exclusive because they produce different
+applications rather than two flavors of one. They install side by side, which
+is what lets a packaged smoke test run without disturbing a working install:
+
+| | `-Msix Dev` | `-Msix Store` |
+| --- | --- | --- |
+| Identity | `OpenClawFoundation.OpenClaw.Dev` | `OpenClawFoundation.OpenClaw` |
+| Publisher | local development certificate | Partner Center |
+| Protocol | `openclaw-dev` | `openclaw` |
+| Signing | signed locally | unsigned; the Store signs |
+| Version revision | installed revision + 1 | pinned to `0` |
+| Architectures | host only | x64 and ARM64 |
+
+The revision field is the clearest reason the modes cannot merge, because each
+needs the opposite value. `Add-AppxPackage` only installs over an existing
+package when the version increases, and GitVersion holds major/minor/build
+steady across rebuilds of one commit, so a development build derives its
+revision from the installed development package and adds one. Rebuilding
+without installing in between reuses the same revision, which is why an
+uninstalled package must be installed before the next revision advances.
+Partner Center rejects any submission whose revision is non-zero.
+
+`-Msix Store` forces `-Configuration Release`, refuses to combine with
+`-DevBuild`, and delegates to `scripts\Build-StoreMsix.ps1` once
+per architecture. Each run produces one unsigned self-contained package at
+`artifacts\msix\<arch>\OpenClawCompanion-<arch>.msix` alongside an
+`msix-metadata.json` provenance sidecar recording the source commit, whether
+the tree was dirty, the package version, publisher, and the package SHA-256.
+
+`scripts\Build-StoreMsix.ps1` fails the build when the produced package drifts from
+`Package.appxmanifest`: the identity name, publisher, and processor
+architecture must match, the version must be four `uint16` components ending in
+`.0` because Partner Center reserves the revision field, exactly one `.msix`
+must be produced, required content must be present (the app host, the .NET
+runtime, the in-process SetupEngine UI, and the architecture-matched
+`wxc-exec.exe`), and forbidden content must be absent (`AppxSignature.p7x` and
+the loose Visual C++ runtime files that the Inno payload ships but the MSIX
+resolves through its VCLibs framework dependency).
+
+Upload both `.msix` files to the same Partner Center submission. `Identity/@Name`,
+`Identity/@Publisher`, and `Properties/PublisherDisplayName` in
+`src\OpenClaw.Tray.WinUI\Package.appxmanifest` already hold the reserved
+Partner Center values and must keep matching **Product management > Product
+identity** exactly; a mismatch fails ingestion. The submission also needs a
+justification for the `runFullTrust` restricted capability and a stated reason
+plus privacy policy for the declared `webcam`, `microphone`, and `location`
+device capabilities.
+
+Generating the optional `.appxsym` symbol package additionally requires
+`mspdbcmf.exe` from the Visual Studio **Desktop development with C++** workload;
+without it the build logs a warning and skips symbols.
+
+#### The Store package alongside an existing Inno install
+
+The Store package and the Inno installer produce the same application. Both can
+be installed at once, and uninstalling the Inno build first is **not** required.
+They cannot both run at once, though, and nothing in either build arbitrates
+between them yet.
+
+What the two installs share: the `openclaw` protocol registration, the
+`OpenClawTray` single-instance mutex, per-user data under `%APPDATA%\OpenClawTray`,
+the local gateway port, and the WSL gateway distro. MSIX full-trust apps are not
+namespace-isolated for named objects, so the mutex really is shared. Package
+identity, install directory, and AppUserModelID are the only axes that differ.
+
+Consequences to expect while both are installed:
+
+- The first one launched holds the mutex. The second forwards its activation to
+  the running instance and exits, so opening the Store entry while the Inno build
+  is running surfaces the Inno window with no error shown.
+- Both can register autostart, so which build starts at logon is a race. The
+  Inno installer's "Start when Windows starts" task creates a Startup folder
+  shortcut (`installer.iss:124`, `{userstartup}`); the Inno app's own Settings
+  toggle creates a logon scheduled task and an `HKCU\...\Run` value; the packaged
+  build uses the manifest's `windows.startupTask`. Neither build suppresses the
+  other, so the race persists across reboots. Windows Settings lists all of them
+  under the same name, and a Startup folder shortcut is labelled by its target
+  executable, so they cannot be told apart there.
+- Settings, gateway records, and device identities carry over either way. A
+  packaged process reads the existing per-user data through the merged MSIX view,
+  so there is no re-pairing.
+- A running Store app blocks the Inno installer **and** uninstaller, because
+  `installer.iss` sets `AppMutex` to the shared mutex name. Both abort with
+  "Setup has detected that OpenClaw Companion is currently running". Quit the
+  Store app before installing or uninstalling the Inno build.
+- Inno uninstall asks whether to also remove the local WSL gateway. **No** is the
+  default and keeps it. A silent uninstall (`/SILENT`, `/VERYSILENT`) always
+  removes the gateway.
+
+To make the Store build the one that runs, quit the Inno build and launch the
+Store entry, or uninstall the Inno build.
+
+Detecting a legacy install from the packaged app, suppressing its autostart,
+telling the user which install is active, and removing it with consent are
+tracked in #1374 and are not implemented here.
+
 #### Dev identity and side-by-side installs
 
 Release identity is the default for every configuration. Use `-DevBuild` on `build.ps1` or `-Dev` on `run-app-local.ps1` when you explicitly want the side-by-side dev identity:

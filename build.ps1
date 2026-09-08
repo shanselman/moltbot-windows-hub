@@ -20,6 +20,22 @@
     Build the WinUI app with the side-by-side dev identity. Defaults off so
     release identity remains the default for every configuration.
 
+.PARAMETER Msix
+    Produce an MSIX package. The two modes are mutually exclusive because they
+    build different applications, not two flavors of one:
+
+      Dev   - locally signed, self-contained package using the side-by-side dev
+              identity. Implies -DevBuild and uses the certificate created by
+              scripts\setup-dev-msix-cert.ps1. The manifest revision is the
+              installed development package revision plus one, so repeated
+              Add-AppxPackage sideloads upgrade cleanly.
+
+      Store - unsigned, self-contained packages for x64 and ARM64 using the
+              release identity. Partner Center signs them, so no local
+              certificate is used, and the manifest revision is pinned to 0
+              because the Store reserves that field. Forces -Configuration
+              Release and cannot be combined with -DevBuild.
+
 .PARAMETER NoTrustRepository
     Do not automatically add this checkout to git safe.directory when GitVersion
     cannot read a repo owned by a different Windows account/group. The script
@@ -29,8 +45,14 @@
     .\build.ps1
     .\build.ps1 -Project WinUI -Configuration Release
     .\build.ps1 -CheckOnly
+    .\build.ps1 -Project WinUI -Msix Dev
+    .\build.ps1 -Project WinUI -Msix Store
 #>
 
+# CmdletBinding makes unrecognized parameters a hard error. Without it a removed
+# or misspelled switch such as -PackageMsix lands in $args and is silently
+# ignored, producing an unpackaged build with no indication anything was wrong.
+[CmdletBinding()]
 param(
     [ValidateSet("All", "Tray", "WinUI", "Shared", "Cli", "WinNodeCli", "SetupEngine")]
     [string]$Project = "All",
@@ -42,6 +64,9 @@ param(
 
     [switch]$DevBuild,
 
+    [ValidateSet("Dev", "Store")]
+    [string]$Msix,
+
     [switch]$NoTrustRepository
 )
 
@@ -49,6 +74,26 @@ $ErrorActionPreference = "Stop"
 
 $repoRoot = Split-Path -Parent $MyInvocation.MyCommand.Path
 Set-Location $repoRoot
+
+$buildDevMsix = ($Msix -eq "Dev")
+$buildStoreMsix = ($Msix -eq "Store")
+
+if ($buildDevMsix) {
+    $DevBuild = $true
+}
+
+# Microsoft Store packages ship the release identity and are signed by Partner
+# Center, so they are incompatible with the dev identity and the local dev cert.
+$storeMsixRuntimeIdentifiers = @("win-x64", "win-arm64")
+if ($buildStoreMsix) {
+    if ($DevBuild) {
+        throw "-Msix Store cannot be combined with -DevBuild. Store packages must use the release identity."
+    }
+    if ($PSBoundParameters.ContainsKey("Configuration") -and $Configuration -ne "Release") {
+        throw "-Msix Store requires -Configuration Release. Debug binaries are not accepted by Store certification."
+    }
+    $Configuration = "Release"
+}
 
 # Colors for output
 function Write-Header($text) { Write-Host "`n=== $text ===" -ForegroundColor Cyan }
@@ -299,6 +344,44 @@ if ($arch -eq "ARM64") {
     Write-Info "ARM64 detected - builds will target ARM64 by default"
 }
 
+if ($buildStoreMsix) {
+    if ($Project -notin @("All", "Tray", "WinUI")) {
+        Write-Error "-Msix Store requires -Project All, Tray, or WinUI."
+        $issues += "Store MSIX packaging requires the WinUI project"
+    }
+
+    Write-Success "Store MSIX target architectures: $($storeMsixRuntimeIdentifiers -join ', ')"
+    Write-Info "Packages are left unsigned; Partner Center signs Store submissions."
+}
+
+if ($buildDevMsix) {
+    if ($Project -notin @("All", "Tray", "WinUI")) {
+        Write-Error "-Msix Dev requires -Project All, Tray, or WinUI."
+        $issues += "MSIX packaging requires the WinUI project"
+    }
+
+    $devMsixCertificateDirectory = Join-Path $env:LOCALAPPDATA "OpenClawDevelopment\MSIX"
+    $devMsixThumbprintFile = Join-Path $devMsixCertificateDirectory "dev-msix-thumbprint.txt"
+    $devMsixThumbprint = if (Test-Path $devMsixThumbprintFile) {
+        (Get-Content -LiteralPath $devMsixThumbprintFile -Raw).Trim()
+    } else {
+        ""
+    }
+    $devMsixCertificate = if ($devMsixThumbprint) {
+        Get-Item "Cert:\CurrentUser\My\$devMsixThumbprint" -ErrorAction SilentlyContinue
+    } else {
+        $null
+    }
+
+    if ($devMsixCertificate) {
+        Write-Success "Development MSIX signing certificate: $($devMsixCertificate.Thumbprint)"
+    } else {
+        Write-Error "Development MSIX signing certificate not found."
+        Write-Info "Run .\scripts\setup-dev-msix-cert.ps1 from an elevated PowerShell, then retry."
+        $issues += "Missing development MSIX signing certificate"
+    }
+}
+
 # Summary
 Write-Header "Prerequisite Summary"
 
@@ -352,7 +435,7 @@ function Invoke-DotNetCaptured($arguments) {
     }
 }
 
-function Build-Project($name, $path, $useRid = $false) {
+function Build-Project($name, $path, $useRid = $false, $packageMsix = $false) {
     Write-Host "`nBuilding $name..." -ForegroundColor White
     
     if (-not (Test-Path $path)) {
@@ -360,13 +443,48 @@ function Build-Project($name, $path, $useRid = $false) {
         return $false
     }
     
-    $dotnetArgs = @("build", $path, "-c", $Configuration)
-    # WinUI requires runtime identifier for self-contained WebView2 support
-    if ($useRid) {
-        $dotnetArgs += @("-r", $rid)
+    if ($packageMsix) {
+        $installedDevPackage = Get-AppxPackage -Name "OpenClawFoundation.OpenClaw.Dev" -ErrorAction SilentlyContinue |
+            Where-Object Publisher -eq "CN=OpenClaw Local Development" |
+            Sort-Object { [version]$_.Version.ToString() } -Descending |
+            Select-Object -First 1
+        $msixRevision = if ($installedDevPackage) {
+            ([version]$installedDevPackage.Version.ToString()).Revision + 1
+        } else {
+            1
+        }
+        if ($msixRevision -gt 65535) {
+            Write-Error "The installed development MSIX revision is already 65535. Remove the installed OpenClawFoundation.OpenClaw.Dev package before rebuilding."
+            return $false
+        }
+
+        $dotnetArgs = @(
+            "publish", $path,
+            "-c", $Configuration,
+            "-r", $rid,
+            "--self-contained",
+            "-p:MsixRevision=$msixRevision"
+        )
+    } else {
+        $dotnetArgs = @("build", $path, "-c", $Configuration)
+        # WinUI requires runtime identifier for self-contained WebView2 support
+        if ($useRid) {
+            $dotnetArgs += @("-r", $rid)
+        }
     }
     if ($DevBuild -and ($name -eq "WinUI" -or $name -eq "Tray")) {
         $dotnetArgs += "-p:DevBuild=true"
+    }
+    if ($packageMsix) {
+        $platform = if ($rid -eq "win-arm64") { "ARM64" } else { "x64" }
+        $dotnetArgs += @(
+            "-p:Platform=$platform",
+            "-p:PackageMsix=true",
+            "-p:GenerateAppxPackageOnBuild=true",
+            "-p:AppxBundle=Never",
+            "-p:UapAppxPackageBuildMode=SideloadOnly",
+            "-p:AppxPackageDir=AppPackages\"
+        )
     }
     $result = Invoke-DotNetCaptured $dotnetArgs
     $exitCode = $LASTEXITCODE
@@ -420,6 +538,40 @@ $projects = @{
     "SetupEngine" = @{ Path = "src/OpenClaw.SetupEngine/OpenClaw.SetupEngine.csproj"; UseRid = $false }
 }
 
+if ($buildStoreMsix) {
+    # scripts\Build-StoreMsix.ps1 owns packaging, identity verification, and the
+    # provenance sidecar. build.ps1 only drives it once per architecture.
+    $storeArchitectures = $storeMsixRuntimeIdentifiers | ForEach-Object { $_ -replace "^win-", "" }
+    $storePackages = @()
+    foreach ($storeArchitecture in $storeArchitectures) {
+        Write-Host "`nBuilding Store MSIX ($storeArchitecture)..." -ForegroundColor White
+        try {
+            & (Join-Path $repoRoot "scripts\Build-StoreMsix.ps1") `
+                -Architecture $storeArchitecture `
+                -Configuration $Configuration
+        } catch {
+            Write-Error "Store MSIX ($storeArchitecture) packaging failed: $($_.Exception.Message)"
+            exit 1
+        }
+        $storePackages += Join-Path $repoRoot "artifacts\msix\$storeArchitecture\OpenClawCompanion-$storeArchitecture.msix"
+    }
+
+    Write-Header "Store MSIX Packages"
+    foreach ($package in $storePackages) {
+        if (-not (Test-Path -LiteralPath $package)) {
+            Write-Error "Expected package was not produced: $package"
+            exit 1
+        }
+        Write-Success $package
+    }
+    Write-Host "`nUpload both packages to the same Partner Center submission." -ForegroundColor Cyan
+    Write-Info "Identity is taken from src\OpenClaw.Tray.WinUI\Package.appxmanifest and must keep"
+    Write-Info "matching Partner Center > Product management > Product identity. The Store re-signs"
+    Write-Info "these packages, so they are intentionally left unsigned here."
+    Write-Host ""
+    exit 0
+}
+
 $toBuild = if ($Project -eq "All") { @("Shared", "Cli", "WinNodeCli", "SetupEngine", "WinUI") } else { @($Project) }
 
 # Always build Shared first if building other projects
@@ -431,7 +583,8 @@ for ($i = 0; $i -lt $toBuild.Count; $i++) {
     $proj = $toBuild[$i]
     if ($projects.ContainsKey($proj)) {
         $projInfo = $projects[$proj]
-        $buildResults[$proj] = Build-Project $proj $projInfo.Path $projInfo.UseRid
+        $shouldPackageMsix = $buildDevMsix -and ($proj -eq "WinUI" -or $proj -eq "Tray")
+        $buildResults[$proj] = Build-Project $proj $projInfo.Path $projInfo.UseRid $shouldPackageMsix
         if ($proj -eq "Shared" -and -not $buildResults[$proj] -and $i -lt ($toBuild.Count - 1)) {
             Write-Warning "Skipping remaining projects because Shared failed."
             break
@@ -461,6 +614,18 @@ if ($failCount -eq 0) {
         $winUIProjectPath = $projects["WinUI"].Path
         $winUITargetFramework = Get-ProjectTargetFramework $winUIProjectPath
         $winUIProjectDirectory = (Split-Path -Parent $winUIProjectPath).Replace("/", "\")
+
+        if ($buildDevMsix) {
+            $devMsixPackage = Get-ChildItem (Join-Path $repoRoot "$winUIProjectDirectory\AppPackages") -Recurse -Filter "*.msix" -ErrorAction SilentlyContinue |
+                Sort-Object LastWriteTime -Descending |
+                Select-Object -First 1
+            if ($devMsixPackage) {
+                Write-Host "  MSIX:     $($devMsixPackage.FullName)" -ForegroundColor White
+                Write-Host "  Install:  Add-AppxPackage -Path `"$($devMsixPackage.FullName)`" -ForceApplicationShutdown" -ForegroundColor White
+            } else {
+                Write-Warning "MSIX packaging succeeded but no .msix was found under $winUIProjectDirectory\AppPackages."
+            }
+        }
 
         if ($winUITargetFramework) {
             $winUIOutputDirectory = ".\$winUIProjectDirectory\bin\$Configuration\$winUITargetFramework\$rid"

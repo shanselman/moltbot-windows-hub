@@ -79,7 +79,7 @@ public sealed class InstallerIssAssertionTests
         Assert.Contains("UninstallSilent()", iss);
         Assert.Contains("LocalGatewayCleanupRequested := True", iss);
         Assert.Contains("{#MyDistroName} WSL distro", iss);
-        Assert.Contains("MB_YESNO", iss);
+        Assert.Contains("MB_YESNO or MB_DEFBUTTON2", iss);
         Assert.Contains("ExpandConstant('{sys}\\WindowsPowerShell\\v1.0\\powershell.exe')", iss);
         Assert.Contains("ewWaitUntilTerminated", iss);
         Assert.Contains("MB_RETRYCANCEL", iss);
@@ -361,9 +361,9 @@ public sealed class InstallerIssAssertionTests
         Assert.Contains(@"<AppxManifest Remove=""@(AppxManifest)"" />", project);
         Assert.DoesNotContain("PatchDevAppxManifestIdentity", project);
         Assert.Contains("Version=\"0.0.0.0\"", manifest);
-        Assert.Contains("Name=\"OpenClaw.Companion\"", manifest);
+        Assert.Contains("Name=\"OpenClawFoundation.OpenClaw\"", manifest);
         Assert.Contains("<uap:Protocol Name=\"openclaw\">", manifest);
-        Assert.DoesNotContain("OpenClaw.Companion.Dev", manifest);
+        Assert.DoesNotContain("OpenClawFoundation.OpenClaw.Dev", manifest);
     }
 
     [Fact]

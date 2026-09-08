@@ -367,6 +367,9 @@
   <data name="Update_Message_Skipped_Debug" xml:space="preserve">
     <value>La vérification des mises à jour est désactivée dans les builds de débogage.</value>
   </data>
+  <data name="Update_Message_Skipped_Store" xml:space="preserve">
+    <value>Les mises à jour de cette application sont gérées par le Microsoft Store.</value>
+  </data>
   <data name="Update_Message_Skipped_Dev" xml:space="preserve">
     <value>La vérification des mises à jour est désactivée dans les versions de développement.</value>
   </data>

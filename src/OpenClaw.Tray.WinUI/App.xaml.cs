@@ -220,6 +220,7 @@ public partial class App : Application, OpenClawTray.Services.IAppCommands, IPer
     private string? _lastManagerConnectedSideEffectsKey;
     private SettingsWriteOrigin? _trayPermissionWriteOrigin;
     private SettingsWriteOrigin? _appCapabilityPermissionWriteOrigin;
+    private SettingsWriteOrigin? _trayAutoStartWriteOrigin;
 
     // FrozenDictionary for O(1) case-insensitive notification type → setting lookup — no per-call allocation.
     private static readonly System.Collections.Frozen.FrozenDictionary<string, Func<SettingsManager, bool>> s_notifTypeMap =
@@ -852,6 +853,15 @@ public partial class App : Application, OpenClawTray.Services.IAppCommands, IPer
         {
             Logger.Error($"Onboarding failed during launch (tray remains available): {ex}");
         }
+
+        // Packaged builds must reconcile auto-start with Windows after settings load.
+        // Nothing else does: SettingsChangeCoordinator.Apply only runs on a settings
+        // *change*, so a preserved AutoStart=true would be shown as enabled while the
+        // manifest's StartupTask sat disabled. Backgrounded so a slow StartupTask query
+        // cannot delay tray availability.
+        ObserveBackgroundFault(
+            ReconcileAutoStartOnStartupAsync(),
+            "[App] Failed to reconcile auto-start with Windows");
 
         // Ensure NodeService is constructed BEFORE InitializeGatewayClient triggers a
         // NodeConnector connect. The NodeConnector.ClientCreated event subscription
@@ -4001,9 +4011,11 @@ public partial class App : Application, OpenClawTray.Services.IAppCommands, IPer
     private async Task ToggleAutoStartAsync()
     {
         if (_settings == null) return;
-        _settings.AutoStart = !_settings.AutoStart;
-        _settings.Save();
-        await AutoStartManager.SetAutoStartAsync(_settings.AutoStart);
+
+        var origin = SettingsStore is { } store
+            ? GetOrCreateSettingsWriteOrigin(ref _trayAutoStartWriteOrigin, store)
+            : null;
+        await ApplyAutoStartCore(origin, !_settings.AutoStart);
     }
 
     /// <summary>
@@ -4014,6 +4026,9 @@ public partial class App : Application, OpenClawTray.Services.IAppCommands, IPer
     /// triggering view model ignores its own change event.
     /// </summary>
     public async Task<bool> ApplyAutoStart(SettingsWriteOrigin origin, bool autoStart)
+        => await ApplyAutoStartCore(origin, autoStart);
+
+    private async Task<bool> ApplyAutoStartCore(SettingsWriteOrigin? origin, bool autoStart)
     {
         if (_settings == null) return false;
         try
@@ -4035,8 +4050,44 @@ public partial class App : Application, OpenClawTray.Services.IAppCommands, IPer
         catch (Exception ex)
         {
             Logger.Error($"ApplyAutoStart failed: {ex.Message}");
+            var effectiveAutoStart = await AutoStartManager.IsAutoStartEnabledAsync();
+            if (SettingsStore is { } store)
+            {
+                store.Update(origin, edit => edit.AutoStart = effectiveAutoStart);
+            }
+            else if (_settings != null)
+            {
+                _settings.AutoStart = effectiveAutoStart;
+                _settings.Save();
+            }
             return false;
         }
+    }
+
+    /// <summary>
+    /// Aligns the stored auto-start preference with the state Windows actually reports,
+    /// so the Settings toggle never claims auto-start is on while nothing launches at logon.
+    /// </summary>
+    private async Task ReconcileAutoStartOnStartupAsync()
+    {
+        if (_settings == null) return;
+
+        var configured = _settings.AutoStart;
+        var effective = await AutoStartManager.ReconcileAutoStartAsync(configured);
+        if (effective == configured) return;
+
+        Logger.Info($"Auto-start setting corrected from {configured} to {effective} to match Windows.");
+        if (SettingsStore is { } store)
+        {
+            store.Update(null, edit => edit.AutoStart = effective);
+        }
+        else
+        {
+            _settings.AutoStart = effective;
+            _settings.Save();
+        }
+
+        OnSettingsSaved(this, EventArgs.Empty);
     }
 
     private void OpenLogFile()

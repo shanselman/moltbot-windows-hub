@@ -64,6 +64,23 @@ internal sealed class UpdateCoordinator(
             return true; // Don't block launch
         }
 
+        if (PackageHelper.IsPackaged)
+        {
+            // A Store-installed package is updated by Windows, not by Updatum.
+            // Self-updating from GitHub releases would bypass the Store, and the
+            // packaged app must not claim update ownership from a legacy install.
+            Logger.Info("Skipping update check in packaged build; updates are managed by the Microsoft Store");
+            appState.UpdateInfo = new UpdateCommandCenterInfo
+            {
+                Status = "Skipped",
+                CurrentVersion = AppVersionInfo.Version,
+                CheckedAt = DateTime.UtcNow,
+                Detail = "managed by the Microsoft Store"
+            };
+            _updateCheckGate.Release();
+            return true;
+        }
+
         if (AppIdentity.IsDev)
         {
             Logger.Info("Skipping release-channel update check in development build");
@@ -382,9 +399,11 @@ internal sealed class UpdateCoordinator(
                             "Skipped",
                             LocalizationHelper.GetString("Update_Title_Skipped"),
                             LocalizationHelper.GetString(
-                                AppIdentity.IsDev
-                                    ? "Update_Message_Skipped_Dev"
-                                    : "Update_Message_Skipped_Debug"));
+                                PackageHelper.IsPackaged
+                                    ? "Update_Message_Skipped_Store"
+                                    : AppIdentity.IsDev
+                                        ? "Update_Message_Skipped_Dev"
+                                        : "Update_Message_Skipped_Debug"));
                         break;
                 }
             }

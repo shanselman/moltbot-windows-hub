@@ -15,6 +15,11 @@
     <DefaultLanguage>en-US</DefaultLanguage>
     <Platforms>x64;ARM64</Platforms>
     <RuntimeIdentifiers>win-x64;win-arm64</RuntimeIdentifiers>
+    <!-- app.manifest declares PerMonitorV2 DPI awareness and must be embedded in every
+         flavor. Packaging does not supply DPI awareness: an MSIX built without this
+         ships a DPI-unaware executable that renders blurry on mixed-DPI displays, and
+         the Windows App Certification Kit reports it. -->
+    <ApplicationManifest>app.manifest</ApplicationManifest>
     <!-- WinUIEx 2.9.3 marks its legacy Icon type obsolete, but the WinUI XAML generator still emits Icon.FromFile. -->
     <WarningsNotAsErrors>$(WarningsNotAsErrors);CS0618</WarningsNotAsErrors>
   </PropertyGroup>
@@ -52,14 +57,21 @@
   <PropertyGroup Condition="'$(PackageMsix)' != 'true'">
     <WindowsPackageType>None</WindowsPackageType>
     <WindowsAppSDKSelfContained>true</WindowsAppSDKSelfContained>
-    <ApplicationManifest>app.manifest</ApplicationManifest>
   </PropertyGroup>
 
   <!-- MSIX packaged: enables camera/mic consent prompts, package identity -->
   <PropertyGroup Condition="'$(PackageMsix)' == 'true'">
     <WindowsPackageType>MSIX</WindowsPackageType>
     <WindowsAppSDKSelfContained>true</WindowsAppSDKSelfContained>
-    <AppxPackageSigningEnabled>false</AppxPackageSigningEnabled>
+    <OpenClawDevMsixPublisher>CN=OpenClaw Local Development</OpenClawDevMsixPublisher>
+    <OpenClawDevMsixCertificateDirectory>$(LOCALAPPDATA)\OpenClawDevelopment\MSIX</OpenClawDevMsixCertificateDirectory>
+    <OpenClawDevMsixThumbprintFile>$(OpenClawDevMsixCertificateDirectory)\dev-msix-thumbprint.txt</OpenClawDevMsixThumbprintFile>
+    <OpenClawDevMsixCertificateThumbprint Condition="'$(DevBuild)' == 'true' and Exists('$(OpenClawDevMsixThumbprintFile)')">$([System.IO.File]::ReadAllText('$(OpenClawDevMsixThumbprintFile)').Trim())</OpenClawDevMsixCertificateThumbprint>
+    <!-- Local DevBuild packages use a non-exportable self-signed certificate.
+         Production Store submissions leave signing to Partner Center. -->
+    <AppxPackageSigningEnabled Condition="'$(DevBuild)' == 'true' and '$(OpenClawDevMsixCertificateThumbprint)' != ''">true</AppxPackageSigningEnabled>
+    <AppxPackageSigningEnabled Condition="'$(AppxPackageSigningEnabled)' == ''">false</AppxPackageSigningEnabled>
+    <PackageCertificateThumbprint Condition="'$(DevBuild)' == 'true'">$(OpenClawDevMsixCertificateThumbprint)</PackageCertificateThumbprint>
     <GenerateAppxPackageOnBuild>true</GenerateAppxPackageOnBuild>
     <AppxBundle>Never</AppxBundle>
     <UapAppxPackageBuildMode>SideloadOnly</UapAppxPackageBuildMode>
@@ -133,8 +145,10 @@
       <FourPartVersion ParameterType="System.String" Required="true" />
       <DevBuild ParameterType="System.String" />
       <IdentityName ParameterType="System.String" Required="true" />
+      <Publisher ParameterType="System.String" Required="true" />
       <DisplayName ParameterType="System.String" Required="true" />
       <ProtocolName ParameterType="System.String" Required="true" />
+      <ToastActivatorClsid ParameterType="System.String" Required="true" />
     </ParameterGroup>
     <Task>
       <Code Type="Fragment" Language="cs">
@@ -164,6 +178,15 @@
             }
             text = nameRegex.Replace(text, "${1}" + IdentityName + "$2", 1);
 
+            var publisherRegex = new System.Text.RegularExpressions.Regex(
+                "(<Identity\\b[^>]*?\\bPublisher\\s*=\\s*[\"'])[^\"']+([\"'])",
+                System.Text.RegularExpressions.RegexOptions.IgnoreCase);
+            if (!publisherRegex.IsMatch(text)) {
+                Log.LogError("GenerateOpenClawAppxManifest: Identity/@Publisher missing from " + SourceManifestPath);
+                return false;
+            }
+            text = publisherRegex.Replace(text, "${1}" + Publisher + "$2", 1);
+
             var propsDisplayRegex = new System.Text.RegularExpressions.Regex(
             "(<Properties>[\\s\\S]*?<DisplayName>)[^<]+(</DisplayName>)",
             System.Text.RegularExpressions.RegexOptions.IgnoreCase);
@@ -190,6 +213,31 @@
                 return false;
             }
             text = protocolRegex.Replace(text, "${1}" + ProtocolName + "$2", 1);
+
+            // Windows Startup Apps and Task Manager surface this string. Without the
+            // rewrite a side-by-side Dev install is indistinguishable from production,
+            // so the user can disable the wrong startup entry.
+            var startupTaskDisplayRegex = new System.Text.RegularExpressions.Regex(
+                "(<desktop:StartupTask\\b[^>]*?\\bDisplayName\\s*=\\s*[\"'])[^\"']+([\"'])",
+                System.Text.RegularExpressions.RegexOptions.IgnoreCase);
+            if (!startupTaskDisplayRegex.IsMatch(text)) {
+                Log.LogError("GenerateOpenClawAppxManifest: StartupTask/@DisplayName missing from " + SourceManifestPath);
+                return false;
+            }
+            text = startupTaskDisplayRegex.Replace(text, "${1}" + DisplayName + "$2", 1);
+
+            var toastClsidRegex = new System.Text.RegularExpressions.Regex(
+                "(<desktop:ToastNotificationActivation\\b[^>]*?\\bToastActivatorCLSID\\s*=\\s*[\"'])[^\"']+([\"'])",
+                System.Text.RegularExpressions.RegexOptions.IgnoreCase);
+            var comClassRegex = new System.Text.RegularExpressions.Regex(
+                "(<com:Class\\b[^>]*?\\bId\\s*=\\s*[\"'])[^\"']+([\"'])",
+                System.Text.RegularExpressions.RegexOptions.IgnoreCase);
+            if (!toastClsidRegex.IsMatch(text) || !comClassRegex.IsMatch(text)) {
+                Log.LogError("GenerateOpenClawAppxManifest: toast activation CLSID declarations missing from " + SourceManifestPath);
+                return false;
+            }
+            text = toastClsidRegex.Replace(text, "${1}" + ToastActivatorClsid + "$2", 1);
+            text = comClassRegex.Replace(text, "${1}" + ToastActivatorClsid + "$2", 1);
         }
 
         System.IO.Directory.CreateDirectory(System.IO.Path.GetDirectoryName(OutputManifestPath));
@@ -203,25 +251,35 @@
 
   <Target Name="PrepareOpenClawAppxManifest"
           BeforeTargets="_ValidatePresenceOfAppxManifestItems;_CalculateInputsForGenerateCurrentProjectAppxManifest"
+          DependsOnTargets="GetVersion"
           Condition="'$(WindowsPackageType)' == 'MSIX'">
     <Error Text="MSIX packaging requested but Version is empty. Pass /p:Version=X.Y[.Z]." Condition="'$(Version)' == ''" />
     <PropertyGroup>
       <_StrippedVersion>$([System.Text.RegularExpressions.Regex]::Replace('$(Version)', '[-+].*$', ''))</_StrippedVersion>
       <_VersionDotCount>$([System.Text.RegularExpressions.Regex]::Matches('$(_StrippedVersion)', '\.').Count)</_VersionDotCount>
-      <_AppxManifestVersion Condition="'$(_VersionDotCount)' == '3'">$(_StrippedVersion)</_AppxManifestVersion>
-      <_AppxManifestVersion Condition="'$(_VersionDotCount)' == '2'">$(_StrippedVersion).0</_AppxManifestVersion>
-      <_AppxManifestVersion Condition="'$(_VersionDotCount)' == '1'">$(_StrippedVersion).0.0</_AppxManifestVersion>
+      <_AppxBaseVersion Condition="'$(_VersionDotCount)' == '3'">$([System.Text.RegularExpressions.Regex]::Replace('$(_StrippedVersion)', '\.\d+$', ''))</_AppxBaseVersion>
+      <_AppxBaseVersion Condition="'$(_VersionDotCount)' == '2'">$(_StrippedVersion)</_AppxBaseVersion>
+      <_AppxBaseVersion Condition="'$(_VersionDotCount)' == '1'">$(_StrippedVersion).0</_AppxBaseVersion>
+      <_AppxRevision Condition="'$(DevBuild)' == 'true' and '$(MsixRevision)' != ''">$(MsixRevision)</_AppxRevision>
+      <_AppxRevision Condition="'$(DevBuild)' == 'true' and '$(_AppxRevision)' == '' and '$(GitVersion_CommitsSinceVersionSource)' != ''">$(GitVersion_CommitsSinceVersionSource)</_AppxRevision>
+      <_AppxRevision Condition="'$(DevBuild)' == 'true' and '$(_AppxRevision)' == ''">1</_AppxRevision>
+      <_AppxRevision Condition="'$(DevBuild)' != 'true'">0</_AppxRevision>
+      <_AppxManifestVersion>$(_AppxBaseVersion).$(_AppxRevision)</_AppxManifestVersion>
       <_GeneratedAppxManifestPath>$(IntermediateOutputPath)openclaw.Package.appxmanifest</_GeneratedAppxManifestPath>
     </PropertyGroup>
-    <Error Text="Cannot derive four-part MSIX version from $(Version). Use X.Y or X.Y.Z with an optional suffix." Condition="'$(_AppxManifestVersion)' == ''" />
+    <Error Text="Cannot derive a three-part MSIX base version from $(Version). Use X.Y or X.Y.Z with an optional suffix." Condition="'$(_AppxBaseVersion)' == ''" />
+    <Error Text="MSIX revision '$(_AppxRevision)' must be an integer from 0 through 65535." Condition="!$([System.Text.RegularExpressions.Regex]::IsMatch('$(_AppxRevision)', '^\d+$'))" />
+    <Error Text="MSIX revision '$(_AppxRevision)' must be an integer from 0 through 65535." Condition="$([System.Text.RegularExpressions.Regex]::IsMatch('$(_AppxRevision)', '^\d+$')) and '$(_AppxRevision)' &gt; '65535'" />
     <GenerateOpenClawAppxManifest
       SourceManifestPath="$(MSBuildThisFileDirectory)Package.appxmanifest"
       OutputManifestPath="$(_GeneratedAppxManifestPath)"
       FourPartVersion="$(_AppxManifestVersion)"
       DevBuild="$(DevBuild)"
-      IdentityName="OpenClaw.Companion.Dev"
+      IdentityName="OpenClawFoundation.OpenClaw.Dev"
+      Publisher="$(OpenClawDevMsixPublisher)"
       DisplayName="OpenClaw Companion (Dev)"
-      ProtocolName="openclaw-dev" />
+      ProtocolName="openclaw-dev"
+      ToastActivatorClsid="C536D4AD-19BE-4F7A-B227-AB97629BF299" />
     <ItemGroup>
       <AppxManifest Remove="@(AppxManifest)" />
       <AppxManifest Include="$(_GeneratedAppxManifestPath)">
@@ -292,6 +350,22 @@
       <_WxcExecPublishFiles Include="$(MxcSdkBinDir)*.dll" />
     </ItemGroup>
     <Copy SourceFiles="@(_WxcExecPublishFiles)" DestinationFiles="@(_WxcExecPublishFiles->'$(PublishDir)tools\mxc\$(MxcArch)\%(Filename)%(Extension)')" SkipUnchangedFiles="true" Condition="'@(_WxcExecPublishFiles)' != ''" />
+  </Target>
+
+  <!-- Single-project MSIX collects payload from standard publish items rather
+       than arbitrary files copied into the output directory after Build. -->
+  <Target Name="AddWxcExecToPublishItems"
+          BeforeTargets="ComputeFilesToPublish"
+          DependsOnTargets="ValidateMxcSdkVersion"
+          Condition="'$(SkipMxcNodeBridgeRestore)' != 'true'">
+    <ItemGroup>
+      <_WxcExecPackageFiles Include="$(MxcSdkBinDir)wxc-exec.exe" />
+      <_WxcExecPackageFiles Include="$(MxcSdkBinDir)*.dll" />
+      <ResolvedFileToPublish Include="@(_WxcExecPackageFiles)">
+        <RelativePath>tools\mxc\$(MxcArch)\%(Filename)%(Extension)</RelativePath>
+        <CopyToPublishDirectory>PreserveNewest</CopyToPublishDirectory>
+      </ResolvedFileToPublish>
+    </ItemGroup>
   </Target>
 
   <!-- Fail the build if wxc-exec.exe didn't land in the expected output path.

@@ -189,13 +189,16 @@ begin
   end
   else
   begin
+    // MB_DEFBUTTON2 makes "No" the default: removing the WSL gateway is destructive and
+    // unrecoverable, and a user uninstalling in order to reinstall (for example when
+    // moving to the Store package) must not lose their gateway by pressing Enter.
     LocalGatewayCleanupRequested :=
       MsgBox(
         'Do you also want to remove the OpenClaw local WSL gateway?' + #13#10#13#10 +
         'Choose Yes to unregister the {#MyDistroName} WSL distro and remove generated local gateway state.' + #13#10 +
         'Choose No to leave the local gateway and generated local state on this computer.',
         mbConfirmation,
-        MB_YESNO) = IDYES;
+        MB_YESNO or MB_DEFBUTTON2) = IDYES;
 
     if LocalGatewayCleanupRequested then
       Log('User chose to remove the local WSL gateway.')

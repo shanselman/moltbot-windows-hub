@@ -1,4 +1,5 @@
 using System.IO;
+using System.Text.RegularExpressions;
 using OpenClawTray;
 using Xunit;
 
@@ -43,8 +44,27 @@ public sealed class AppUserModelIdIdentityTests
     [Fact]
     public void AppUserModelId_UsesCompanionIdentity()
     {
-        Assert.Equal(AppIdentity.PackageIdentityName, AppIdentity.AppUserModelId);
+        Assert.StartsWith("OpenClaw.Companion", AppIdentity.AppUserModelId);
         Assert.DoesNotContain("OpenClaw.Tray.WinUI", AppIdentity.AppUserModelId);
+    }
+
+    [Fact]
+    public void AppUserModelId_IsIndependentOfMsixPackageIdentity()
+    {
+        // installer.iss bakes this AUMID into the Start menu shortcut of every unpackaged
+        // install, and SetCurrentProcessExplicitAppUserModelID is skipped entirely once the
+        // process has package identity. Resyncing the AUMID to the MSIX Identity/@Name would
+        // therefore break notifications for existing users without helping packaged builds.
+        var manifest = File.ReadAllText(Path.Combine(
+            TestRepositoryPaths.GetRepositoryRoot(),
+            "src",
+            "OpenClaw.Tray.WinUI",
+            "Package.appxmanifest"));
+
+        var identityName = Regex.Match(manifest, @"<Identity\s+Name=""(?<name>[^""]+)""").Groups["name"].Value;
+
+        Assert.NotEmpty(identityName);
+        Assert.NotEqual(AppIdentity.AppUserModelId, identityName);
     }
 
     [Fact]

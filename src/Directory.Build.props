@@ -12,6 +12,9 @@
     <!-- Audit all package dependencies (direct + transitive) for known CVEs during restore.
          Defaults to "direct" in the SDK; "all" provides broader security coverage. -->
     <NuGetAuditMode>all</NuGetAuditMode>
+
+    <!-- GitVersion must populate $(Version) before MSIX manifest generation. -->
+    <UpdateVersionProperties>true</UpdateVersionProperties>
   </PropertyGroup>
 
   <ItemGroup>

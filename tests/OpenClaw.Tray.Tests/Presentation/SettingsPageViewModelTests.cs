@@ -136,7 +136,7 @@ public sealed class SettingsPageViewModelTests
     [Fact]
     public void AutoStart_OsWriteFailure_DoesNotFlashSaved()
     {
-        var vm = NewVm(out _, out var appCommands, out _, out var temp);
+        var vm = NewVm(out var settings, out var appCommands, out _, out var temp);
         using (temp)
         {
             appCommands.AutoStartResult = false; // simulate the OS registration failing
@@ -144,10 +144,12 @@ public sealed class SettingsPageViewModelTests
             var savedFlashes = 0;
             vm.SavedIndicated += (_, _) => savedFlashes++;
 
+            var effectiveValue = settings.AutoStart;
             vm.AutoStart = !vm.AutoStart;
 
             Assert.Equal(1, appCommands.AutoStartApplyCount);
             Assert.Equal(0, savedFlashes); // no confirmation when the apply reports failure
+            Assert.Equal(effectiveValue, vm.AutoStart);
         }
     }
 

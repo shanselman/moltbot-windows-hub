@@ -395,6 +395,9 @@
   <data name="Update_Message_Skipped_Debug" xml:space="preserve">
     <value>Update checks are disabled in debug builds.</value>
   </data>
+  <data name="Update_Message_Skipped_Store" xml:space="preserve">
+    <value>Updates for this app are managed by the Microsoft Store.</value>
+  </data>
   <data name="Update_Message_Skipped_Dev" xml:space="preserve">
     <value>Update checks are disabled in development builds.</value>
   </data>

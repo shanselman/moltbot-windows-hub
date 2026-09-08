@@ -368,6 +368,9 @@
   <data name="Update_Message_Skipped_Debug" xml:space="preserve">
     <value>Updatecontroles zijn uitgeschakeld in debug-builds.</value>
   </data>
+  <data name="Update_Message_Skipped_Store" xml:space="preserve">
+    <value>Updates voor deze app worden beheerd door de Microsoft Store.</value>
+  </data>
   <data name="Update_Message_Skipped_Dev" xml:space="preserve">
     <value>Updatecontroles zijn uitgeschakeld in ontwikkelbuilds.</value>
   </data>

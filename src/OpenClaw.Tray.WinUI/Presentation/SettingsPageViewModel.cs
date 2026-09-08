@@ -101,6 +101,17 @@ internal sealed class SettingsPageViewModel : INavigationAware, IDisposable, INo
         if (await _appCommands.ApplyAutoStart(_origin, value))
         {
             RaiseSaved();
+            return;
+        }
+
+        _loading = true;
+        try
+        {
+            SetField(ref _autoStart, _store.Current.AutoStart, nameof(AutoStart));
+        }
+        finally
+        {
+            _loading = false;
         }
     }
 

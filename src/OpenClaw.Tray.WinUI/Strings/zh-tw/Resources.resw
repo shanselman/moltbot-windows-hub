@@ -367,6 +367,9 @@
   <data name="Update_Message_Skipped_Debug" xml:space="preserve">
     <value>偵錯版本已停用更新檢查。</value>
   </data>
+  <data name="Update_Message_Skipped_Store" xml:space="preserve">
+    <value>此應用程式的更新由 Microsoft Store 管理。</value>
+  </data>
   <data name="Update_Message_Skipped_Dev" xml:space="preserve">
     <value>開發版本已停用更新檢查。</value>
   </data>

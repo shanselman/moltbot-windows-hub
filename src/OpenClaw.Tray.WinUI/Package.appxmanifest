@@ -3,18 +3,22 @@
 <Package
   xmlns="http://schemas.microsoft.com/appx/manifest/foundation/windows10"
   xmlns:uap="http://schemas.microsoft.com/appx/manifest/uap/windows10"
+  xmlns:desktop="http://schemas.microsoft.com/appx/manifest/desktop/windows10"
+  xmlns:com="http://schemas.microsoft.com/appx/manifest/com/windows10"
   xmlns:rescap="http://schemas.microsoft.com/appx/manifest/foundation/windows10/restrictedcapabilities"
-  IgnorableNamespaces="uap rescap">
+  IgnorableNamespaces="uap desktop com rescap">
 
-  <!-- IMPORTANT: Publisher must exactly match the Azure Artifact Signing certificate subject.
-       Check your certificate profile at: Azure Portal > Artifact Signing > openclaw > openclaw
-       Update the Publisher= value below to match. -->
   <!-- Version is patched at build time by the SyncAppxManifestVersionTarget in
        OpenClaw.Tray.WinUI.csproj from $(Version) (see docs/VERSIONING.md).
        The 0.0.0.0 below is a sentinel and is never shipped. -->
+  <!-- Identity/@Publisher must be the Partner Center "Package/Identity/Publisher" value
+       verbatim, not the Authenticode code-signing subject used for the unpackaged
+       installer (see docs/RELEASING.md). The Store re-signs the package to this identity,
+       so do NOT change this to the Azure Artifact Signing certificate subject: that
+       certificate signs the unpackaged installer and its executables, never this MSIX. -->
   <Identity
-    Name="OpenClaw.Companion"
-    Publisher="CN=OpenClaw Foundation, O=OpenClaw Foundation, L=Mill Valley, S=California, C=US"
+    Name="OpenClawFoundation.OpenClaw"
+    Publisher="CN=4BA40A7A-B719-4C40-BF91-84AF4F1136FC"
     Version="0.0.0.0" />
 
   <Properties>
@@ -25,6 +29,10 @@
 
   <Dependencies>
     <TargetDeviceFamily Name="Windows.Desktop" MinVersion="10.0.19041.0" MaxVersionTested="10.0.26100.0" />
+    <PackageDependency
+      Name="Microsoft.VCLibs.140.00.UWPDesktop"
+      MinVersion="14.0.33728.0"
+      Publisher="CN=Microsoft Corporation, O=Microsoft Corporation, L=Redmond, S=Washington, C=US" />
   </Dependencies>
 
   <Resources>
@@ -52,6 +60,36 @@
             <uap:DisplayName>OpenClaw Protocol</uap:DisplayName>
           </uap:Protocol>
         </uap:Extension>
+
+        <!-- Packaged COM activation for Microsoft.Toolkit.Uwp.Notifications. -->
+        <desktop:Extension Category="windows.toastNotificationActivation">
+          <desktop:ToastNotificationActivation ToastActivatorCLSID="EF9297B3-EEEB-4E50-8306-D1D118E04BC7" />
+        </desktop:Extension>
+
+        <com:Extension Category="windows.comServer">
+          <com:ComServer>
+            <com:ExeServer
+              Executable="OpenClaw.Tray.WinUI.exe"
+              Arguments="-ToastActivated"
+              DisplayName="OpenClaw Toast Activator">
+              <com:Class
+                Id="EF9297B3-EEEB-4E50-8306-D1D118E04BC7"
+                DisplayName="OpenClaw Toast Activator" />
+            </com:ExeServer>
+          </com:ComServer>
+        </com:Extension>
+
+        <!-- Store-compatible startup registration. The app applies the user's
+             AutoStart setting through Windows.ApplicationModel.StartupTask. -->
+        <desktop:Extension
+          Category="windows.startupTask"
+          Executable="OpenClaw.Tray.WinUI.exe"
+          EntryPoint="Windows.FullTrustApplication">
+          <desktop:StartupTask
+            TaskId="OpenClawStartup"
+            Enabled="false"
+            DisplayName="OpenClaw Companion" />
+        </desktop:Extension>
       </Extensions>
     </Application>
   </Applications>

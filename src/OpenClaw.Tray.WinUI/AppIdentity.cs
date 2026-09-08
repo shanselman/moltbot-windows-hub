@@ -13,17 +13,24 @@ internal static class AppIdentity
     /// <summary>Short name used in tray tooltip prefix.</summary>
     public const string TrayName = "OpenClaw Tray (Dev)";
 
-    /// <summary>MSIX package identity name (must differ from release for side-by-side).</summary>
-    public const string PackageIdentityName = "OpenClaw.Companion.Dev";
-
-    /// <summary>Win32 AppUserModelID used for notifications and shell grouping.</summary>
-    public const string AppUserModelId = PackageIdentityName;
+    /// <summary>
+    /// Win32 AppUserModelID used for notifications and shell grouping. This applies to
+    /// unpackaged (Inno Setup) installs only; packaged builds take their AUMID from the
+    /// MSIX manifest instead. It must keep matching installer.iss MyAppAumid, and it is
+    /// deliberately independent of Identity/@Name in Package.appxmanifest -- resyncing it
+    /// to the MSIX identity would orphan the AUMID already written into existing users'
+    /// Start menu shortcuts and break their notifications.
+    /// </summary>
+    public const string AppUserModelId = "OpenClaw.Companion.Dev";
 
     /// <summary>Windows Registry auto-start value name (must differ so both can auto-start).</summary>
     public const string AutoStartRegistryName = "OpenClawTray-Dev";
 
     /// <summary>Windows scheduled task name (must differ so both can auto-start).</summary>
     public const string StartupTaskName = "OpenClaw Companion (Dev)";
+
+    /// <summary>MSIX manifest startup task identifier.</summary>
+    public const string PackageStartupTaskId = "OpenClawStartup";
 
     /// <summary>Leaf directory for local and roaming app-owned data.</summary>
     public const string DataDirectoryName = "OpenClawTray-Dev";
@@ -52,17 +59,24 @@ internal static class AppIdentity
     /// <summary>Short name used in tray tooltip prefix.</summary>
     public const string TrayName = "OpenClaw Tray";
 
-    /// <summary>MSIX package identity name.</summary>
-    public const string PackageIdentityName = "OpenClaw.Companion";
-
-    /// <summary>Win32 AppUserModelID used for notifications and shell grouping.</summary>
-    public const string AppUserModelId = PackageIdentityName;
+    /// <summary>
+    /// Win32 AppUserModelID used for notifications and shell grouping. This applies to
+    /// unpackaged (Inno Setup) installs only; packaged builds take their AUMID from the
+    /// MSIX manifest instead. It must keep matching installer.iss MyAppAumid, and it is
+    /// deliberately independent of Identity/@Name in Package.appxmanifest -- resyncing it
+    /// to the MSIX identity would orphan the AUMID already written into existing users'
+    /// Start menu shortcuts and break their notifications.
+    /// </summary>
+    public const string AppUserModelId = "OpenClaw.Companion";
 
     /// <summary>Windows Registry auto-start value name.</summary>
     public const string AutoStartRegistryName = "OpenClawTray";
 
     /// <summary>Windows scheduled task name.</summary>
     public const string StartupTaskName = "OpenClaw Companion";
+
+    /// <summary>MSIX manifest startup task identifier.</summary>
+    public const string PackageStartupTaskId = "OpenClawStartup";
 
     /// <summary>Leaf directory for local and roaming app-owned data.</summary>
     public const string DataDirectoryName = "OpenClawTray";
