@@ -447,6 +447,19 @@ public class SetupConfigTests : IDisposable
             Assert.Contains("Unverified custom installer", summary.InstallerDescription);
             Assert.Contains("CustomClaw", summary.ExactCommands);
             Assert.Contains("19999", summary.ExactCommands);
+            Assert.Contains(
+                $"'{InstallCliStep.InstallerTempDirectoryPreview}'",
+                summary.ExactCommands);
+            Assert.Contains("'https://example.test/install.sh'", summary.ExactCommands);
+            Assert.DoesNotContain("--connect-timeout", summary.ExactCommands);
+            Assert.DoesNotContain("--max-time", summary.ExactCommands);
+            Assert.DoesNotContain("--remove-on-error", summary.ExactCommands);
+            Assert.Contains(
+                $"bash -s -- --version '{GatewayReleasePolicy.SecurityFloor}' < \"$installer\"",
+                summary.ExactCommands);
+            Assert.DoesNotContain("--node-version", summary.ExactCommands);
+            Assert.DoesNotContain("--retry", summary.ExactCommands);
+            Assert.DoesNotContain("| bash", summary.ExactCommands);
             Assert.Equal("CustomClaw · LAN:19999", summary.CompletionGatewaySummary);
             Assert.Equal("Qwen 3.6 35B-A3B installed", summary.LocalAiTitle);
             Assert.StartsWith(
@@ -464,6 +477,43 @@ public class SetupConfigTests : IDisposable
             Environment.SetEnvironmentVariable("OPENCLAW_TRAY_DATA_DIR", oldData);
             Environment.SetEnvironmentVariable("OPENCLAW_TRAY_LOCAL_DATA_DIR", oldLocalData);
         }
+    }
+
+    [Fact]
+    public void SetupReviewSummary_OfficialInstallerShowsSelectedGatewayAndNodeVersions()
+    {
+        var config = new SetupConfig();
+
+        var summary = SetupReviewSummaryBuilder.Build(config);
+
+        Assert.Contains($"'{GatewayReleasePolicy.DefaultInstallUrl}'", summary.ExactCommands);
+        Assert.Contains(
+            $"bash -s -- --version '{GatewayReleasePolicy.RecommendedVersion}' " +
+            $"--node-version '{GatewayReleasePolicy.NodeVersion}' < \"$installer\"",
+            summary.ExactCommands);
+        Assert.DoesNotContain("--retry", summary.ExactCommands);
+        Assert.DoesNotContain("| bash", summary.ExactCommands);
+    }
+
+    [Fact]
+    public void SetupReviewSummary_InvalidInstallerDoesNotPreviewUnreachableDownload()
+    {
+        var config = new SetupConfig
+        {
+            Gateway =
+            {
+                InstallUrl = "http://example.test/install.sh",
+                Version = GatewayReleasePolicy.SecurityFloor
+            }
+        };
+
+        var summary = SetupReviewSummaryBuilder.Build(config);
+
+        Assert.Contains(
+            "setup stops before CLI download: installer URL must use HTTPS",
+            summary.ExactCommands);
+        Assert.DoesNotContain("curl ", summary.ExactCommands);
+        Assert.DoesNotContain("bash -s", summary.ExactCommands);
     }
 
     [Fact]
