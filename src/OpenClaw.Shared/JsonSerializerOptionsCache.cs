@@ -10,6 +10,16 @@ namespace OpenClaw.Shared;
 internal static class JsonSerializerOptionsCache
 {
     /// <summary>
+    /// Gateway protocol payloads use camelCase and evolve additively. Unknown
+    /// properties are ignored while property names are matched case-insensitively.
+    /// </summary>
+    internal static readonly JsonSerializerOptions GatewayProtocol =
+        new(JsonSerializerDefaults.Web)
+        {
+            PropertyNameCaseInsensitive = true
+        };
+
+    /// <summary>
     /// Pretty-print JSON with no additional overrides.
     /// Suitable for writing human-readable configuration and diagnostic files.
     /// </summary>

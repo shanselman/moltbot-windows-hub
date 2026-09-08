@@ -169,6 +169,7 @@ public partial class OpenClawGatewayClient : WebSocketClientBase, IOperatorGatew
     {
         _handshakeChallengeGate.Reset(CurrentConnectionGeneration);
         _pendingRequests.OpenConnection();
+        ResetAdvertisedFeatures();
         ResetUnsupportedMethodFlags();
         RaiseTransportConnected();
         return Task.CompletedTask;
@@ -193,6 +194,7 @@ public partial class OpenClawGatewayClient : WebSocketClientBase, IOperatorGatew
         Volatile.Write(ref _mainSessionKey, null);
         Volatile.Write(ref _mainSessionKeyIsCanonical, false);
         Volatile.Write(ref _hasHandshakeSnapshot, false);
+        ResetAdvertisedFeatures();
         _pendingRequests.Drain(
             new GatewayConnectionLostException(
                 RemoteCloseStatusCode,
@@ -323,6 +325,11 @@ public partial class OpenClawGatewayClient : WebSocketClientBase, IOperatorGatew
         _connectEnvelopeSigner = new DeviceIdentityConnectEnvelopeSigner(_deviceIdentity);
         _connectAuthToken = HasUsableOperatorDeviceToken ? _deviceIdentity.DeviceToken! : (_tokenIsBootstrapToken ? string.Empty : _token);
         _useV2Signature |= _tokenIsBootstrapToken && !HasUsableOperatorDeviceToken;
+        _skillsGatewayApi = new SkillsGatewayApi(SendWizardRequestAsync, EnsureExtensionMethodSupported);
+        _pluginsGatewayApi = new PluginsGatewayApi(
+            SendWizardRequestAsync,
+            EnsureExtensionMethodSupported,
+            () => ConnectionEpoch);
     }
 
     /// <summary>
@@ -1436,14 +1443,27 @@ public partial class OpenClawGatewayClient : WebSocketClientBase, IOperatorGatew
             await SendTrackedRequestAsync("skills.status");
     }
 
+    [Obsolete("Use InstallClawHubSkillAsync with the exact skills.search installRef.")]
     public Task<bool> InstallSkillAsync(string skillId)
     {
-        return TrySendTrackedRequestAsync("skills.install", new { id = skillId });
+        // The former { id } payload is rejected by every supported Gateway skill
+        // install schema and is unsafe once publishers share a slug. Keep the
+        // compatibility member non-mutating until callers migrate to the typed API.
+        return Task.FromResult(false);
     }
 
-    public Task<bool> SetSkillEnabledAsync(string skillKey, bool enabled)
+    public async Task<bool> SetSkillEnabledAsync(string skillKey, bool enabled)
     {
-        return TrySendTrackedRequestAsync("skills.update", new { skillKey, enabled });
+        try
+        {
+            var result = await SetSkillEnabledDetailedAsync(skillKey, enabled).ConfigureAwait(false);
+            return result.Ok;
+        }
+        catch (Exception ex)
+        {
+            _logger.Warn($"skills.update failed: {TokenSanitizer.Sanitize(ex.Message)}");
+            return false;
+        }
     }
 
     // Gateway config management
@@ -2220,8 +2240,11 @@ public partial class OpenClawGatewayClient : WebSocketClientBase, IOperatorGatew
                 if (root.TryGetProperty("ok", out var okWiz) &&
                     okWiz.ValueKind == JsonValueKind.False)
                 {
-                    var message = TryGetErrorMessage(root) ?? "wizard request failed";
-                    wizardCompletion.TryFault(new InvalidOperationException(message));
+                    wizardCompletion.TryFault(
+                        GatewayRequestException.FromResponse(
+                            wizardCompletion.Method,
+                            root,
+                            "wizard request failed"));
                 }
                 else if (root.TryGetProperty("payload", out var wizPayload))
                 {
@@ -2318,6 +2341,7 @@ public partial class OpenClawGatewayClient : WebSocketClientBase, IOperatorGatew
             ResetReconnectAttempts();
             _operatorDeviceId = TryGetHandshakeDeviceId(payload);
             _grantedOperatorScopes = TryGetHandshakeScopes(payload);
+            CaptureAdvertisedFeatures(payload);
             // Write the key first, then publish the readiness flag. Pair with
             // Volatile.Read on the public getters so a reader observing
             // HasHandshakeSnapshot==true is guaranteed to see the populated

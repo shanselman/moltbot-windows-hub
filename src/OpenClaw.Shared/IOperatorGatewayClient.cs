@@ -45,6 +45,13 @@ public interface IOperatorGatewayClient
     string? MainSessionKey { get; }
     /// <summary>True once the hello-ok handshake has been processed.</summary>
     bool HasHandshakeSnapshot { get; }
+    /// <summary>Gateway RPC methods and events advertised by the current hello-ok handshake.</summary>
+    GatewayFeatureSet AdvertisedFeatures => GatewayFeatureSet.Empty;
+    /// <summary>
+    /// Monotonic transport generation used to invalidate artifact-bound consent
+    /// after a disconnect or reconnect.
+    /// </summary>
+    long ConnectionEpoch => 0;
 
     // ─── Connection events (from WebSocketClientBase) ───
     event EventHandler<ConnectionStatus>? StatusChanged;
@@ -112,8 +119,37 @@ public interface IOperatorGatewayClient
     Task<bool> UpdateCronJobAsync(string id, object patch);
     Task RequestCronRunsAsync(string? id = null, int limit = 20, int offset = 0);
     Task RequestSkillsStatusAsync(string? agentId = null);
+    Task<SkillsStatusReport> GetSkillsStatusAsync(string? agentId = null, int timeoutMs = 15000)
+        => Task.FromResult(SkillsStatusReport.Unsupported);
+    Task<SkillsSearchResult> SearchSkillsAsync(string? query = null, int limit = 20, int timeoutMs = 15000)
+        => Task.FromResult(SkillsSearchResult.Unsupported);
+    Task<SkillsDetailResult> GetSkillDetailAsync(string installReference, int timeoutMs = 15000)
+        => Task.FromResult(SkillsDetailResult.Unsupported);
+    Task<SkillsSecurityVerdictsResult> GetSkillSecurityVerdictsAsync(string? agentId = null, int timeoutMs = 15000)
+        => Task.FromResult(SkillsSecurityVerdictsResult.Unsupported);
+    Task<SkillCardResult> GetSkillCardAsync(string skillKey, string? agentId = null, int timeoutMs = 15000)
+        => Task.FromResult(SkillCardResult.Unsupported);
+    Task<SkillMutationResult> InstallClawHubSkillAsync(ClawHubSkillInstallRequest request, int timeoutMs = 120000)
+        => Task.FromResult(SkillMutationResult.Unsupported);
+    Task<SkillMutationResult> UpdateClawHubSkillAsync(ClawHubSkillUpdateRequest request, int timeoutMs = 120000)
+        => Task.FromResult(SkillMutationResult.Unsupported);
+    Task<SkillMutationResult> SetSkillEnabledDetailedAsync(string skillKey, bool enabled, int timeoutMs = 15000)
+        => Task.FromResult(SkillMutationResult.Unsupported);
+    [Obsolete("Use InstallClawHubSkillAsync with the exact skills.search installRef.")]
     Task<bool> InstallSkillAsync(string skillId);
     Task<bool> SetSkillEnabledAsync(string skillKey, bool enabled);
+    Task<PluginsListResult> ListPluginsAsync(int timeoutMs = 15000)
+        => Task.FromResult(PluginsListResult.Unsupported);
+    Task<PluginsSearchResult> SearchPluginsAsync(string query, int limit = 20, int timeoutMs = 15000)
+        => Task.FromResult(PluginsSearchResult.Unsupported);
+    Task<PluginInspectResult> InspectPluginAsync(string pluginId, int timeoutMs = 15000)
+        => Task.FromResult(PluginInspectResult.Unsupported);
+    Task<PluginMutationResult> InstallPluginAsync(PluginInstallRequest request, int timeoutMs = 120000)
+        => Task.FromResult(PluginMutationResult.Unsupported);
+    Task<PluginMutationResult> SetPluginEnabledAsync(PluginSetEnabledRequest request, int timeoutMs = 30000)
+        => Task.FromResult(PluginMutationResult.Unsupported);
+    Task<PluginMutationResult> UninstallPluginAsync(string pluginId, int timeoutMs = 120000)
+        => Task.FromResult(PluginMutationResult.Unsupported);
     Task RequestConfigAsync();
     Task RequestConfigSchemaAsync();
     Task<bool> SetConfigAsync(string path, object value);

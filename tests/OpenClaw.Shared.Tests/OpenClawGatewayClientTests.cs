@@ -613,11 +613,150 @@ public class OpenClawGatewayClientTests
                 error = new { message = "wizard rejected" }
             }));
 
-        var exception = await Assert.ThrowsAsync<InvalidOperationException>(
+        var exception = await Assert.ThrowsAsync<GatewayRequestException>(
             async () => await responseTask.WaitAsync(TimeSpan.FromSeconds(2)));
 
         Assert.Equal("wizard rejected", exception.Message);
+        Assert.Equal("wizard.next", exception.Method);
         Assert.Equal(0, helper.GetPendingRequestCount());
+    }
+
+    [Fact]
+    public async Task InstallClawHubSkillAsync_SendsExactSearchIdentityAndAgent()
+    {
+        using var server = new LoopbackWebSocketServer();
+        using var identity = new TempDirectory("skill-install-");
+        await server.StartAsync();
+        var helper = new GatewayClientTestHelper(
+            gatewayUrl: server.WebSocketUrl,
+            identityPath: identity.Path);
+        using var client = helper.Client;
+        await client.ConnectAsync();
+        helper.TrackPendingRequest("connect-extensions", "connect");
+        helper.ProcessRawMessage("""
+        {
+          "type": "res",
+          "id": "connect-extensions",
+          "ok": true,
+          "payload": {
+            "type": "hello-ok",
+            "protocol": 4,
+            "features": {
+              "methods": ["skills.install"],
+              "events": ["skills.changed"]
+            },
+            "snapshot": {}
+          }
+        }
+        """);
+
+        var resultTask = client.InstallClawHubSkillAsync(
+            new ClawHubSkillInstallRequest(
+                "@publisher/shared-slug",
+                AgentId: "researcher",
+                Version: "1.2.3"),
+            timeoutMs: 10_000);
+        var requestText = await server.ReceiveTextAsync().WaitAsync(TimeSpan.FromSeconds(2));
+        using var request = JsonDocument.Parse(requestText);
+        var root = request.RootElement;
+        Assert.Equal("skills.install", root.GetProperty("method").GetString());
+        var parameters = root.GetProperty("params");
+        Assert.Equal("clawhub", parameters.GetProperty("source").GetString());
+        Assert.Equal("@publisher/shared-slug", parameters.GetProperty("slug").GetString());
+        Assert.Equal("researcher", parameters.GetProperty("agentId").GetString());
+        Assert.Equal("1.2.3", parameters.GetProperty("version").GetString());
+        Assert.False(parameters.TryGetProperty("id", out _));
+        Assert.False(parameters.TryGetProperty("force", out _));
+
+        await server.SendTextAsync(JsonSerializer.Serialize(new
+        {
+            type = "res",
+            id = root.GetProperty("id").GetString(),
+            ok = true,
+            payload = new
+            {
+                ok = true,
+                message = "Installed shared-slug@1.2.3",
+                slug = "shared-slug",
+                version = "1.2.3",
+            },
+        }));
+
+        var result = await resultTask.WaitAsync(TimeSpan.FromSeconds(2));
+        Assert.True(result.Ok);
+        Assert.Equal("shared-slug", result.Slug);
+        Assert.True(client.AdvertisedFeatures.SupportsEvent("skills.changed"));
+    }
+
+    [Fact]
+    public async Task InstallPluginAsync_RejectsConsentFromPriorConnectionEpochBeforeSending()
+    {
+        using var server = new LoopbackWebSocketServer();
+        using var identity = new TempDirectory("plugin-install-");
+        await server.StartAsync();
+        var helper = new GatewayClientTestHelper(
+            gatewayUrl: server.WebSocketUrl,
+            identityPath: identity.Path);
+        using var client = helper.Client;
+        await client.ConnectAsync();
+        helper.TrackPendingRequest("connect-plugins", "connect");
+        helper.ProcessRawMessage("""
+        {
+          "type": "res",
+          "id": "connect-plugins",
+          "ok": true,
+          "payload": {
+            "type": "hello-ok",
+            "protocol": 4,
+            "features": {
+              "methods": ["plugins.install"],
+              "events": []
+            },
+            "snapshot": {}
+          }
+        }
+        """);
+        var staleEpoch = client.ConnectionEpoch - 1;
+        var request = PluginInstallRequest.FromClawHub("@openclaw/voice-call") with
+        {
+            AcknowledgeCapabilities = new PluginCapabilityAcknowledgement(
+                "review-token",
+                staleEpoch),
+        };
+
+        var exception = await Assert.ThrowsAsync<InvalidOperationException>(
+            () => client.InstallPluginAsync(request, timeoutMs: 10_000));
+
+        Assert.Contains("expired", exception.Message, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public async Task ExtensionMethod_NotAdvertised_FailsBeforeSending()
+    {
+        using var server = new LoopbackWebSocketServer();
+        using var identity = new TempDirectory("extension-gate-");
+        await server.StartAsync();
+        var helper = new GatewayClientTestHelper(
+            gatewayUrl: server.WebSocketUrl,
+            identityPath: identity.Path);
+        using var client = helper.Client;
+        await client.ConnectAsync();
+        helper.TrackPendingRequest("connect-no-plugins", "connect");
+        helper.ProcessRawMessage("""
+        {
+          "type": "res",
+          "id": "connect-no-plugins",
+          "ok": true,
+          "payload": {
+            "type": "hello-ok",
+            "protocol": 4,
+            "features": { "methods": ["skills.status"], "events": [] },
+            "snapshot": {}
+          }
+        }
+        """);
+
+        await Assert.ThrowsAsync<NotSupportedException>(() => client.ListPluginsAsync());
     }
 
     [Fact]
