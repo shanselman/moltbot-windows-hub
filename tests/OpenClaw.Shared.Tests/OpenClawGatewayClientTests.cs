@@ -769,6 +769,75 @@ public class OpenClawGatewayClientTests
     }
 
     [Fact]
+    public async Task SetSkillEnabledAsync_SuccessRefreshesLastAgentScope()
+    {
+        using var server = new LoopbackWebSocketServer();
+        using var identity = new TempDirectory("skill-toggle-refresh-");
+        await server.StartAsync();
+        var helper = new GatewayClientTestHelper(
+            gatewayUrl: server.WebSocketUrl,
+            identityPath: identity.Path);
+        using var client = helper.Client;
+        await client.ConnectAsync();
+        helper.TrackPendingRequest("connect-skill-toggle-refresh", "connect");
+        helper.ProcessRawMessage("""
+        {
+          "type": "res",
+          "id": "connect-skill-toggle-refresh",
+          "ok": true,
+          "payload": {
+            "type": "hello-ok",
+            "protocol": 4,
+            "features": {
+              "methods": ["skills.status", "skills.update"],
+              "events": ["skills.changed"]
+            },
+            "snapshot": {}
+          }
+        }
+        """);
+
+        await client.RequestSkillsStatusAsync("researcher");
+        var initialStatusText = await server.ReceiveTextAsync().WaitAsync(TimeSpan.FromSeconds(2));
+        using (var initialStatus = JsonDocument.Parse(initialStatusText))
+        {
+            Assert.Equal("skills.status", initialStatus.RootElement.GetProperty("method").GetString());
+            Assert.Equal(
+                "researcher",
+                initialStatus.RootElement.GetProperty("params").GetProperty("agentId").GetString());
+            helper.ProcessRawMessage(JsonSerializer.Serialize(new
+            {
+                type = "res",
+                id = initialStatus.RootElement.GetProperty("id").GetString(),
+                ok = true,
+                payload = new { skills = Array.Empty<object>() },
+            }));
+        }
+
+        var toggleTask = client.SetSkillEnabledAsync("weather", enabled: false);
+        var updateText = await server.ReceiveTextAsync().WaitAsync(TimeSpan.FromSeconds(2));
+        using (var update = JsonDocument.Parse(updateText))
+        {
+            Assert.Equal("skills.update", update.RootElement.GetProperty("method").GetString());
+            helper.ProcessRawMessage(JsonSerializer.Serialize(new
+            {
+                type = "res",
+                id = update.RootElement.GetProperty("id").GetString(),
+                ok = true,
+                payload = new { ok = true },
+            }));
+        }
+
+        Assert.True(await toggleTask.WaitAsync(TimeSpan.FromSeconds(2)));
+        var refreshedStatusText = await server.ReceiveTextAsync().WaitAsync(TimeSpan.FromSeconds(2));
+        using var refreshedStatus = JsonDocument.Parse(refreshedStatusText);
+        Assert.Equal("skills.status", refreshedStatus.RootElement.GetProperty("method").GetString());
+        Assert.Equal(
+            "researcher",
+            refreshedStatus.RootElement.GetProperty("params").GetProperty("agentId").GetString());
+    }
+
+    [Fact]
     public async Task InstallPluginAsync_RejectsConsentFromPriorConnectionEpochBeforeSending()
     {
         using var server = new LoopbackWebSocketServer();

@@ -1495,7 +1495,14 @@ public partial class OpenClawGatewayClient : WebSocketClientBase, IOperatorGatew
         try
         {
             var result = await SetSkillEnabledDetailedAsync(skillKey, enabled).ConfigureAwait(false);
-            return result.Ok;
+            if (!result.Ok)
+                return false;
+
+            // The legacy API historically refreshed the last requested agent scope after a
+            // successful toggle. The typed mutation response bypasses the tracked-response
+            // switch that performed that refresh, so preserve it explicitly for legacy callers.
+            await RequestSkillsStatusAsync(_lastSkillsStatusAgentId).ConfigureAwait(false);
+            return true;
         }
         catch (Exception ex)
         {
