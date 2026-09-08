@@ -44,7 +44,7 @@ internal static class WslViabilityInspector
         CommandResult versionResult;
         try
         {
-            versionResult = await commands.RunAsync(
+            versionResult = await commands.RunAsyncAllowingInheritedPipeHandleEscape(
                 WslConstants.WslExePath,
                 ["--version"],
                 TimeSpan.FromSeconds(5),
@@ -102,7 +102,7 @@ internal static class WslViabilityInspector
         CommandResult status;
         try
         {
-            status = await commands.RunAsync(
+            status = await commands.RunAsyncAllowingInheritedPipeHandleEscape(
                 WslConstants.WslExePath,
                 ["--status"],
                 TimeSpan.FromSeconds(10),
@@ -201,7 +201,7 @@ public sealed class PreflightWslStep : SetupStep
 
     internal static async Task<string?> DetectEnvironmentIssueAsync(SetupContext ctx, CancellationToken ct)
     {
-        var status = await ctx.Commands.RunAsync(
+        var status = await ctx.Commands.RunAsyncAllowingInheritedPipeHandleEscape(
             WslConstants.WslExePath,
             ["--status"],
             TimeSpan.FromSeconds(10),
@@ -245,7 +245,7 @@ public sealed class PreflightWslStep : SetupStep
                 return StepResult.Fail(WslPlatformInstallDiagnostics.DescribeFailure(process.ExitCode, quota));
             }
 
-            var probe = await ctx.Commands.RunAsync(
+            var probe = await ctx.Commands.RunAsyncAllowingInheritedPipeHandleEscape(
                 WslConstants.WslExePath,
                 ["--version"],
                 TimeSpan.FromSeconds(5),

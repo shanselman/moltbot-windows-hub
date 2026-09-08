@@ -42,7 +42,10 @@ public sealed class ExistingConfigDetector
 
         var logger = new SetupLogger(filePath: null, LogLevel.Warn);
         var result = new CommandRunner(logger)
-            .RunAsync(WslConstants.WslExePath, ["--list", "--quiet"], TimeSpan.FromSeconds(5))
+            .RunAsyncAllowingInheritedPipeHandleEscape(
+                WslConstants.WslExePath,
+                ["--list", "--quiet"],
+                TimeSpan.FromSeconds(5))
             .GetAwaiter()
             .GetResult();
         var hasDistro = InterpretDistroList(result, targetDistroName);
