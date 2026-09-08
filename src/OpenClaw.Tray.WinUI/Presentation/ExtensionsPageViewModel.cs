@@ -542,7 +542,8 @@ internal sealed partial class ExtensionsPageViewModel : INavigationAware, IDispo
             var result = await client.InstallClawHubSkillAsync(new ClawHubSkillInstallRequest(
                 review.InstallReference,
                 review.AgentId,
-                review.RequestedVersion)).ConfigureAwait(false);
+                review.RequestedVersion,
+                ConnectionEpoch: review.ConnectionEpoch)).ConfigureAwait(false);
             if (!result.IsSupported)
                 return new(false, false, _runtime.GetText("ExtensionsPage_SkillsUpgradeRequired"));
             if (!result.Ok)

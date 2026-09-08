@@ -186,6 +186,7 @@ public sealed class ExtensionsPageViewModelTests
         Assert.True(outcome.Succeeded);
         Assert.Equal("1.2.0", client.LastInstallRequest?.Version);
         Assert.Equal("@owner/reviewed", client.LastInstallRequest?.InstallReference);
+        Assert.Equal(review.ConnectionEpoch, client.LastInstallRequest?.ConnectionEpoch);
     }
 
     [Fact]
