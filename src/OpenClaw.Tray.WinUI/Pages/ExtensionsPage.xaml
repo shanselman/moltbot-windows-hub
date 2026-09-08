@@ -24,7 +24,8 @@
         <InfoBar x:Name="PageInfoBar" Grid.Row="1" Margin="0,0,0,12"
                  IsClosable="True" IsOpen="False" Severity="Informational"/>
 
-        <TabView x:Name="ExtensionsTabs" Grid.Row="2" IsAddTabButtonVisible="False">
+        <TabView x:Name="ExtensionsTabs" Grid.Row="2" IsAddTabButtonVisible="False"
+                 SelectionChanged="OnExtensionsTabSelectionChanged">
             <TabViewItem x:Uid="ExtensionsPage_SkillsTab" Header="Skills" IsClosable="False">
                 <Grid Padding="0,12,0,0">
                     <Grid.RowDefinitions>

@@ -92,7 +92,8 @@ public sealed partial class ExtensionsPage : Page
                 : Visibility.Collapsed;
 
         var message = _viewModel.ErrorMessage ?? _viewModel.StatusMessage;
-        PageInfoBar.IsOpen = !string.IsNullOrWhiteSpace(message);
+        PageInfoBar.IsOpen = ExtensionsTabs.SelectedIndex != 1 &&
+            !string.IsNullOrWhiteSpace(message);
         PageInfoBar.Message = message ?? string.Empty;
         PageInfoBar.Severity = _viewModel.ErrorMessage is null
             ? InfoBarSeverity.Informational
@@ -126,6 +127,15 @@ public sealed partial class ExtensionsPage : Page
         DiscoverSkillsButton.IsChecked = false;
         InstalledSkillsPanel.Visibility = Visibility.Visible;
         DiscoverSkillsPanel.Visibility = Visibility.Collapsed;
+        UpdateState();
+    }
+
+    private void OnExtensionsTabSelectionChanged(object sender, SelectionChangedEventArgs e)
+    {
+        if (_viewModel is null)
+            return;
+        CloseSkillReview();
+        ClosePluginReview();
         UpdateState();
     }
 
