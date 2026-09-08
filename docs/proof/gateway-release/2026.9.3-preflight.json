@@ -1,0 +1,27 @@
+{
+  "version": "2026.9.3",
+  "eligible": false,
+  "protocolGeneration": 4,
+  "securityFloor": "2026.6.11",
+  "atOrAboveSecurityFloor": true,
+  "npmIntegrity": "sha512-CzDHMeHdnjlIZ76ZyBb1lvLO4H/yBIMYXupFGGBN87x0853y3hg5nLAnKfxSKqLzqhbUKqy9ebDRAWWV4t8aew==",
+  "npmIntegrityVerified": true,
+  "npmSignatureCount": 2,
+  "npmSignatureVerified": true,
+  "npmProvenance": false,
+  "npmProvenanceSourceCommit": "",
+  "tagCommit": "1391f7cd2d40ab5bbcf2f5f831d3a64f520e72d7",
+  "npmProvenanceTagBound": false,
+  "embeddedPolicyException": false,
+  "packageBuildVersion": "2026.9.3",
+  "packageBuildCommit": "1391f7cd2d40ab5bbcf2f5f831d3a64f520e72d7",
+  "packageBuildMatchesTag": true,
+  "githubStableRelease": true,
+  "stableReleaseManifest": true,
+  "githubVerifiedTag": true,
+  "extendedStableTag": false,
+  "checkedAtUtc": "2026-09-08T18:25:21.6780022Z",
+  "failures": [
+    "npm SLSA provenance did not verify against the package digest and OpenClaw release identity."
+  ]
+}
