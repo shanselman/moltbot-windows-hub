@@ -8,7 +8,7 @@ The app-window captures were recorded from `feat/extensions-hub` at `eee53c31` o
 
 The app remained responsive after switching tabs, loading the 54-skill inventory, and running the live search. The plugin install, capability-consent retry, policy-warning retry, and reconnect state machines are covered by `ExtensionsPageViewModelTests`; live plugin lifecycle proof requires a provenance-validated plugin-capable Gateway release.
 
-The reviewed fixes were revalidated through production commit `043f1b2b` using the same isolated Windows ARM64 app state. UI Automation at the preceding UI-only production commit confirmed the Extensions page, Skills and Plugins tabs, Agent selector, installed inventory, ClawHub links, and the single older-Gateway compatibility message. The app remained responsive after live tab selection. Automated proof through `043f1b2b` also passed:
+The reviewed fixes were revalidated through production commit `8ac0027a` using the same isolated Windows ARM64 app state. UI Automation at the preceding UI-only production commit `c824b4cb` confirmed the Extensions page, Skills and Plugins tabs, Agent selector, installed inventory, ClawHub links, and the single older-Gateway compatibility message. The app remained responsive after live tab selection. Automated proof through `8ac0027a` also passed:
 
 - Full build on Windows ARM64.
 - Shared: 3,959 passed, 32 environment-gated skips.
