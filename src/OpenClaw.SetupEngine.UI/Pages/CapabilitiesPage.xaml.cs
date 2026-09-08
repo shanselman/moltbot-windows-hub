@@ -36,6 +36,7 @@ public sealed partial class CapabilitiesPage : Page
     private readonly LocalAiSetupAvailabilityCoordinator _localAiAvailability = new();
     private bool _treatBundledAllOnAsPlaceholder;
     private bool _forceLocalAiNetworkingConsent;
+    private bool _localAiRecoveryOnly;
     private CancellationTokenSource? _tailscaleStatusCancellation;
     private int _tailscaleStatusGeneration;
     private int _step = 1;
@@ -74,7 +75,8 @@ public sealed partial class CapabilitiesPage : Page
 
     protected override void OnNavigatedTo(NavigationEventArgs e)
     {
-        _config = e.Parameter as SetupConfig ?? new SetupConfig();
+        var args = e.Parameter as CapabilitiesPageArgs;
+        _config = args?.Config ?? e.Parameter as SetupConfig ?? new SetupConfig();
         // The tray always registers device.info/status with Node Mode. Keep the
         // setup declaration and gateway allowlist aligned with that runtime contract.
         _config.Capabilities.Device = true;
@@ -105,7 +107,10 @@ public sealed partial class CapabilitiesPage : Page
         TailscaleAuthModeSelector.SelectedIndex = _config.Tailscale.AuthMode == TailscaleAuthMode.AuthKey ? 1 : 0;
         UpdateTailscaleOptions();
         var previewPage = SetupPreview.RequestedPage;
-        var localAiReviewPreview = previewPage is "capabilities-review" or "capabilities-review-consent";
+        var localAiReviewPreview =
+            args?.StartAtLocalAiReview == true ||
+            previewPage is "capabilities-review" or "capabilities-review-consent";
+        _localAiRecoveryOnly = args?.StartAtLocalAiReview == true;
         _forceLocalAiNetworkingConsent = previewPage == "capabilities-review-consent";
         if (localAiReviewPreview)
             _config.LocalAi.Enabled = true;
@@ -214,6 +219,12 @@ public sealed partial class CapabilitiesPage : Page
 
     private void Back_Click(object sender, RoutedEventArgs e)
     {
+        if (_localAiRecoveryOnly)
+        {
+            SetupWindow.Active?.NavigateToWelcome(back: true);
+            return;
+        }
+
         if (_step <= 1)
         {
             // First capability step — step back to the Welcome screen.
@@ -781,8 +792,9 @@ public sealed partial class CapabilitiesPage : Page
         // below immediately, without needing Continue to advance on incomplete information.
         PrimaryButton.IsEnabled =
             _step != 3 ||
-            LocalAiToggle.IsOn != true ||
-            (_localAiSelectionEligible &&
+            (!_localAiRecoveryOnly && LocalAiToggle.IsOn != true) ||
+            (LocalAiToggle.IsOn == true &&
+             _localAiSelectionEligible &&
              (!_localAiNetworkingConsentRequired || LocalAiNetworkingConsentCheckBox.IsChecked == true));
     }
 

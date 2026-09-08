@@ -17,6 +17,7 @@ internal interface IAppCommands
     void ShowChat();
     void CheckForUpdates();
     void ShowOnboarding();
+    void ShowLocalAiSetup();
     void OpenLocalAiLogs() { }
     void ShowGatewayWizard();
     void ShowConnectionStatus();

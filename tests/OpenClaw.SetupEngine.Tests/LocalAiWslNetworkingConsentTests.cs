@@ -60,6 +60,62 @@ public sealed class LocalAiWslNetworkingConsentTests
         Assert.Empty(commands.Invocations);
     }
 
+    [Fact]
+    public async Task Step_RecoveryShutdown_ArmsGatewayRollbackRestart()
+    {
+        using var temp = new TempDirectory("local-ai-recovery-shutdown-");
+        var commands = new SuccessfulCommandRunner();
+        SetupContext context = CreateContext(temp.Path, consent: true, commands);
+        context.Config.LocalAiRecoveryGatewayId = "gateway-id";
+        var step = new ConfigureLocalAiWslNetworkingStep(_ => new ChangedManager());
+
+        StepResult result = await step.ExecuteAsync(context, CancellationToken.None);
+
+        Assert.Equal(StepOutcome.Success, result.Outcome);
+        Assert.True(context.LocalAiRecoveryStoppedWsl);
+        Assert.Equal(["wsl.exe --shutdown"], commands.Invocations);
+    }
+
+    [Theory]
+    [InlineData(1, false)]
+    [InlineData(-1, true)]
+    public async Task Step_RecoveryShutdownFailure_StillArmsGatewayRollbackRestart(
+        int exitCode,
+        bool timedOut)
+    {
+        using var temp = new TempDirectory("local-ai-recovery-shutdown-fail-");
+        var commands = new SuccessfulCommandRunner(new CommandResult(
+            exitCode,
+            string.Empty,
+            "failed",
+            TimeSpan.Zero,
+            timedOut));
+        SetupContext context = CreateContext(temp.Path, consent: true, commands);
+        context.Config.LocalAiRecoveryGatewayId = "gateway-id";
+        var step = new ConfigureLocalAiWslNetworkingStep(_ => new ChangedManager());
+
+        StepResult result = await step.ExecuteAsync(context, CancellationToken.None);
+
+        Assert.Equal(StepOutcome.Failed, result.Outcome);
+        Assert.True(context.LocalAiRecoveryStoppedWsl);
+    }
+
+    [Fact]
+    public async Task Step_RecoveryShutdownCancellation_StillArmsGatewayRollbackRestart()
+    {
+        using var temp = new TempDirectory("local-ai-recovery-shutdown-cancel-");
+        using var cts = new CancellationTokenSource();
+        var commands = new CancelingCommandRunner(cts);
+        SetupContext context = CreateContext(temp.Path, consent: true, commands);
+        context.Config.LocalAiRecoveryGatewayId = "gateway-id";
+        var step = new ConfigureLocalAiWslNetworkingStep(_ => new ChangedManager());
+
+        await Assert.ThrowsAsync<OperationCanceledException>(
+            () => step.ExecuteAsync(context, cts.Token));
+
+        Assert.True(context.LocalAiRecoveryStoppedWsl);
+    }
+
     private static SetupContext CreateContext(
         string localDataDirectory,
         bool consent,
@@ -121,6 +177,69 @@ public sealed class LocalAiWslNetworkingConsentTests
         }
     }
 
+    private sealed class SuccessfulCommandRunner(
+        CommandResult? result = null) : ICommandRunner
+    {
+        public List<string> Invocations { get; } = [];
+
+        public Task<CommandResult> RunAsync(
+            string executable,
+            string[] arguments,
+            TimeSpan timeout,
+            IReadOnlyDictionary<string, string>? environment = null,
+            string? workingDirectory = null,
+            string? stdinInput = null,
+            CancellationToken ct = default,
+            Stream? stdinStream = null)
+        {
+            Invocations.Add($"{Path.GetFileName(executable)} {string.Join(' ', arguments)}");
+            return Task.FromResult(result ?? new CommandResult(
+                0,
+                string.Empty,
+                string.Empty,
+                TimeSpan.Zero,
+                TimedOut: false));
+        }
+
+        public Task<CommandResult> RunInWslAsync(
+            string distroName,
+            string command,
+            TimeSpan timeout,
+            IReadOnlyDictionary<string, string>? environment = null,
+            CancellationToken ct = default,
+            string? user = null,
+            bool inputViaStdin = false) =>
+            throw new NotSupportedException();
+    }
+
+    private sealed class CancelingCommandRunner(
+        CancellationTokenSource cancellation) : ICommandRunner
+    {
+        public Task<CommandResult> RunAsync(
+            string executable,
+            string[] arguments,
+            TimeSpan timeout,
+            IReadOnlyDictionary<string, string>? environment = null,
+            string? workingDirectory = null,
+            string? stdinInput = null,
+            CancellationToken ct = default,
+            Stream? stdinStream = null)
+        {
+            cancellation.Cancel();
+            throw new OperationCanceledException(ct);
+        }
+
+        public Task<CommandResult> RunInWslAsync(
+            string distroName,
+            string command,
+            TimeSpan timeout,
+            IReadOnlyDictionary<string, string>? environment = null,
+            CancellationToken ct = default,
+            string? user = null,
+            bool inputViaStdin = false) =>
+            throw new NotSupportedException();
+    }
+
     private sealed class RecordingManager(string configPath) : IWslGlobalConfigManager
     {
         public bool ApplyCalled { get; private set; }
@@ -140,5 +259,17 @@ public sealed class LocalAiWslNetworkingConsentTests
             RestoreCalled = true;
             return WslGlobalConfigRestoreResult.NoBackup;
         }
+
+    }
+
+    private sealed class ChangedManager : IWslGlobalConfigManager
+    {
+        public WslGlobalConfigStatus Inspect() => new(Exists: false, IsMirrored: false);
+
+        public WslGlobalConfigApplyResult ApplyMirroredNetworking() =>
+            new(Changed: true, RollbackMetadata: null);
+
+        public WslGlobalConfigRestoreResult RestoreIfUnchanged() =>
+            WslGlobalConfigRestoreResult.NoBackup;
     }
 }

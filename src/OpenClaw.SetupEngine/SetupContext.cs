@@ -34,6 +34,8 @@ public sealed class SetupConfig
     public Dictionary<string, string>? WizardAnswers { get; set; }
     [JsonIgnore]
     public bool UsesBundledDefaultConfig { get; set; }
+    [JsonIgnore]
+    public string? LocalAiRecoveryGatewayId { get; set; }
 
     // Nested config sections — everything is configurable
     public WslConfig Wsl { get; set; } = new();
@@ -509,6 +511,9 @@ public sealed class SetupContext
     internal LlamaRuntimeInstallResult? LocalAiRuntimeInstall { get; set; }
     internal HuggingFaceModelInstallResult? LocalAiModelInstall { get; set; }
     internal LocalAiResolvedInstall? LocalAiResolvedInstall { get; set; }
+    internal LocalAiResolvedInstall? LocalAiRecoveryOriginalInstall { get; set; }
+    internal bool LocalAiRecoveryProviderTransition { get; set; }
+    internal bool LocalAiRecoveryReceiptRollbackAllowed { get; set; }
     internal bool LocalAiManifestCreatedThisRun { get; set; }
     internal ILocalAiRuntime? LocalAiRuntime { get; set; }
     internal HostHardwareInfo? LocalAiGpuBaseline { get; set; }
@@ -516,6 +521,7 @@ public sealed class SetupContext
     internal LocalAiGpuLoadEvidence? LocalAiGpuLoadEvidence { get; set; }
     internal LocalAiGatewayPriorState? LocalAiGatewayPriorState { get; set; }
     internal bool IsUninstalling { get; set; }
+    internal bool LocalAiRecoveryStoppedWsl { get; set; }
 
     // Data directory for gateway registry and identity files
     public string DataDir { get; }

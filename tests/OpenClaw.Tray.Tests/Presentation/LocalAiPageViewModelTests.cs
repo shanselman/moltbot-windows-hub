@@ -563,7 +563,7 @@ public sealed class LocalAiPageViewModelTests
     [Theory]
     [InlineData(LocalAiModelAvailabilityState.Unknown)]
     [InlineData(LocalAiModelAvailabilityState.NotInstalled)]
-    public void MissingModel_KeepsRetrySetupAndDoesNotOfferChangeModel(
+    public void MissingModel_UsesLocalAiSetupRouteAndDoesNotOfferChangeModel(
         LocalAiModelAvailabilityState modelState)
     {
         using var harness = new LocalAiHarness(modelState);
@@ -576,7 +576,8 @@ public sealed class LocalAiPageViewModelTests
         Assert.True(harness.ViewModel.RetrySetup());
 
         Assert.Equal(0, harness.Commands.ShowGatewayWizardCount);
-        Assert.Equal(1, harness.Commands.ShowOnboardingCount);
+        Assert.Equal(0, harness.Commands.ShowOnboardingCount);
+        Assert.Equal(1, harness.Commands.ShowLocalAiSetupCount);
     }
 
     [Fact]

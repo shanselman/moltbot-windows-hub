@@ -49,6 +49,58 @@ public sealed class WindowManagerTests
     }
 
     [Fact]
+    public void LocalAiSetup_ChoosesRecoveryOnlyAfterManagedGatewayProof()
+    {
+        var manager = ReadManager();
+
+        Assert.Contains("public async Task ShowLocalAiSetupAsync()", manager);
+        Assert.Contains("LocalAiGatewayDistroResolver.FindOwners(", manager);
+        Assert.Contains("ExistingConfigDetector.Detect(", manager);
+        Assert.Contains("LocalAiSetupRoutePolicy.Decide(", manager);
+        AssertInOrder(
+            manager,
+            "if (resolution.Route == LocalAiSetupRoute.Provision)",
+            "await ShowOnboardingAsync();",
+            "if (resolution.Route == LocalAiSetupRoute.Blocked",
+            "await ShowLocalAiSetupRecoveryAsync(");
+    }
+
+    [Fact]
+    public void LocalAiRecoveryMode_IsNotAppliedToAnExistingSetupWindow()
+    {
+        var manager = ReadManager();
+        var setupWindow = File.ReadAllText(Path.Combine(
+            TestRepositoryPaths.GetRepositoryRoot(),
+            "src",
+            "OpenClaw.SetupEngine.UI",
+            "SetupWindow.xaml.cs"));
+
+        Assert.DoesNotContain("TryNavigateToOnboardingStart", manager);
+        Assert.DoesNotContain("TryNavigateToLocalAiRecoveryReview", manager);
+        Assert.Contains("private void ResetLocalAiRecoveryMode()", setupWindow);
+        AssertInOrder(
+            setupWindow,
+            "public void NavigateToWelcome(bool back = false)",
+            "ResetLocalAiRecoveryMode();",
+            "NavigateTo(typeof(WelcomePage), _config, back);");
+        Assert.Contains("_config.LocalAi.Enabled = true;", setupWindow);
+        Assert.Contains("_config.SkipWizard = true;", setupWindow);
+
+        var capabilities = File.ReadAllText(Path.Combine(
+            TestRepositoryPaths.GetRepositoryRoot(),
+            "src",
+            "OpenClaw.SetupEngine.UI",
+            "Pages",
+            "CapabilitiesPage.xaml.cs"));
+        AssertInOrder(
+            capabilities,
+            "private void Back_Click(object sender, RoutedEventArgs e)",
+            "if (_localAiRecoveryOnly)",
+            "SetupWindow.Active?.NavigateToWelcome(back: true);",
+            "return;");
+    }
+
+    [Fact]
     public void CloseForShutdown_GatesCreationAndClosesOwnedWindowsOnce()
     {
         var manager = ReadManager();

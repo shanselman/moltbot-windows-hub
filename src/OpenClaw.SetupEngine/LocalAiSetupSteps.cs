@@ -161,6 +161,8 @@ public sealed class ConfigureLocalAiWslNetworkingStep : SetupStep
 
         try
         {
+            if (!string.IsNullOrWhiteSpace(ctx.Config.LocalAiRecoveryGatewayId))
+                ctx.LocalAiRecoveryStoppedWsl = true;
             CommandResult shutdown = await ShutdownWslAsync(ctx, ct);
             if (shutdown.ExitCode != 0 || shutdown.TimedOut)
             {
@@ -196,6 +198,8 @@ public sealed class ConfigureLocalAiWslNetworkingStep : SetupStep
                 CommandResult shutdown = await ShutdownWslAsync(ctx, ct);
                 if (shutdown.ExitCode != 0 || shutdown.TimedOut)
                     throw new InvalidOperationException("WSL could not be stopped to apply the restored configuration.");
+                if (!string.IsNullOrWhiteSpace(ctx.Config.LocalAiRecoveryGatewayId))
+                    ctx.LocalAiRecoveryStoppedWsl = true;
                 return;
             default:
                 throw new InvalidOperationException($"Unknown WSL configuration restore result: {restore}.");
@@ -270,6 +274,11 @@ public sealed class ReconcileLocalAiInstallationStep : SetupStep
             ctx.LocalAiRuntimeInstall = result.RuntimeInstall;
             ctx.LocalAiModelInstall = result.ModelInstall;
             ctx.LocalAiPort = result.ResolvedInstall!.Manifest.RequestedPort;
+            if (!string.IsNullOrWhiteSpace(ctx.Config.LocalAiRecoveryGatewayId))
+            {
+                ctx.LocalAiRecoveryOriginalInstall = result.ResolvedInstall;
+                ctx.LocalAiRecoveryReceiptRollbackAllowed = true;
+            }
             return StepResult.Ok("Reused the verified managed Local AI installation.");
         }
         catch (OperationCanceledException) when (ct.IsCancellationRequested)
