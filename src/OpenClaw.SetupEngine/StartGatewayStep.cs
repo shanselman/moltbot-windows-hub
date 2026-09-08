@@ -33,25 +33,6 @@ public sealed class StartGatewayStep : SetupStep
         var pathCmd = ctx.WslPathPrefix;
         var action = restart ? "restart" : "start";
 
-        if (!restart)
-        {
-            var portCheck = await ctx.Commands.RunInWslAsync(
-                distro, $"ss -tlnp 2>/dev/null | grep ':{ctx.Config.GatewayPort}\\b' || true",
-                TimeSpan.FromSeconds(10), ct: ct);
-
-            if (!string.IsNullOrWhiteSpace(portCheck.Stdout) && portCheck.Stdout.Contains($":{ctx.Config.GatewayPort}"))
-            {
-                if (!portCheck.Stdout.Contains("openclaw", StringComparison.OrdinalIgnoreCase))
-                {
-                    ctx.Logger.Warn($"Port {ctx.Config.GatewayPort} is in use by another process:\n{portCheck.Stdout.Trim()}");
-                    return StepResult.Fail(
-                        $"Port {ctx.Config.GatewayPort} is already in use by another process. Either stop the conflicting process or change GatewayPort in the setup config.");
-                }
-
-                ctx.Logger.Info($"Port {ctx.Config.GatewayPort} appears to be in use by openclaw — proceeding");
-            }
-        }
-
         var start = await ctx.Commands.RunInWslAsync(
             distro, $"{pathCmd} && openclaw gateway {action}", TimeSpan.FromSeconds(30), ct: ct);
 
