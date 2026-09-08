@@ -54,6 +54,12 @@ public sealed class NativeSpeechStackRuntimeTests
         if (!OperatingSystem.IsWindows())
             return;
 
+        // FindTrayOutputDirectory only discovers win-x64 output, and this probe
+        // loads that output into the test process. A native ARM64 test host
+        // cannot load x64 DLLs, so only an x64 process can exercise it.
+        if (RuntimeInformation.ProcessArchitecture != Architecture.X64)
+            return;
+
         // CI builds src/OpenClaw.Tray.WinUI -r win-x64 before this suite. A local
         // checkout that has not built the tray has no output to guard yet.
         var outputDirectory = FindTrayOutputDirectory();
