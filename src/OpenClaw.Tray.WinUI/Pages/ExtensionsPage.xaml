@@ -246,6 +246,12 @@
                                                 <Button x:Uid="ExtensionsPage_ReviewPluginAction" Content="Review access"
                                                         Tag="{Binding}" IsEnabled="{Binding CanReview}"
                                                         Click="OnReviewInstalledPluginClick"/>
+                                                <Button Content="{Binding ToggleLabel}" Tag="{Binding}"
+                                                        IsEnabled="{Binding CanSetEnabled}"
+                                                        Click="OnTogglePluginClick"/>
+                                                <Button x:Uid="ExtensionsPage_UninstallPluginAction" Content="Uninstall"
+                                                        Tag="{Binding}" IsEnabled="{Binding CanUninstall}"
+                                                        Click="OnUninstallPluginClick"/>
                                             </StackPanel>
                                         </Grid>
                                     </Border>
@@ -292,6 +298,21 @@
                                            FontFamily="Consolas" IsTextSelectionEnabled="True"/>
                                 <TextBlock x:Name="PluginReviewTrust" TextWrapping="Wrap"
                                            Foreground="{ThemeResource TextFillColorSecondaryBrush}"/>
+                                <InfoBar x:Name="PluginRestartWarning" IsOpen="False" IsClosable="False"
+                                         Severity="Warning"/>
+                                <InfoBar x:Name="PluginCapabilityInfo" IsOpen="False" IsClosable="False"
+                                         Severity="Warning"/>
+                                <CheckBox x:Name="PluginActionAcknowledge" Visibility="Collapsed"
+                                          Checked="OnPluginAcknowledgementChanged"
+                                          Unchecked="OnPluginAcknowledgementChanged"/>
+                                <InfoBar x:Name="PluginInstallPolicyInfo" IsOpen="False" IsClosable="False"
+                                         Severity="Warning"/>
+                                <CheckBox x:Uid="ExtensionsPage_PluginPolicyAcknowledge" x:Name="PluginInstallPolicyAcknowledge"
+                                          Content="I accept this separate install policy warning."
+                                          Visibility="Collapsed" Checked="OnPluginAcknowledgementChanged"
+                                          Unchecked="OnPluginAcknowledgementChanged"/>
+                                <Button x:Name="PluginReviewActionButton" Visibility="Collapsed"
+                                        HorizontalAlignment="Left" Click="OnPluginReviewActionClick"/>
                                 <Button x:Uid="ExtensionsPage_ClosePluginReviewAction" Content="Close"
                                         HorizontalAlignment="Left" Click="OnClosePluginReviewClick"/>
                             </StackPanel>

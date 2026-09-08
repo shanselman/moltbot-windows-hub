@@ -1,6 +1,7 @@
 using OpenClaw.Shared;
 using OpenClawTray.Presentation;
 using System.Text.Json;
+using System.Reflection;
 
 namespace OpenClaw.Tray.Tests.Presentation;
 
@@ -185,10 +186,233 @@ public sealed class ExtensionsPageViewModelTests
         Assert.Equal(client.ConnectionEpoch, review.ConnectionEpoch);
     }
 
+    [Fact]
+    public async Task PluginInstall_UsesReviewedTokenExactPackageAndSeparatePolicyFlag()
+    {
+        var client = LifecycleClient();
+        using var vm = Create(client, ["main"]);
+        vm.Activate("extensions");
+        await WaitUntilAsync(() => !vm.IsLoadingPlugins);
+        await vm.SearchPluginsAsync("publisher");
+        var review = Assert.IsType<PluginReviewPresentation>(
+            await vm.ReviewPluginAsync(Assert.Single(vm.PluginSearchResults)));
+        var acknowledgement = Assert.IsType<PluginCapabilityAcknowledgement>(
+            vm.CreateAcknowledgement(review));
+
+        var outcome = await vm.InstallPluginAsync(review, acknowledgement);
+
+        Assert.True(outcome.Succeeded);
+        var request = Assert.IsType<PluginInstallRequest>(client.LastPluginInstallRequest);
+        Assert.Equal(PluginInstallSource.ClawHub, request.Source);
+        Assert.Equal("@publisher/package", request.PackageName);
+        Assert.Equal("1.2.3", request.Version);
+        Assert.Equal("review-token", request.AcknowledgeCapabilities?.ReviewToken);
+        Assert.Equal(client.ConnectionEpoch, request.AcknowledgeCapabilities?.ConnectionEpoch);
+        Assert.False(request.AcknowledgeInstallPolicyWarning);
+    }
+
+    [Fact]
+    public async Task PluginCapabilityChallenge_UsesExactErrorTokenAndFreshInspection()
+    {
+        var client = LifecycleClient();
+        client.PluginInstallHandler = _ => Task.FromException<PluginMutationResult>(GatewayError(
+            "plugins.install",
+            "PLUGIN_CAPABILITY_CONSENT_REQUIRED",
+            """
+            {
+              "capabilityConsentCode":"PLUGIN_CAPABILITY_CONSENT_REQUIRED",
+              "pluginId":"publisher.plugin",
+              "reviewToken":"challenge-token",
+              "widened":{"tools":["tool.write"]}
+            }
+            """));
+        using var vm = Create(client, ["main"]);
+        vm.Activate("extensions");
+        await WaitUntilAsync(() => !vm.IsLoadingPlugins);
+        await vm.SearchPluginsAsync("publisher");
+        var review = Assert.IsType<PluginReviewPresentation>(
+            await vm.ReviewPluginAsync(Assert.Single(vm.PluginSearchResults)));
+
+        var outcome = await vm.InstallPluginAsync(review, vm.CreateAcknowledgement(review));
+
+        Assert.False(outcome.Succeeded);
+        Assert.NotNull(outcome.CapabilityPrompt);
+        Assert.Equal("challenge-token", outcome.CapabilityPrompt.Acknowledgement.ReviewToken);
+        Assert.Equal(client.ConnectionEpoch, outcome.CapabilityPrompt.Acknowledgement.ConnectionEpoch);
+        Assert.Contains("tool.write", outcome.CapabilityPrompt.WidenedSurfaces);
+        Assert.Equal("publisher.plugin", client.LastInspectPluginId);
+    }
+
+    [Fact]
+    public async Task PluginInstallPolicyWarning_RequiresSeparateAcknowledgementOnRetry()
+    {
+        var client = LifecycleClient();
+        var calls = 0;
+        client.PluginInstallHandler = request =>
+        {
+            calls++;
+            if (!request.AcknowledgeInstallPolicyWarning)
+            {
+                return Task.FromException<PluginMutationResult>(GatewayError(
+                    "plugins.install",
+                    "POLICY",
+                    """
+                    {
+                      "installPolicyCode":"install_policy_warning_acknowledgement_required",
+                      "targetName":"@publisher/package",
+                      "targetType":"plugin",
+                      "requestMode":"install",
+                      "reason":"review script behavior",
+                      "findings":[{"ruleId":"script","severity":"warning","message":"postinstall script"}]
+                    }
+                    """));
+            }
+            return Task.FromResult(new PluginMutationResult { Ok = true });
+        };
+        using var vm = Create(client, ["main"]);
+        vm.Activate("extensions");
+        await WaitUntilAsync(() => !vm.IsLoadingPlugins);
+        await vm.SearchPluginsAsync("publisher");
+        var review = Assert.IsType<PluginReviewPresentation>(
+            await vm.ReviewPluginAsync(Assert.Single(vm.PluginSearchResults)));
+        var acknowledgement = vm.CreateAcknowledgement(review);
+
+        var warning = await vm.InstallPluginAsync(review, acknowledgement);
+        Assert.NotNull(warning.InstallPolicyPrompt);
+        Assert.Contains("postinstall script", warning.InstallPolicyPrompt.Findings);
+
+        var accepted = await vm.InstallPluginAsync(
+            review,
+            acknowledgement,
+            acknowledgeInstallPolicyWarning: true);
+        Assert.True(accepted.Succeeded);
+        Assert.True(client.LastPluginInstallRequest?.AcknowledgeInstallPolicyWarning);
+        Assert.Equal(2, calls);
+    }
+
+    [Fact]
+    public async Task PluginReviewToken_ExpiresAcrossConnectionEpoch()
+    {
+        var client = LifecycleClient();
+        using var vm = Create(client, ["main"]);
+        vm.Activate("extensions");
+        await WaitUntilAsync(() => !vm.IsLoadingPlugins);
+        await vm.SearchPluginsAsync("publisher");
+        var review = Assert.IsType<PluginReviewPresentation>(
+            await vm.ReviewPluginAsync(Assert.Single(vm.PluginSearchResults)));
+
+        client.ConnectionEpoch++;
+
+        Assert.Null(vm.CreateAcknowledgement(review));
+    }
+
+    [Fact]
+    public async Task PluginReviewToken_ExpiresWhenClientSwapsAtSameEpoch()
+    {
+        var original = LifecycleClient();
+        var replacement = LifecycleClient();
+        IOperatorGatewayClient current = original;
+        using var vm = new ExtensionsPageViewModel(
+            new ExtensionsRuntimeSource(
+                () => current,
+                () => ["main"],
+                static key => key,
+                static (key, values) => key + ":" + string.Join(",", values)),
+            new RecordingUiDispatcher());
+        vm.Activate("extensions");
+        await WaitUntilAsync(() => !vm.IsLoadingPlugins);
+        await vm.SearchPluginsAsync("publisher");
+        var review = Assert.IsType<PluginReviewPresentation>(
+            await vm.ReviewPluginAsync(Assert.Single(vm.PluginSearchResults)));
+
+        current = replacement;
+
+        Assert.Null(vm.CreateAcknowledgement(review));
+        var outcome = await vm.InstallPluginAsync(review);
+        Assert.False(outcome.Succeeded);
+        Assert.Null(replacement.LastPluginInstallRequest);
+    }
+
+    [Fact]
+    public async Task InstalledPluginMutations_UseExactReviewedPluginId()
+    {
+        var client = LifecycleClient();
+        client.PluginListResult = new PluginsListResult
+        {
+            MutationAllowed = true,
+            Plugins =
+            [
+                new PluginCatalogEntry
+                {
+                    Id = "publisher.plugin",
+                    Name = "Plugin",
+                    Installed = true,
+                    Enabled = false,
+                    Removable = true,
+                },
+            ],
+        };
+        using var vm = Create(client, ["main"]);
+        vm.Activate("extensions");
+        await WaitUntilAsync(() => !vm.IsLoadingPlugins);
+        var item = Assert.Single(vm.InstalledPlugins);
+        var review = Assert.IsType<PluginReviewPresentation>(await vm.ReviewPluginAsync(item));
+
+        var enabled = await vm.SetPluginEnabledAsync(review, vm.CreateAcknowledgement(review));
+        var uninstalled = await vm.UninstallPluginAsync(review);
+
+        Assert.True(enabled.Succeeded);
+        Assert.True(uninstalled.Succeeded);
+        Assert.Equal("publisher.plugin", client.LastPluginSetEnabledRequest?.PluginId);
+        Assert.True(client.LastPluginSetEnabledRequest?.Enabled);
+        Assert.Equal("publisher.plugin", client.LastUninstalledPluginId);
+    }
+
+    private static FakeExtensionsClient LifecycleClient() => new()
+    {
+        AdvertisedFeatures = FeaturesWithPlugins(),
+        PluginListResult = new PluginsListResult { MutationAllowed = true },
+        PluginSearchResult = new PluginsSearchResult
+        {
+            Results =
+            [
+                new PluginSearchEntry
+                {
+                    Package = new PluginSearchPackage
+                    {
+                        Name = "@publisher/package",
+                        DisplayName = "Plugin",
+                        RuntimeId = "publisher.plugin",
+                        LatestVersion = "1.2.3",
+                    },
+                },
+            ],
+        },
+        PluginInspectResult = new PluginInspectResult
+        {
+            Ok = true,
+            Plugin = new PluginInspectEntry { Id = "publisher.plugin", Name = "Plugin" },
+            Declared = new PluginDeclaredSurface { Tools = ["tool.read"] },
+            ReviewToken = "review-token",
+        },
+    };
+
+    private static GatewayRequestException GatewayError(string method, string code, string detailsJson)
+    {
+        using var document = JsonDocument.Parse(detailsJson);
+        return (GatewayRequestException)Activator.CreateInstance(
+            typeof(GatewayRequestException),
+            BindingFlags.Instance | BindingFlags.NonPublic,
+            binder: null,
+            args: [method, "rejected", code, (JsonElement?)document.RootElement.Clone()],
+            culture: null)!;
+    }
+
     private static GatewayFeatureSet FeaturesWithPlugins() => new(
         [
             "skills.status", "skills.securityVerdicts",
-            "plugins.list", "plugins.search", "plugins.inspect",
+            "plugins.list", "plugins.search", "plugins.inspect", "plugins.install",
+            "plugins.setEnabled", "plugins.uninstall",
         ],
         []);
 
@@ -230,6 +454,11 @@ public sealed class ExtensionsPageViewModelTests
         public PluginsListResult PluginListResult { get; set; } = new();
         public PluginsSearchResult PluginSearchResult { get; set; } = new();
         public PluginInspectResult PluginInspectResult { get; set; } = new();
+        public Func<PluginInstallRequest, Task<PluginMutationResult>> PluginInstallHandler { get; set; } =
+            _ => Task.FromResult(new PluginMutationResult { Ok = true });
+        public PluginInstallRequest? LastPluginInstallRequest { get; private set; }
+        public PluginSetEnabledRequest? LastPluginSetEnabledRequest { get; private set; }
+        public string? LastUninstalledPluginId { get; private set; }
         public string? LastInspectPluginId { get; private set; }
         public ClawHubSkillInstallRequest? LastInstallRequest { get; private set; }
         public string? LastStatusAgentId { get; private set; }
@@ -305,6 +534,21 @@ public sealed class ExtensionsPageViewModelTests
         {
             LastInspectPluginId = pluginId;
             return Task.FromResult(PluginInspectResult);
+        }
+        public Task<PluginMutationResult> InstallPluginAsync(PluginInstallRequest request, int timeoutMs = 120000)
+        {
+            LastPluginInstallRequest = request;
+            return PluginInstallHandler(request);
+        }
+        public Task<PluginMutationResult> SetPluginEnabledAsync(PluginSetEnabledRequest request, int timeoutMs = 30000)
+        {
+            LastPluginSetEnabledRequest = request;
+            return Task.FromResult(new PluginMutationResult { Ok = true });
+        }
+        public Task<PluginMutationResult> UninstallPluginAsync(string pluginId, int timeoutMs = 120000)
+        {
+            LastUninstalledPluginId = pluginId;
+            return Task.FromResult(new PluginMutationResult { Ok = true });
         }
         public void RaiseSkillsChanged() => SkillsChanged?.Invoke(this, EventArgs.Empty);
         public void SetUserRules(IReadOnlyList<UserNotificationRule>? rules) { }

@@ -7211,4 +7211,25 @@ Het binaire bestand wxc-exec is niet gevonden. {1} Als dit een ontwikkelaarsbuil
   <data name="ExtensionsPage_PluginNoDeclaredSurfaces" xml:space="preserve"><value>No privileged surfaces were declared.</value></data>
   <data name="ExtensionsPage_PluginOriginFormat" xml:space="preserve"><value>Origin: {0}</value></data>
   <data name="ExtensionsPage_PluginTrustFormat" xml:space="preserve"><value>Trust: {0}</value></data>
++  <data name="ExtensionsPage_UninstallPluginAction.Content" xml:space="preserve"><value>Uninstall</value></data>
+  <data name="ExtensionsPage_PluginPolicyAcknowledge.Content" xml:space="preserve"><value>I accept this separate install policy warning.</value></data>
+  <data name="ExtensionsPage_PluginMutationUnavailable" xml:space="preserve"><value>Plugin changes are unavailable for this connection or Gateway policy.</value></data>
+  <data name="ExtensionsPage_PluginInstalled" xml:space="preserve"><value>Plugin installed.</value></data>
+  <data name="ExtensionsPage_PluginEnabled" xml:space="preserve"><value>Plugin enabled.</value></data>
+  <data name="ExtensionsPage_PluginDisabled" xml:space="preserve"><value>Plugin disabled.</value></data>
+  <data name="ExtensionsPage_PluginUninstalled" xml:space="preserve"><value>Plugin uninstalled.</value></data>
+  <data name="ExtensionsPage_PluginActionUnconfirmed" xml:space="preserve"><value>The connection changed before the plugin result was confirmed. The inventory was refreshed after reconnect; check its current state.</value></data>
+  <data name="ExtensionsPage_GatewayReconnected" xml:space="preserve"><value>The Gateway reconnected and the plugin inventory was refreshed.</value></data>
+  <data name="ExtensionsPage_GatewayReconnectPending" xml:space="preserve"><value>The Gateway restart was not observed yet. Reconnect before relying on the new runtime state.</value></data>
+  <data name="ExtensionsPage_PluginReviewExpired" xml:space="preserve"><value>The plugin review expired because the Gateway connection changed. Review the plugin again.</value></data>
+  <data name="ExtensionsPage_PluginCapabilityConsentRequired" xml:space="preserve"><value>The Gateway requires a new explicit capability review before this action can continue.</value></data>
+  <data name="ExtensionsPage_PluginInstallPolicyConsentRequired" xml:space="preserve"><value>The Gateway requires separate acknowledgement of an install policy warning.</value></data>
+  <data name="ExtensionsPage_NoPolicyFindings" xml:space="preserve"><value>No individual policy findings were reported.</value></data>
+  <data name="ExtensionsPage_Error_PluginActionFormat" xml:space="preserve"><value>The plugin action failed: {0}</value></data>
+  <data name="ExtensionsPage_PluginRestartWarning" xml:space="preserve"><value>This change may restart the Gateway and briefly reconnect channels. The app will wait for reconnection and refresh the plugin inventory.</value></data>
+  <data name="ExtensionsPage_PluginRemovalAcknowledge" xml:space="preserve"><value>I understand that this will remove the plugin from the Gateway.</value></data>
+  <data name="ExtensionsPage_PluginCapabilityAcknowledge" xml:space="preserve"><value>I reviewed and approve the exact declared plugin surfaces shown above.</value></data>
+  <data name="ExtensionsPage_UninstallAction" xml:space="preserve"><value>Uninstall</value></data>
+  <data name="ExtensionsPage_PluginCapabilityPromptFormat" xml:space="preserve"><value>Capabilities changed since the last review. Review the exact declared surfaces again. Newly widened surfaces: {0}</value></data>
+  <data name="ExtensionsPage_PluginPolicyPromptFormat" xml:space="preserve"><value>Install policy warning: {0} Findings: {1}</value></data>
 </root>

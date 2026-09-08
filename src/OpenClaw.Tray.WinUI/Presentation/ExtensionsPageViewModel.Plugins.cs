@@ -11,7 +11,12 @@ internal sealed record PluginListItemPresentation(
     string Kinds,
     bool Enabled,
     bool Removable,
-    bool CanReview);
+    bool CanReview,
+    bool CanSetEnabled,
+    bool CanUninstall)
+{
+    public string ToggleLabel { get; init; } = string.Empty;
+}
 
 internal sealed record PluginSearchItemPresentation(
     string PackageName,
@@ -21,7 +26,8 @@ internal sealed record PluginSearchItemPresentation(
     string Verification,
     string? RuntimeId,
     bool IsOfficial,
-    bool CanReview);
+    bool CanReview,
+    bool CanInstall);
 
 internal sealed record PluginReviewPresentation(
     string PluginId,
@@ -32,7 +38,27 @@ internal sealed record PluginReviewPresentation(
     string DeclaredSurfaces,
     string Trust,
     string ReviewToken,
-    long ConnectionEpoch);
+    long ConnectionEpoch,
+    IOperatorGatewayClient ConnectionClient,
+    PluginSearchItemPresentation? SearchItem = null,
+    PluginListItemPresentation? InstalledItem = null);
+
+internal sealed record PluginCapabilityPrompt(
+    string PluginId,
+    string DeclaredSurfaces,
+    string WidenedSurfaces,
+    PluginCapabilityAcknowledgement Acknowledgement);
+
+internal sealed record PluginInstallPolicyPrompt(
+    string Reason,
+    string Findings);
+
+internal sealed record PluginActionOutcome(
+    bool Succeeded,
+    string Message,
+    bool RestartExpected = false,
+    PluginCapabilityPrompt? CapabilityPrompt = null,
+    PluginInstallPolicyPrompt? InstallPolicyPrompt = null);
 
 internal sealed partial class ExtensionsPageViewModel
 {
@@ -158,6 +184,7 @@ internal sealed partial class ExtensionsPageViewModel
         {
             var result = await client.ListPluginsAsync().ConfigureAwait(false);
             var canInspect = client.AdvertisedFeatures.SupportsMethod("plugins.inspect");
+            var canMutate = HasAdminScope(client) && result.MutationAllowed;
             var rows = result.Plugins
                 .Where(static plugin => plugin.Installed)
                 .OrderBy(static plugin => plugin.Name, StringComparer.CurrentCultureIgnoreCase)
@@ -172,7 +199,14 @@ internal sealed partial class ExtensionsPageViewModel
                     plugin.Kind.Count == 0 ? _runtime.GetText("ExtensionsPage_KindUnknown") : string.Join(", ", plugin.Kind),
                     plugin.Enabled,
                     plugin.Removable,
-                    canInspect))
+                    canInspect,
+                    canMutate && client.AdvertisedFeatures.SupportsMethod("plugins.setEnabled"),
+                    canMutate && plugin.Removable && client.AdvertisedFeatures.SupportsMethod("plugins.uninstall"))
+                {
+                    ToggleLabel = _runtime.GetText(plugin.Enabled
+                        ? "ExtensionsPage_DisableAction"
+                        : "ExtensionsPage_EnableAction"),
+                })
                 .ToArray();
             ApplyPluginIfCurrent(generation, client, () =>
             {
@@ -253,7 +287,10 @@ internal sealed partial class ExtensionsPageViewModel
                     entry.Package.VerificationTier ?? _runtime.GetText("ExtensionsPage_TrustUnknown"),
                     entry.Package.RuntimeId,
                     entry.Package.IsOfficial,
-                    canInspect && !string.IsNullOrWhiteSpace(entry.Package.RuntimeId)))
+                    canInspect && !string.IsNullOrWhiteSpace(entry.Package.RuntimeId),
+                    HasAdminScope(client) && PluginMutationAllowed &&
+                        client.AdvertisedFeatures.SupportsMethod("plugins.install") &&
+                        !string.IsNullOrWhiteSpace(entry.Package.Name)))
                 .ToArray();
             Dispatch(() =>
             {
@@ -277,13 +314,19 @@ internal sealed partial class ExtensionsPageViewModel
         }
     }
 
-    public Task<PluginReviewPresentation?> ReviewPluginAsync(PluginListItemPresentation item) =>
-        ReviewPluginByIdAsync(item.PluginId);
+    public async Task<PluginReviewPresentation?> ReviewPluginAsync(PluginListItemPresentation item)
+    {
+        var review = await ReviewPluginByIdAsync(item.PluginId).ConfigureAwait(false);
+        return review is null ? null : review with { InstalledItem = item };
+    }
 
-    public Task<PluginReviewPresentation?> ReviewPluginAsync(PluginSearchItemPresentation item) =>
-        string.IsNullOrWhiteSpace(item.RuntimeId)
-            ? Task.FromResult<PluginReviewPresentation?>(null)
-            : ReviewPluginByIdAsync(item.RuntimeId);
+    public async Task<PluginReviewPresentation?> ReviewPluginAsync(PluginSearchItemPresentation item)
+    {
+        if (string.IsNullOrWhiteSpace(item.RuntimeId))
+            return null;
+        var review = await ReviewPluginByIdAsync(item.RuntimeId).ConfigureAwait(false);
+        return review is null ? null : review with { SearchItem = item };
+    }
 
     private async Task<PluginReviewPresentation?> ReviewPluginByIdAsync(string pluginId)
     {
@@ -311,7 +354,8 @@ internal sealed partial class ExtensionsPageViewModel
                 FormatDeclaredSurfaces(result.Declared),
                 FormatPluginTrust(result.Trust),
                 result.ReviewToken,
-                client.ConnectionEpoch);
+                client.ConnectionEpoch,
+                client);
         }
         catch (Exception ex)
         {
@@ -356,6 +400,253 @@ internal sealed partial class ExtensionsPageViewModel
             ? disposition
             : disposition + ": " + string.Join(" ", trust.Reasons);
     }
+
+    public async Task<PluginActionOutcome> InstallPluginAsync(
+        PluginReviewPresentation review,
+        PluginCapabilityAcknowledgement? acknowledgement = null,
+        bool acknowledgeInstallPolicyWarning = false)
+    {
+        ArgumentNullException.ThrowIfNull(review);
+        var item = review.SearchItem;
+        var client = _runtime.CurrentClient;
+        if (item is null || client is null || !ReferenceEquals(review.ConnectionClient, client) ||
+            review.ConnectionEpoch != client.ConnectionEpoch || !HasAdminScope(client) || !PluginMutationAllowed)
+            return Failure("ExtensionsPage_PluginMutationUnavailable");
+        if (!client.AdvertisedFeatures.SupportsMethod("plugins.install"))
+            return Failure("ExtensionsPage_PluginsUpgradeRequired");
+
+        var request = PluginInstallRequest.FromClawHub(item.PackageName) with
+        {
+            Version = IsKnownVersion(item.Version) ? item.Version : null,
+            AcknowledgeCapabilities = acknowledgement,
+            AcknowledgeInstallPolicyWarning = acknowledgeInstallPolicyWarning,
+        };
+        try
+        {
+            var result = await client.InstallPluginAsync(request).ConfigureAwait(false);
+            return await CompletePluginMutationAsync(
+                client,
+                result,
+                "ExtensionsPage_PluginInstalled").ConfigureAwait(false);
+        }
+        catch (GatewayRequestException ex) when (PluginCapabilityConsentDetails.TryParse(ex, out var consent))
+        {
+            return await BuildCapabilityOutcomeAsync(client, consent!).ConfigureAwait(false);
+        }
+        catch (GatewayRequestException ex) when (InstallPolicyWarningDetails.TryParse(ex, out var policy))
+        {
+            return BuildInstallPolicyOutcome(policy!);
+        }
+        catch (Exception ex) when (ex is TimeoutException or GatewayConnectionLostException)
+        {
+            await WaitForPluginReconnectAndRefreshAsync(client, expectRestart: true).ConfigureAwait(false);
+            return Failure("ExtensionsPage_PluginActionUnconfirmed");
+        }
+        catch (Exception ex)
+        {
+            return FailureWithError(ex);
+        }
+    }
+
+    public async Task<PluginActionOutcome> SetPluginEnabledAsync(
+        PluginReviewPresentation review,
+        PluginCapabilityAcknowledgement? acknowledgement = null)
+    {
+        ArgumentNullException.ThrowIfNull(review);
+        var item = review.InstalledItem;
+        var client = _runtime.CurrentClient;
+        if (item is null || client is null || !ReferenceEquals(review.ConnectionClient, client) ||
+            review.ConnectionEpoch != client.ConnectionEpoch || !item.CanSetEnabled || !HasAdminScope(client))
+            return Failure("ExtensionsPage_PluginMutationUnavailable");
+        try
+        {
+            var result = await client.SetPluginEnabledAsync(new PluginSetEnabledRequest(
+                item.PluginId,
+                !item.Enabled,
+                acknowledgement)).ConfigureAwait(false);
+            return await CompletePluginMutationAsync(
+                client,
+                result,
+                item.Enabled ? "ExtensionsPage_PluginDisabled" : "ExtensionsPage_PluginEnabled").ConfigureAwait(false);
+        }
+        catch (GatewayRequestException ex) when (PluginCapabilityConsentDetails.TryParse(ex, out var consent))
+        {
+            return await BuildCapabilityOutcomeAsync(client, consent!).ConfigureAwait(false);
+        }
+        catch (Exception ex) when (ex is TimeoutException or GatewayConnectionLostException)
+        {
+            await WaitForPluginReconnectAndRefreshAsync(client, expectRestart: true).ConfigureAwait(false);
+            return Failure("ExtensionsPage_PluginActionUnconfirmed");
+        }
+        catch (Exception ex)
+        {
+            return FailureWithError(ex);
+        }
+    }
+
+    public async Task<PluginActionOutcome> UninstallPluginAsync(PluginReviewPresentation review)
+    {
+        ArgumentNullException.ThrowIfNull(review);
+        var item = review.InstalledItem;
+        var client = _runtime.CurrentClient;
+        if (item is null || client is null || !ReferenceEquals(review.ConnectionClient, client) ||
+            review.ConnectionEpoch != client.ConnectionEpoch || !item.CanUninstall || !HasAdminScope(client))
+            return Failure("ExtensionsPage_PluginMutationUnavailable");
+        try
+        {
+            var result = await client.UninstallPluginAsync(item.PluginId).ConfigureAwait(false);
+            return await CompletePluginMutationAsync(
+                client,
+                result,
+                "ExtensionsPage_PluginUninstalled").ConfigureAwait(false);
+        }
+        catch (Exception ex) when (ex is TimeoutException or GatewayConnectionLostException)
+        {
+            await WaitForPluginReconnectAndRefreshAsync(client, expectRestart: true).ConfigureAwait(false);
+            return Failure("ExtensionsPage_PluginActionUnconfirmed");
+        }
+        catch (Exception ex)
+        {
+            return FailureWithError(ex);
+        }
+    }
+
+    public PluginCapabilityAcknowledgement? CreateAcknowledgement(PluginReviewPresentation review)
+    {
+        var client = _runtime.CurrentClient;
+        if (client is null || !ReferenceEquals(review.ConnectionClient, client) ||
+            string.IsNullOrWhiteSpace(review.ReviewToken) ||
+            client.ConnectionEpoch != review.ConnectionEpoch)
+        {
+            return null;
+        }
+        return new PluginCapabilityAcknowledgement(review.ReviewToken, review.ConnectionEpoch);
+    }
+
+    private async Task<PluginActionOutcome> CompletePluginMutationAsync(
+        IOperatorGatewayClient client,
+        PluginMutationResult result,
+        string successKey)
+    {
+        if (!result.IsSupported)
+            return Failure("ExtensionsPage_PluginsUpgradeRequired");
+        if (!result.Ok)
+            return new(false, _runtime.GetText("ExtensionsPage_ActionFailed"));
+
+        var recovered = await WaitForPluginReconnectAndRefreshAsync(
+            client,
+            result.RestartRequired).ConfigureAwait(false);
+        var baseMessage = _runtime.GetText(successKey);
+        var warnings = result.Warnings
+            .Where(static warning => !string.IsNullOrWhiteSpace(warning))
+            .Select(TokenSanitizer.Sanitize)
+            .ToArray();
+        var message = warnings.Length == 0
+            ? baseMessage
+            : baseMessage + " " + string.Join(" ", warnings);
+        if (result.RestartRequired)
+        {
+            message += " " + _runtime.GetText(recovered
+                ? "ExtensionsPage_GatewayReconnected"
+                : "ExtensionsPage_GatewayReconnectPending");
+        }
+        return new(true, message, result.RestartRequired);
+    }
+
+    private async Task<PluginActionOutcome> BuildCapabilityOutcomeAsync(
+        IOperatorGatewayClient client,
+        PluginCapabilityConsentDetails consent)
+    {
+        if (client.ConnectionEpoch != _runtime.CurrentClient?.ConnectionEpoch)
+            return Failure("ExtensionsPage_PluginReviewExpired");
+        try
+        {
+            var inspected = await client.InspectPluginAsync(consent.PluginId).ConfigureAwait(false);
+            if (!inspected.Ok || client.ConnectionEpoch != _runtime.CurrentClient?.ConnectionEpoch)
+                return Failure("ExtensionsPage_PluginInspectUnavailable");
+            var prompt = new PluginCapabilityPrompt(
+                consent.PluginId,
+                FormatDeclaredSurfaces(inspected.Declared),
+                FormatDeclaredSurfaces(consent.Widened),
+                new PluginCapabilityAcknowledgement(consent.ReviewToken, client.ConnectionEpoch));
+            return new(
+                false,
+                _runtime.GetText("ExtensionsPage_PluginCapabilityConsentRequired"),
+                CapabilityPrompt: prompt);
+        }
+        catch (Exception ex)
+        {
+            return FailureWithError(ex);
+        }
+    }
+
+    private PluginActionOutcome BuildInstallPolicyOutcome(InstallPolicyWarningDetails policy)
+    {
+        var findings = policy.Findings.Count == 0
+            ? _runtime.GetText("ExtensionsPage_NoPolicyFindings")
+            : string.Join(Environment.NewLine, policy.Findings.Select(finding =>
+                $"{finding.Severity}: {TokenSanitizer.Sanitize(finding.Message)}"));
+        return new(
+            false,
+            _runtime.GetText("ExtensionsPage_PluginInstallPolicyConsentRequired"),
+            InstallPolicyPrompt: new PluginInstallPolicyPrompt(
+                TokenSanitizer.Sanitize(policy.Reason),
+                findings));
+    }
+
+    private async Task<bool> WaitForPluginReconnectAndRefreshAsync(
+        IOperatorGatewayClient initialClient,
+        bool expectRestart)
+    {
+        var recovered = !expectRestart;
+        if (expectRestart)
+        {
+            var initialEpoch = initialClient.ConnectionEpoch;
+            var observedRestart = false;
+            for (var attempt = 0; attempt < 10 && _active; attempt++)
+            {
+                var current = _runtime.CurrentClient;
+                if (!ReferenceEquals(current, initialClient) ||
+                    current is null || !current.IsConnectedToGateway ||
+                    current.ConnectionEpoch != initialEpoch)
+                {
+                    observedRestart = true;
+                    break;
+                }
+                await Task.Delay(250).ConfigureAwait(false);
+            }
+
+            if (observedRestart)
+            {
+                for (var attempt = 0; attempt < 60 && _active; attempt++)
+                {
+                    var current = _runtime.CurrentClient;
+                    if (current is { IsConnectedToGateway: true, HasHandshakeSnapshot: true })
+                    {
+                        recovered = true;
+                        break;
+                    }
+                    await Task.Delay(500).ConfigureAwait(false);
+                }
+            }
+        }
+
+        if (_active)
+            await LoadPluginsAsync().ConfigureAwait(false);
+        return recovered;
+    }
+
+    private PluginActionOutcome Failure(string key) => new(false, _runtime.GetText(key));
+
+    private PluginActionOutcome FailureWithError(Exception exception) => new(
+        false,
+        _runtime.FormatText(
+            "ExtensionsPage_Error_PluginActionFormat",
+            TokenSanitizer.Sanitize(exception.Message)));
+
+    private bool IsKnownVersion(string version) =>
+        !string.IsNullOrWhiteSpace(version) &&
+        !string.Equals(version, _runtime.GetText("ExtensionsPage_VersionUnknown"), StringComparison.Ordinal);
 
     private void ApplyPluginIfCurrent(
         long generation,

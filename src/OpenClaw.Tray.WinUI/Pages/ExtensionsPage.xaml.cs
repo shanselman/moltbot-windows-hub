@@ -11,11 +11,22 @@ namespace OpenClawTray.Pages;
 
 public sealed partial class ExtensionsPage : Page
 {
+    private enum PendingPluginAction
+    {
+        None,
+        Install,
+        SetEnabled,
+        Uninstall,
+    }
+
     private ExtensionsPageViewModel? _viewModel;
     private bool _showingInstalledSkills = true;
     private bool _showingInstalledPlugins = true;
     private SkillReviewPresentation? _skillReview;
     private PluginReviewPresentation? _pluginReview;
+    private PendingPluginAction _pendingPluginAction;
+    private PluginCapabilityAcknowledgement? _pluginAcknowledgementOverride;
+    private bool _pluginPolicyAcknowledgementRequired;
 
     public ExtensionsPage()
     {
@@ -298,7 +309,7 @@ public sealed partial class ExtensionsPage : Page
     {
         if (_viewModel is null || sender is not Button { Tag: PluginListItemPresentation item })
             return;
-        ApplyPluginReview(await _viewModel.ReviewPluginAsync(item));
+        ApplyPluginReview(await _viewModel.ReviewPluginAsync(item), PendingPluginAction.None);
     }
 
     private void OnReviewSearchPluginClick(object sender, RoutedEventArgs e) =>
@@ -311,10 +322,14 @@ public sealed partial class ExtensionsPage : Page
     {
         if (_viewModel is null || sender is not Button { Tag: PluginSearchItemPresentation item })
             return;
-        ApplyPluginReview(await _viewModel.ReviewPluginAsync(item));
+        ApplyPluginReview(
+            await _viewModel.ReviewPluginAsync(item),
+            item.CanInstall ? PendingPluginAction.Install : PendingPluginAction.None);
     }
 
-    private void ApplyPluginReview(PluginReviewPresentation? review)
+    private void ApplyPluginReview(
+        PluginReviewPresentation? review,
+        PendingPluginAction pendingAction)
     {
         if (review is null)
         {
@@ -322,6 +337,9 @@ public sealed partial class ExtensionsPage : Page
             return;
         }
         _pluginReview = review;
+        _pendingPluginAction = pendingAction;
+        _pluginAcknowledgementOverride = null;
+        _pluginPolicyAcknowledgementRequired = false;
         _showingInstalledPlugins = false;
         InstalledPluginsPanel.Visibility = Visibility.Collapsed;
         DiscoverPluginsPanel.Visibility = Visibility.Visible;
@@ -331,12 +349,158 @@ public sealed partial class ExtensionsPage : Page
         PluginReviewOrigin.Text = LocalizationHelper.Format("ExtensionsPage_PluginOriginFormat", review.Origin);
         PluginReviewSurfaces.Text = review.DeclaredSurfaces;
         PluginReviewTrust.Text = LocalizationHelper.Format("ExtensionsPage_PluginTrustFormat", review.Trust);
+        PluginRestartWarning.Message = LocalizationHelper.GetString("ExtensionsPage_PluginRestartWarning");
+        PluginRestartWarning.IsOpen = pendingAction != PendingPluginAction.None;
+        PluginCapabilityInfo.IsOpen = false;
+        PluginInstallPolicyInfo.IsOpen = false;
+        PluginInstallPolicyAcknowledge.Visibility = Visibility.Collapsed;
+        PluginInstallPolicyAcknowledge.IsChecked = false;
+        PluginActionAcknowledge.Visibility = pendingAction == PendingPluginAction.None
+            ? Visibility.Collapsed
+            : Visibility.Visible;
+        PluginActionAcknowledge.IsChecked = false;
+        PluginActionAcknowledge.Content = LocalizationHelper.GetString(pendingAction == PendingPluginAction.Uninstall
+            ? "ExtensionsPage_PluginRemovalAcknowledge"
+            : "ExtensionsPage_PluginCapabilityAcknowledge");
+        PluginReviewActionButton.Visibility = pendingAction == PendingPluginAction.None
+            ? Visibility.Collapsed
+            : Visibility.Visible;
+        PluginReviewActionButton.Content = LocalizationHelper.GetString(pendingAction switch
+        {
+            PendingPluginAction.Install => "ExtensionsPage_InstallAction",
+            PendingPluginAction.SetEnabled when review.InstalledItem?.Enabled == true => "ExtensionsPage_DisableAction",
+            PendingPluginAction.SetEnabled => "ExtensionsPage_EnableAction",
+            PendingPluginAction.Uninstall => "ExtensionsPage_UninstallAction",
+            _ => "ExtensionsPage_CloseAction",
+        });
+        UpdatePluginActionEnabled();
         PluginReviewPanel.Visibility = Visibility.Visible;
     }
 
     private void OnClosePluginReviewClick(object sender, RoutedEventArgs e)
     {
         _pluginReview = null;
+        _pendingPluginAction = PendingPluginAction.None;
+        _pluginAcknowledgementOverride = null;
         PluginReviewPanel.Visibility = Visibility.Collapsed;
+    }
+
+    private void OnTogglePluginClick(object sender, RoutedEventArgs e) =>
+        AsyncEventHandlerGuard.Run(
+            () => PrepareInstalledPluginActionAsync(sender, PendingPluginAction.SetEnabled),
+            new AppLogger(),
+            nameof(OnTogglePluginClick));
+
+    private void OnUninstallPluginClick(object sender, RoutedEventArgs e) =>
+        AsyncEventHandlerGuard.Run(
+            () => PrepareInstalledPluginActionAsync(sender, PendingPluginAction.Uninstall),
+            new AppLogger(),
+            nameof(OnUninstallPluginClick));
+
+    private async Task PrepareInstalledPluginActionAsync(object sender, PendingPluginAction action)
+    {
+        if (_viewModel is null || sender is not Button { Tag: PluginListItemPresentation item })
+            return;
+        ApplyPluginReview(await _viewModel.ReviewPluginAsync(item), action);
+    }
+
+    private void OnPluginAcknowledgementChanged(object sender, RoutedEventArgs e) =>
+        UpdatePluginActionEnabled();
+
+    private void UpdatePluginActionEnabled()
+    {
+        var primaryAccepted = PluginActionAcknowledge.IsChecked == true;
+        var policyAccepted = !_pluginPolicyAcknowledgementRequired ||
+            PluginInstallPolicyAcknowledge.IsChecked == true;
+        PluginReviewActionButton.IsEnabled = primaryAccepted && policyAccepted;
+    }
+
+    private void OnPluginReviewActionClick(object sender, RoutedEventArgs e) =>
+        AsyncEventHandlerGuard.Run(
+            RunPendingPluginActionAsync,
+            new AppLogger(),
+            nameof(OnPluginReviewActionClick));
+
+    private async Task RunPendingPluginActionAsync()
+    {
+        if (_viewModel is null || _pluginReview is null ||
+            _pendingPluginAction == PendingPluginAction.None)
+        {
+            return;
+        }
+
+        PluginReviewActionButton.IsEnabled = false;
+        PluginCapabilityAcknowledgement? acknowledgement = null;
+        if (_pendingPluginAction != PendingPluginAction.Uninstall)
+        {
+            acknowledgement = _pluginAcknowledgementOverride ??
+                _viewModel.CreateAcknowledgement(_pluginReview);
+            if (acknowledgement is null)
+            {
+                PluginInfoBar.Title = LocalizationHelper.GetString("ExtensionsPage_ActionCouldNotCompleteTitle");
+                PluginInfoBar.Message = LocalizationHelper.GetString("ExtensionsPage_PluginReviewExpired");
+                PluginInfoBar.Severity = InfoBarSeverity.Error;
+                PluginInfoBar.IsOpen = true;
+                return;
+            }
+        }
+
+        PluginActionOutcome outcome = _pendingPluginAction switch
+        {
+            PendingPluginAction.Install => await _viewModel.InstallPluginAsync(
+                _pluginReview,
+                acknowledgement,
+                acknowledgeInstallPolicyWarning: _pluginPolicyAcknowledgementRequired &&
+                    PluginInstallPolicyAcknowledge.IsChecked == true),
+            PendingPluginAction.SetEnabled when _pluginReview.InstalledItem is not null =>
+                await _viewModel.SetPluginEnabledAsync(_pluginReview, acknowledgement),
+            PendingPluginAction.Uninstall when _pluginReview.InstalledItem is not null =>
+                await _viewModel.UninstallPluginAsync(_pluginReview),
+            _ => new PluginActionOutcome(false, LocalizationHelper.GetString("ExtensionsPage_PluginMutationUnavailable")),
+        };
+
+        if (outcome.CapabilityPrompt is { } capability)
+        {
+            _pluginAcknowledgementOverride = capability.Acknowledgement;
+            PluginReviewSurfaces.Text = capability.DeclaredSurfaces;
+            PluginCapabilityInfo.Message = LocalizationHelper.Format(
+                "ExtensionsPage_PluginCapabilityPromptFormat",
+                capability.WidenedSurfaces);
+            PluginCapabilityInfo.IsOpen = true;
+            PluginActionAcknowledge.IsChecked = false;
+            UpdatePluginActionEnabled();
+            return;
+        }
+
+        if (outcome.InstallPolicyPrompt is { } policy)
+        {
+            _pluginPolicyAcknowledgementRequired = true;
+            PluginInstallPolicyInfo.Message = LocalizationHelper.Format(
+                "ExtensionsPage_PluginPolicyPromptFormat",
+                policy.Reason,
+                policy.Findings);
+            PluginInstallPolicyInfo.IsOpen = true;
+            PluginInstallPolicyAcknowledge.Visibility = Visibility.Visible;
+            PluginInstallPolicyAcknowledge.IsChecked = false;
+            UpdatePluginActionEnabled();
+            return;
+        }
+
+        PluginInfoBar.Title = LocalizationHelper.GetString(outcome.Succeeded
+            ? "ExtensionsPage_ActionCompleteTitle"
+            : "ExtensionsPage_ActionCouldNotCompleteTitle");
+        PluginInfoBar.Message = outcome.Message;
+        PluginInfoBar.Severity = outcome.Succeeded ? InfoBarSeverity.Success : InfoBarSeverity.Error;
+        PluginInfoBar.IsOpen = true;
+        if (outcome.Succeeded)
+        {
+            _pluginReview = null;
+            _pendingPluginAction = PendingPluginAction.None;
+            PluginReviewPanel.Visibility = Visibility.Collapsed;
+        }
+        else
+        {
+            UpdatePluginActionEnabled();
+        }
     }
 }
