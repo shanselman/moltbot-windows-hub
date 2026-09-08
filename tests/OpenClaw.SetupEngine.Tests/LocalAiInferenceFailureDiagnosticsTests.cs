@@ -201,6 +201,7 @@ public sealed class LocalAiInferenceFailureDiagnosticsTests
             ExecutablePath = Path.GetRelativePath(root, executable),
             RuntimeAssets = ImmutableArray.Create(receipt),
             ModelPath = Path.GetRelativePath(root, modelPath),
+            ModelCacheRoot = Path.Combine(root, "hf-cache"),
             ModelId = model.Id,
             ModelAlias = model.Id,
             ModelAsset = receipt with { FileName = Path.GetFileName(modelPath) },
