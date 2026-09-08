@@ -2021,6 +2021,7 @@ public class OpenClawChatDataProviderTests
         Assert.Single(posted);
 
         bridge.RaiseAgent(MakeAgentEvent("lifecycle", """{"phase":"start"}""", runId: "run-1"));
+        Assert.Single(posted);
 
         foreach (var action in posted)
             action();
@@ -5475,16 +5476,403 @@ public class OpenClawChatDataProviderTests
         var bridge = new FakeBridge { Sessions = new[] { MainSession() } };
         var queued = new List<Action>();
         var provider = new OpenClawChatDataProvider(bridge, post: a => queued.Add(a));
-        var snapshots = new List<ChatDataSnapshot>();
-        provider.Changed += (_, e) => snapshots.Add(e.Snapshot);
+        var deliveries = new List<string>();
+        provider.Changed += (_, _) => deliveries.Add("snapshot");
+        provider.NotificationRequested += (_, _) => deliveries.Add("notification");
 
         bridge.RaiseChat(new ChatMessageInfo { SessionKey = "main", Role = "assistant", Text = "x", State = "final" });
 
-        // Snapshot was queued, not invoked immediately.
-        Assert.Empty(snapshots);
-        Assert.NotEmpty(queued);
+        Assert.Empty(deliveries);
+        Assert.Single(queued);
         foreach (var a in queued) a();
-        Assert.NotEmpty(snapshots);
+        Assert.Equal(["snapshot", "notification"], deliveries);
+    }
+
+    [Fact]
+    public async Task PostDelegate_CoalescesBurstToLatestSnapshotPerDrain()
+    {
+        var bridge = new FakeBridge { Sessions = [MainSession()] };
+        var queued = new ConcurrentQueue<Action>();
+        var postCount = 0;
+        var provider = new OpenClawChatDataProvider(
+            bridge,
+            post: action =>
+            {
+                Interlocked.Increment(ref postCount);
+                queued.Enqueue(action);
+            });
+        var snapshots = new List<ChatDataSnapshot>();
+        provider.Changed += (_, args) => snapshots.Add(args.Snapshot);
+        await using (provider)
+        {
+            bridge.RaiseStatus(ConnectionStatus.Connecting);
+            bridge.RaiseStatus(ConnectionStatus.Connected);
+            bridge.RaiseStatus(ConnectionStatus.Disconnected);
+
+            Assert.Equal(1, Volatile.Read(ref postCount));
+            var drain = AssertSingleQueuedAction(queued);
+            drain();
+
+            var snapshot = Assert.Single(snapshots);
+            Assert.Equal(ConnectionStatus.Disconnected.ToString(), snapshot.ConnectionStatus);
+            Assert.Empty(queued);
+        }
+    }
+
+    [Fact]
+    public async Task PostDelegate_PublishesDuringCallbackScheduleExactlyOneFollowUpDrain()
+    {
+        var bridge = new FakeBridge { Sessions = [MainSession()] };
+        var queued = new ConcurrentQueue<Action>();
+        var postCount = 0;
+        var provider = new OpenClawChatDataProvider(
+            bridge,
+            post: action =>
+            {
+                Interlocked.Increment(ref postCount);
+                queued.Enqueue(action);
+            });
+        var snapshots = new List<ChatDataSnapshot>();
+        provider.Changed += (_, args) =>
+        {
+            snapshots.Add(args.Snapshot);
+            if (snapshots.Count == 1)
+            {
+                bridge.RaiseStatus(ConnectionStatus.Connected);
+                bridge.RaiseStatus(ConnectionStatus.Disconnected);
+            }
+        };
+        await using (provider)
+        {
+            bridge.RaiseStatus(ConnectionStatus.Connecting);
+            Assert.Equal(1, Volatile.Read(ref postCount));
+
+            AssertSingleQueuedAction(queued)();
+
+            Assert.Equal(2, Volatile.Read(ref postCount));
+            Assert.Single(queued);
+            AssertSingleQueuedAction(queued)();
+
+            Assert.Equal(2, snapshots.Count);
+            Assert.Equal("Connecting…", snapshots[0].ConnectionStatus);
+            Assert.Equal(ConnectionStatus.Disconnected.ToString(), snapshots[1].ConnectionStatus);
+            Assert.Empty(queued);
+        }
+    }
+
+    [Fact]
+    public async Task PostDelegate_ConcurrentBurstDoesNotLoseFinalSnapshot()
+    {
+        var bridge = new FakeBridge { Sessions = [MainSession()] };
+        var queued = new ConcurrentQueue<Action>();
+        var postCount = 0;
+        var provider = new OpenClawChatDataProvider(
+            bridge,
+            post: action =>
+            {
+                Interlocked.Increment(ref postCount);
+                queued.Enqueue(action);
+            });
+        var snapshots = new ConcurrentQueue<ChatDataSnapshot>();
+        provider.Changed += (_, args) => snapshots.Enqueue(args.Snapshot);
+        await using (provider)
+        {
+            Parallel.For(
+                0,
+                512,
+                index => bridge.RaiseStatus(
+                    index % 2 == 0
+                        ? ConnectionStatus.Connecting
+                        : ConnectionStatus.Connected));
+            bridge.RaiseStatus(ConnectionStatus.Disconnected);
+
+            Assert.Equal(1, Volatile.Read(ref postCount));
+            AssertSingleQueuedAction(queued)();
+
+            var snapshot = Assert.Single(snapshots);
+            Assert.Equal(ConnectionStatus.Disconnected.ToString(), snapshot.ConnectionStatus);
+            Assert.Empty(queued);
+        }
+    }
+
+    [Fact]
+    public async Task PostDelegate_OutOfOrderPublishArrivalUsesAuthoritativeFinalSnapshot()
+    {
+        var bridge = new FakeBridge { Sessions = [MainSession()] };
+        var queued = new ConcurrentQueue<Action>();
+        var postCount = 0;
+        var provider = new OpenClawChatDataProvider(
+            bridge,
+            post: action =>
+            {
+                Interlocked.Increment(ref postCount);
+                queued.Enqueue(action);
+            });
+        using var olderSnapshotBuilt = new ManualResetEventSlim();
+        using var releaseOlderPublish = new ManualResetEventSlim();
+        provider.BeforePublishForTests = snapshot =>
+        {
+            if (snapshot.ConnectionStatus == "Connecting…")
+            {
+                olderSnapshotBuilt.Set();
+                Assert.True(releaseOlderPublish.Wait(TimeSpan.FromSeconds(10)));
+            }
+        };
+        var snapshots = new List<ChatDataSnapshot>();
+        provider.Changed += (_, args) => snapshots.Add(args.Snapshot);
+        await using (provider)
+        {
+            var olderPublish = Task.Run(
+                () => bridge.RaiseStatus(ConnectionStatus.Connecting));
+            Assert.True(olderSnapshotBuilt.Wait(TimeSpan.FromSeconds(10)));
+
+            bridge.RaiseStatus(ConnectionStatus.Disconnected);
+            releaseOlderPublish.Set();
+            await olderPublish;
+
+            Assert.Equal(1, Volatile.Read(ref postCount));
+            AssertSingleQueuedAction(queued)();
+
+            var snapshot = Assert.Single(snapshots);
+            Assert.Equal(
+                ConnectionStatus.Disconnected.ToString(),
+                snapshot.ConnectionStatus);
+            Assert.Empty(queued);
+        }
+    }
+
+    [Fact]
+    public async Task PostDelegate_RapidToolAndSessionBurstUsesOneDrainAndKeepsFinalSnapshot()
+    {
+        const int toolCount = 64;
+        var bridge = new FakeBridge { Sessions = [MainSession()] };
+        var queued = new ConcurrentQueue<Action>();
+        var postCount = 0;
+        var provider = new OpenClawChatDataProvider(
+            bridge,
+            post: action =>
+            {
+                Interlocked.Increment(ref postCount);
+                queued.Enqueue(action);
+            });
+        var snapshots = new List<ChatDataSnapshot>();
+        provider.Changed += (_, args) => snapshots.Add(args.Snapshot);
+        await using (provider)
+        {
+            await provider.LoadAsync();
+            for (var index = 0; index < toolCount; index++)
+            {
+                var command = $"echo {index}";
+                bridge.RaiseAgent(MakeAgentEvent(
+                    "tool",
+                    JsonSerializer.Serialize(new
+                    {
+                        phase = "start",
+                        name = "powershell",
+                        args = new { command },
+                    })));
+                bridge.RaiseAgent(MakeAgentEvent(
+                    "tool",
+                    JsonSerializer.Serialize(new
+                    {
+                        phase = "result",
+                        name = "powershell",
+                        args = new { command },
+                    })));
+
+                if (index % 8 == 0)
+                {
+                    bridge.RaiseSessions(
+                    [
+                        new SessionInfo
+                        {
+                            Key = "main",
+                            IsMain = true,
+                            DisplayName = $"Main session {index}",
+                            Status = "active",
+                        },
+                    ]);
+                }
+            }
+
+            bridge.RaiseSessions(
+            [
+                new SessionInfo
+                {
+                    Key = "main",
+                    IsMain = true,
+                    DisplayName = "Final session",
+                    Status = "active",
+                },
+            ]);
+
+            Assert.Equal(1, Volatile.Read(ref postCount));
+            AssertSingleQueuedAction(queued)();
+
+            var snapshot = Assert.Single(snapshots);
+            Assert.Equal("Final session", Assert.Single(snapshot.Threads).Title);
+            Assert.Equal(
+                toolCount,
+                snapshot.Timelines["main"].Entries.Count(
+                    entry => entry.Kind == ChatTimelineItemKind.ToolCall));
+            Assert.All(
+                snapshot.Timelines["main"].Entries.Where(
+                    entry => entry.Kind == ChatTimelineItemKind.ToolCall),
+                entry => Assert.Equal(ChatToolCallStatus.Success, entry.ToolResult));
+            Assert.Empty(queued);
+        }
+    }
+
+    [Fact]
+    public async Task DisposeAsync_DropsQueuedChangedDeliveryAndFuturePublishes()
+    {
+        var bridge = new FakeBridge { Sessions = [MainSession()] };
+        var queued = new ConcurrentQueue<Action>();
+        var provider = new OpenClawChatDataProvider(bridge, post: queued.Enqueue);
+        var snapshots = new List<ChatDataSnapshot>();
+        provider.Changed += (_, args) => snapshots.Add(args.Snapshot);
+
+        bridge.RaiseStatus(ConnectionStatus.Connecting);
+        var queuedBeforeDispose = AssertSingleQueuedAction(queued);
+
+        await provider.DisposeAsync();
+        queuedBeforeDispose();
+        bridge.RaiseStatus(ConnectionStatus.Connected);
+
+        Assert.Empty(snapshots);
+        Assert.Empty(queued);
+    }
+
+    [Fact]
+    public async Task DisposeAsync_WaitsForInFlightChangedCallback()
+    {
+        var bridge = new FakeBridge { Sessions = [MainSession()] };
+        var provider = new OpenClawChatDataProvider(bridge);
+        using var callbackEntered = new ManualResetEventSlim();
+        using var releaseCallback = new ManualResetEventSlim();
+        provider.Changed += (_, _) =>
+        {
+            callbackEntered.Set();
+            Assert.True(releaseCallback.Wait(TimeSpan.FromSeconds(10)));
+        };
+
+        var publishTask = Task.Run(
+            () => bridge.RaiseStatus(ConnectionStatus.Connecting));
+        Assert.True(callbackEntered.Wait(TimeSpan.FromSeconds(10)));
+        var disposeTask = Task.Run(async () => await provider.DisposeAsync());
+        Assert.True(
+            SpinWait.SpinUntil(
+                () => provider.PublishDisposedForTests,
+                TimeSpan.FromSeconds(10)));
+        Assert.False(disposeTask.IsCompleted);
+        Assert.False(bridge.IsDisposed);
+
+        releaseCallback.Set();
+        await publishTask;
+        await disposeTask;
+
+        Assert.True(bridge.IsDisposed);
+    }
+
+    [Fact]
+    public async Task DisposeAsync_FromChangedCallbackDoesNotDeadlock()
+    {
+        var bridge = new FakeBridge { Sessions = [MainSession()] };
+        var provider = new OpenClawChatDataProvider(bridge);
+        provider.Changed += (_, _) => provider.DisposeAsync().AsTask().GetAwaiter().GetResult();
+
+        await Task.Run(
+            () => bridge.RaiseStatus(ConnectionStatus.Connecting))
+            .WaitAsync(TimeSpan.FromSeconds(10));
+
+        Assert.True(bridge.IsDisposed);
+    }
+
+    [Fact]
+    public async Task DisposeAsync_ConcurrentExternalAndCallbackDisposalDoesNotDeadlock()
+    {
+        var bridge = new FakeBridge { Sessions = [MainSession()] };
+        var provider = new OpenClawChatDataProvider(bridge);
+        using var callbackEntered = new ManualResetEventSlim();
+        using var allowCallbackDispose = new ManualResetEventSlim();
+        provider.Changed += (_, _) =>
+        {
+            callbackEntered.Set();
+            Assert.True(allowCallbackDispose.Wait(TimeSpan.FromSeconds(10)));
+            provider.DisposeAsync().AsTask().GetAwaiter().GetResult();
+        };
+
+        var publishTask = Task.Run(
+            () => bridge.RaiseStatus(ConnectionStatus.Connecting));
+        Assert.True(callbackEntered.Wait(TimeSpan.FromSeconds(10)));
+        var externalDispose = Task.Run(async () => await provider.DisposeAsync());
+        Assert.True(
+            SpinWait.SpinUntil(
+                () => provider.PublishDisposedForTests,
+                TimeSpan.FromSeconds(10)));
+
+        allowCallbackDispose.Set();
+        await publishTask.WaitAsync(TimeSpan.FromSeconds(10));
+        await externalDispose.WaitAsync(TimeSpan.FromSeconds(10));
+
+        Assert.True(bridge.IsDisposed);
+    }
+
+    [Fact]
+    public async Task DisposeAsync_PersistsAuthoritativeSnapshotWhenQueuedDeliveryIsDropped()
+    {
+        using var temp = new TempDirectory();
+        var statePath = Path.Combine(temp.DirectoryPath, "last-chat-state.json");
+        var queued = new ConcurrentQueue<Action>();
+        var (bridge, provider, snapshots, _) = CreateProvider(
+            lastChatStatePath: statePath,
+            lastChatStateSaveDelay: TimeSpan.FromDays(1),
+            post: queued.Enqueue);
+        bridge.RaiseSessions(
+        [
+            new SessionInfo
+            {
+                Key = "main",
+                IsMain = true,
+                DisplayName = "Final session",
+                Status = "active",
+            },
+        ]);
+        Assert.Single(queued);
+
+        await provider.DisposeAsync();
+
+        Assert.Empty(snapshots);
+        var persisted = OpenClawChatDataProvider.LoadLastChatState(statePath);
+        Assert.Equal("Final session", persisted?.ThreadTitle);
+    }
+
+    [Fact]
+    public async Task DisposeAsync_DropsQueuedCommandCatalogDelivery()
+    {
+        var bridge = new FakeBridge
+        {
+            Sessions = [MainSession()],
+            CurrentStatus = ConnectionStatus.Connected,
+            CommandCatalogResult = new CommandCatalog
+            {
+                IsSupported = true,
+                Commands = [new GatewayCommand { Name = "status", NativeName = "/status" }],
+            },
+        };
+        var queued = new ConcurrentQueue<Action>();
+        var provider = new OpenClawChatDataProvider(bridge, post: queued.Enqueue);
+        var snapshots = new List<ChatDataSnapshot>();
+        provider.Changed += (_, args) => snapshots.Add(args.Snapshot);
+
+        await provider.EnsureCommandCatalogAsync();
+        var queuedBeforeDispose = AssertSingleQueuedAction(queued);
+
+        await provider.DisposeAsync();
+        queuedBeforeDispose();
+
+        Assert.Empty(snapshots);
+        Assert.Empty(queued);
     }
 
     [Fact]
@@ -9572,7 +9960,7 @@ public class OpenClawChatDataProviderTests
     }
 
     [Fact]
-    public async Task Disconnect_DropsHistoryDeliveryQueuedAfterNewerStatusSnapshot()
+    public async Task Disconnect_QueuedHistoryDeliveryCannotSupersedeLatestStatusDrain()
     {
         var deliveries = new List<Action>();
         var bridge = new FakeBridge
@@ -9599,10 +9987,11 @@ public class OpenClawChatDataProviderTests
         bridge.RaiseStatus(ConnectionStatus.Disconnected);
         Assert.Equal(2, deliveries.Count);
 
-        // Model a dispatcher race where disconnect is delivered before the
-        // history callback that was queued from an earlier connection state.
-        deliveries[1]();
+        // The first callback is history commit work, not a snapshot drain. It
+        // observes the advanced connection generation and drops its stale result.
+        // The second callback is the one coalesced snapshot drain.
         deliveries[0]();
+        deliveries[1]();
 
         var snapshot = Assert.Single(snapshots);
         Assert.Equal(ConnectionStatus.Disconnected.ToString(), snapshot.ConnectionStatus);
@@ -9922,12 +10311,13 @@ public class OpenClawChatDataProviderTests
         bridge.RaiseStatus(ConnectionStatus.Connected);
 
         await provider.EnsureCommandCatalogAsync(); // enqueues the command-catalog delivery
+        Assert.Equal(2, queued.Count);
 
-        // Disconnect runs and is itself enqueued; drain the queue in order. The
-        // command-catalog delivery re-checks the epoch and, finding it bumped by
-        // the disconnect, drops itself — so the last delivered snapshot reflects
-        // the disconnect (no stale commands), not "connected + /stale".
+        // Disconnect supersedes the command-catalog snapshot before the queued
+        // drain runs. The other queued callback is command-catalog commit work,
+        // which rechecks its epoch and cannot publish stale commands.
         bridge.RaiseStatus(ConnectionStatus.Disconnected);
+        Assert.Equal(2, queued.Count);
         foreach (var action in queued.ToArray())
             action();
 
@@ -13505,7 +13895,7 @@ public class OpenClawChatDataProviderTests
     }
 
     [Fact]
-    public async Task LoadHistoryAsync_QueuedDeliveryDropsAfterResetGenerationAdvances()
+    public async Task LoadHistoryAsync_QueuedDeliveryCannotSupersedeLatestResetGenerationDrain()
     {
         using var temp = new TempDirectory();
         var bridge = new FakeBridge
@@ -13548,8 +13938,8 @@ public class OpenClawChatDataProviderTests
             });
             Assert.Equal(2, deliveries.Count);
 
-            deliveries[1]();
             deliveries[0]();
+            deliveries[1]();
 
             var snapshot = Assert.Single(snapshots);
             Assert.Empty(snapshot.Timelines["main"].Entries);
@@ -13691,6 +14081,13 @@ public class OpenClawChatDataProviderTests
            snapshot.QueuedMessagesByThread.TryGetValue(threadId, out var queued)
             ? queued
             : Array.Empty<ChatQueuedMessage>();
+
+    private static Action AssertSingleQueuedAction(ConcurrentQueue<Action> queued)
+    {
+        Assert.True(queued.TryDequeue(out var action));
+        Assert.Empty(queued);
+        return action;
+    }
 
     private static ISet<string> GetQueuedDrainScheduledThreads(OpenClawChatDataProvider provider)
     {

@@ -78,6 +78,14 @@ public sealed class OpenClawChatDataProvider : IChatDataProvider
     private readonly ChatHistoryLoader _historyLoader;
     private readonly Action<Action>? _post;
     private readonly Func<Func<Task>, Task> _deferredAbortScheduler;
+    private readonly object _publishGate = new();
+    private readonly Dictionary<int, int> _deliveryDepthByThread = [];
+    private readonly ManualResetEventSlim _disposeCompleted = new();
+    private readonly List<ChatProviderNotification> _pendingPublishNotifications = [];
+    private ChatDataSnapshot? _pendingPublishSnapshot;
+    private int _activeDeliveries;
+    private bool _publishScheduled;
+    private bool _publishDisposed;
 
     /// <summary>Whether any thread is in an aborted state (suppress TTS/notifications).</summary>
     public bool IsResponseSuppressed => _state.IsResponseSuppressed;
@@ -89,6 +97,18 @@ public sealed class OpenClawChatDataProvider : IChatDataProvider
 
     public event EventHandler<ChatDataChangedEventArgs>? Changed;
     public event EventHandler<ChatProviderNotificationEventArgs>? NotificationRequested;
+
+#if OPENCLAW_TRAY_TESTS
+    internal Action<ChatDataSnapshot>? BeforePublishForTests { get; set; }
+    internal bool PublishDisposedForTests
+    {
+        get
+        {
+            lock (_publishGate)
+                return _publishDisposed;
+        }
+    }
+#endif
 
     /// <param name="bridge">Adapter wrapping the live gateway client.</param>
     /// <param name="post">
@@ -1015,22 +1035,45 @@ public sealed class OpenClawChatDataProvider : IChatDataProvider
     {
         var transition = _state.DisposeState();
         if (!transition.IsFirstDispose)
+        {
+            if (IsDeliveringOnCurrentThread())
+                return ValueTask.CompletedTask;
+            _disposeCompleted.Wait();
+            WaitForInFlightDeliveries();
             return ValueTask.CompletedTask;
-        _telemetry.FinishAll(
-            ChatTelemetryOutcome.Canceled,
-            ChatTurnTelemetryReason.Disposed);
-        _historyLoader.Completed -= OnHistoryLoadCompleted;
-        _historyLoader.Dispose();
-        _metadataStore.Dispose();
-        _persistence.Dispose();
-        _bridge.StatusChanged -= OnStatusChanged;
-        _bridge.SessionsUpdated -= OnSessionsUpdated;
-        _bridge.SessionCommandCompleted -= OnSessionCommandCompleted;
-        _bridge.ChatMessageReceived -= OnChatMessageReceived;
-        _bridge.AgentEventReceived -= OnAgentEventReceived;
-        _bridge.ModelsListUpdated -= OnModelsListUpdated;
-        _bridge.Dispose();
-        return ValueTask.CompletedTask;
+        }
+
+        try
+        {
+            lock (_publishGate)
+            {
+                _publishDisposed = true;
+                _pendingPublishSnapshot = null;
+                _pendingPublishNotifications.Clear();
+                _publishScheduled = false;
+            }
+            WaitForInFlightDeliveries();
+            _persistence.SaveSnapshot(_state.Snapshot(ProjectionContext()));
+            _telemetry.FinishAll(
+                ChatTelemetryOutcome.Canceled,
+                ChatTurnTelemetryReason.Disposed);
+            _historyLoader.Completed -= OnHistoryLoadCompleted;
+            _historyLoader.Dispose();
+            _metadataStore.Dispose();
+            _persistence.Dispose();
+            _bridge.StatusChanged -= OnStatusChanged;
+            _bridge.SessionsUpdated -= OnSessionsUpdated;
+            _bridge.SessionCommandCompleted -= OnSessionCommandCompleted;
+            _bridge.ChatMessageReceived -= OnChatMessageReceived;
+            _bridge.AgentEventReceived -= OnAgentEventReceived;
+            _bridge.ModelsListUpdated -= OnModelsListUpdated;
+            _bridge.Dispose();
+            return ValueTask.CompletedTask;
+        }
+        finally
+        {
+            _disposeCompleted.Set();
+        }
     }
 
     /// <summary>
@@ -1809,20 +1852,183 @@ public sealed class OpenClawChatDataProvider : IChatDataProvider
 
     private void Publish(ChatDataSnapshot snapshot)
     {
-        var args = new ChatDataChangedEventArgs(snapshot);
+#if OPENCLAW_TRAY_TESTS
+        BeforePublishForTests?.Invoke(snapshot);
+#endif
+
         if (_post is null)
         {
-            Changed?.Invoke(this, args);
+            DeliverSnapshot(snapshot);
         }
         else
         {
-            _post(() => Changed?.Invoke(this, args));
+            bool shouldSchedule;
+            lock (_publishGate)
+            {
+                if (_publishDisposed)
+                    return;
+
+                _pendingPublishSnapshot = snapshot;
+                shouldSchedule = !_publishScheduled;
+                if (shouldSchedule)
+                    _publishScheduled = true;
+            }
+
+            if (shouldSchedule)
+                PostPublishDrain();
+        }
+    }
+
+    private void PostPublishDrain()
+    {
+        try
+        {
+            _post!(DrainPendingPublish);
+        }
+        catch
+        {
+            lock (_publishGate)
+                _publishScheduled = false;
+            throw;
+        }
+    }
+
+    private void DrainPendingPublish()
+    {
+        ChatDataSnapshot? snapshot;
+        ChatProviderNotification[] notifications;
+        lock (_publishGate)
+        {
+            if (_publishDisposed)
+            {
+                _pendingPublishSnapshot = null;
+                _pendingPublishNotifications.Clear();
+                _publishScheduled = false;
+                return;
+            }
+
+            snapshot = _pendingPublishSnapshot;
+            _pendingPublishSnapshot = null;
+            notifications = _pendingPublishNotifications.ToArray();
+            _pendingPublishNotifications.Clear();
+            if (snapshot is null)
+            {
+                _publishScheduled = false;
+                return;
+            }
         }
 
-        // Debounce-save last-known UI state so the next launch can show
-        // meaningful labels while reconnecting instead of "Main session"/"model".
+        // A producer can be delayed after building its snapshot, then reach
+        // Publish after a newer state transition. Materialize at drain time so
+        // coalescing follows authoritative state order, not caller arrival.
+        snapshot = _state.Snapshot(ProjectionContext());
+
+        try
+        {
+            DeliverSnapshot(snapshot);
+            foreach (var notification in notifications)
+                DeliverNotification(notification);
+        }
+        finally
+        {
+            bool shouldSchedule;
+            lock (_publishGate)
+            {
+                if (_publishDisposed)
+                {
+                    _pendingPublishSnapshot = null;
+                    _pendingPublishNotifications.Clear();
+                    _publishScheduled = false;
+                    shouldSchedule = false;
+                }
+                else
+                {
+                    shouldSchedule = _pendingPublishSnapshot is not null;
+                    if (!shouldSchedule)
+                        _publishScheduled = false;
+                }
+            }
+
+            // Keep the current drain scheduled while callbacks run. Any number
+            // of callback-time publishes then need exactly one follow-up drain.
+            if (shouldSchedule)
+                PostPublishDrain();
+        }
+    }
+
+    private void DebounceSnapshot(ChatDataSnapshot snapshot)
+    {
+        // Save last-known UI state so the next launch can show meaningful
+        // labels while reconnecting instead of "Main session"/"model".
         if (snapshot.Threads.Length > 0 || snapshot.AvailableModels.Length > 0)
             _persistence.DebounceSnapshot(snapshot);
+    }
+
+    private void DeliverSnapshot(ChatDataSnapshot snapshot)
+    {
+        Deliver(
+            () =>
+            {
+                Changed?.Invoke(this, new ChatDataChangedEventArgs(snapshot));
+                DebounceSnapshot(snapshot);
+            });
+    }
+
+    private void DeliverNotification(ChatProviderNotification notification) =>
+        Deliver(
+            () => NotificationRequested?.Invoke(
+                this,
+                new ChatProviderNotificationEventArgs(notification)));
+
+    private void Deliver(Action callback)
+    {
+        var threadId = Environment.CurrentManagedThreadId;
+        lock (_publishGate)
+        {
+            if (_publishDisposed)
+                return;
+            _activeDeliveries++;
+            _deliveryDepthByThread[threadId] =
+                _deliveryDepthByThread.GetValueOrDefault(threadId) + 1;
+        }
+
+        try
+        {
+            callback();
+        }
+        finally
+        {
+            lock (_publishGate)
+            {
+                _activeDeliveries--;
+                var depth = _deliveryDepthByThread[threadId] - 1;
+                if (depth == 0)
+                    _deliveryDepthByThread.Remove(threadId);
+                else
+                    _deliveryDepthByThread[threadId] = depth;
+                Monitor.PulseAll(_publishGate);
+            }
+        }
+    }
+
+    private bool IsDeliveringOnCurrentThread()
+    {
+        lock (_publishGate)
+            return _deliveryDepthByThread.ContainsKey(Environment.CurrentManagedThreadId);
+    }
+
+    private void WaitForInFlightDeliveries()
+    {
+        lock (_publishGate)
+        {
+            var threadId = Environment.CurrentManagedThreadId;
+            var ownCallbackDepth = _deliveryDepthByThread.GetValueOrDefault(threadId);
+            while (_activeDeliveries > ownCallbackDepth)
+            {
+                Monitor.Wait(_publishGate);
+                ownCallbackDepth = _deliveryDepthByThread.GetValueOrDefault(threadId);
+            }
+        }
     }
 
     // ── Last-chat-state cache ──────────────────────────────────────────
@@ -1843,13 +2049,23 @@ public sealed class OpenClawChatDataProvider : IChatDataProvider
 
     private void RaiseNotification(ChatProviderNotification notification)
     {
-        var args = new ChatProviderNotificationEventArgs(notification);
         if (_post is null)
         {
-            NotificationRequested?.Invoke(this, args);
+            DeliverNotification(notification);
             return;
         }
-        _post(() => NotificationRequested?.Invoke(this, args));
+
+        lock (_publishGate)
+        {
+            if (_publishDisposed)
+                return;
+            if (_pendingPublishSnapshot is not null)
+            {
+                _pendingPublishNotifications.Add(notification);
+                return;
+            }
+        }
+        _post(() => DeliverNotification(notification));
     }
 
 }

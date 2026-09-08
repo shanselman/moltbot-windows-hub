@@ -437,7 +437,8 @@ internal sealed class ChatConversationState
     {
         lock (_gate)
         {
-            return _presentation.IsCommandCatalogEpochCurrent(epoch)
+            return !_disposed &&
+                   _presentation.IsCommandCatalogEpochCurrent(epoch)
                 ? BuildSnapshotLocked(context)
                 : null;
         }

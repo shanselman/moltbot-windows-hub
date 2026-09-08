@@ -218,25 +218,13 @@ internal sealed class ChatStatePersistence : IDisposable
 
     internal void DebounceSnapshot(ChatDataSnapshot snapshot)
     {
-        var defaultThread = snapshot.DefaultThreadId is { } defaultId
-            ? Array.Find(snapshot.Threads, thread => thread.Id == defaultId)
-            : snapshot.Threads.FirstOrDefault();
-        if (defaultThread is null && snapshot.AvailableModels.Length == 0)
-            return;
-
         lock (_gate)
         {
             if (_disposed)
                 return;
-            var previous = _lastState;
-            var state = new OpenClawChatDataProvider.LastChatState
-            {
-                DefaultThreadId = snapshot.DefaultThreadId ?? previous?.DefaultThreadId,
-                ThreadTitle = defaultThread?.Title ?? previous?.ThreadTitle,
-                Model = defaultThread?.Model ?? previous?.Model,
-                ModelProvider = defaultThread?.ModelProvider ?? previous?.ModelProvider,
-                AvailableModels = snapshot.AvailableModels.ToArray(),
-            };
+            var state = CreateLastChatState(snapshot, _lastState);
+            if (state is null)
+                return;
             _lastState = state;
             var version = ++_lastStateSaveVersion;
             _lastStateSaveTimer?.Dispose();
@@ -246,6 +234,29 @@ internal sealed class ChatStatePersistence : IDisposable
                 _lastStateSaveDelay,
                 Timeout.InfiniteTimeSpan);
         }
+    }
+
+    internal void SaveSnapshot(ChatDataSnapshot snapshot)
+    {
+        Timer? timer;
+        OpenClawChatDataProvider.LastChatState? state;
+        lock (_gate)
+        {
+            if (_disposed)
+                return;
+            state = CreateLastChatState(snapshot, _lastState);
+            if (state is null)
+                return;
+            _lastState = state;
+            _lastStateSaveVersion++;
+            timer = _lastStateSaveTimer;
+            _lastStateSaveTimer = null;
+            // SaveLastStateIfCurrent also writes under this gate. Keeping the
+            // final write serialized ensures an in-flight debounce callback
+            // cannot overwrite the authoritative shutdown snapshot afterward.
+            SaveLastChatState(state, _lastStatePath);
+        }
+        timer?.Dispose();
     }
 
     public void Dispose()
@@ -366,6 +377,26 @@ internal sealed class ChatStatePersistence : IDisposable
             _lastStateSaveTimer?.Dispose();
             _lastStateSaveTimer = null;
         }
+    }
+
+    private static OpenClawChatDataProvider.LastChatState? CreateLastChatState(
+        ChatDataSnapshot snapshot,
+        OpenClawChatDataProvider.LastChatState? previous)
+    {
+        var defaultThread = snapshot.DefaultThreadId is { } defaultId
+            ? Array.Find(snapshot.Threads, thread => thread.Id == defaultId)
+            : snapshot.Threads.FirstOrDefault();
+        if (defaultThread is null && snapshot.AvailableModels.Length == 0)
+            return null;
+
+        return new OpenClawChatDataProvider.LastChatState
+        {
+            DefaultThreadId = snapshot.DefaultThreadId ?? previous?.DefaultThreadId,
+            ThreadTitle = defaultThread?.Title ?? previous?.ThreadTitle,
+            Model = defaultThread?.Model ?? previous?.Model,
+            ModelProvider = defaultThread?.ModelProvider ?? previous?.ModelProvider,
+            AvailableModels = snapshot.AvailableModels.ToArray(),
+        };
     }
 
     private static void SaveLastChatState(
