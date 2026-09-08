@@ -1,3 +1,4 @@
+using System.ComponentModel;
 using System.Diagnostics;
 
 namespace OpenClaw.SetupEngine.Tests;
@@ -139,14 +140,89 @@ public class CommandRunnerTests
     public async Task RunAsync_ReturnsWhenDescendantKeepsOutputPipesOpen()
     {
         var runner = CreateRunner();
-        var (executable, arguments) = ExitsLeavingPipeHolderCommand();
-        var stopwatch = Stopwatch.StartNew();
+        var pidFile = Path.GetTempFileName();
+        var childPid = 0;
 
-        var result = await runner.RunAsync(executable, arguments, TimeSpan.FromSeconds(30));
+        try
+        {
+            var result = await runner.RunAsyncAllowingInheritedPipeHandleEscape(
+                FindTestHost(),
+                ["--process-fixture", "inherit-handles", "30000", pidFile],
+                TimeSpan.FromSeconds(30));
+            var completedAt = DateTime.UtcNow;
+
+            Assert.False(
+                result.TimedOut,
+                $"Command timed out. stdout={result.Stdout} stderr={result.Stderr}");
+            Assert.True(
+                result.ExitCode == 0,
+                $"exit={result.ExitCode} stdout={result.Stdout} stderr={result.Stderr}");
+
+            childPid = int.Parse(await File.ReadAllTextAsync(pidFile));
+            var drainElapsed = completedAt - File.GetLastWriteTimeUtc(pidFile);
+
+            using var child = Process.GetProcessById(childPid);
+            Assert.False(child.HasExited);
+            Assert.InRange(drainElapsed, TimeSpan.FromSeconds(2), TimeSpan.FromSeconds(15));
+        }
+        finally
+        {
+            KillProcessTree(childPid);
+            File.Delete(pidFile);
+        }
+    }
+
+    [Fact]
+    public async Task WaitForOutputDrainAsync_WaitsPastCommandDeadlineOnNormalExit()
+    {
+        var outputClosed = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var wait = CommandRunner.WaitForOutputDrainAsync(
+            outputClosed.Task,
+            TimeSpan.FromMilliseconds(100),
+            TimeSpan.Zero,
+            timedOut: false,
+            allowInheritedPipeHandleEscape: false);
+
+        var completed = await Task.WhenAny(wait, Task.Delay(TimeSpan.FromMilliseconds(250)));
+        Assert.NotSame(wait, completed);
+
+        outputClosed.SetResult();
+        await wait;
+    }
+
+    [Fact]
+    public async Task WaitForOutputDrainAsync_CancellationInterruptsNormalPostExitDrain()
+    {
+        var outputClosed = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        using var cancellation = new CancellationTokenSource(TimeSpan.FromMilliseconds(100));
+
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() =>
+            CommandRunner.WaitForOutputDrainAsync(
+                outputClosed.Task,
+                TimeSpan.FromSeconds(30),
+                TimeSpan.Zero,
+                timedOut: false,
+                allowInheritedPipeHandleEscape: false,
+                cancellation.Token));
+    }
+
+    [Fact]
+    public async Task RunAsync_DrainsHighVolumeStdoutAndStderrThroughTrailingMarkers()
+    {
+        const int lineCount = 8_000;
+        var (executable, arguments) = HighVolumeOutputCommand(lineCount);
+
+        var result = await CreateRunner().RunAsync(
+            executable,
+            arguments,
+            TimeSpan.FromSeconds(30));
 
         Assert.False(result.TimedOut);
         Assert.Equal(0, result.ExitCode);
-        Assert.InRange(stopwatch.Elapsed, TimeSpan.Zero, TimeSpan.FromSeconds(5));
+        Assert.Equal(lineCount, CountLinesStartingWith(result.Stdout, "stdout-"));
+        Assert.Equal(lineCount, CountLinesStartingWith(result.Stderr, "stderr-"));
+        Assert.EndsWith($"STDOUT_MARKER{Environment.NewLine}", result.Stdout, StringComparison.Ordinal);
+        Assert.EndsWith($"STDERR_MARKER{Environment.NewLine}", result.Stderr, StringComparison.Ordinal);
     }
 
     [Theory]
@@ -171,15 +247,71 @@ public class CommandRunnerTests
     private static CommandRunner CreateRunner()
         => new(new SetupLogger(filePath: null, LogLevel.Trace));
 
-    private static (string Executable, string[] Arguments) ExitsLeavingPipeHolderCommand()
-        => OperatingSystem.IsWindows()
-            ? ("cmd.exe", ["/d", "/s", "/c", "start /b ping 127.0.0.1 -n 20"])
-            : ("/bin/sh", ["-c", "sleep 20 & exit 0"]);
-
     private static (string Executable, string[] Arguments) SleepingCommand()
         => OperatingSystem.IsWindows()
             ? ("cmd.exe", ["/d", "/s", "/c", "ping 127.0.0.1 -n 30 >nul"])
             : ("/bin/sh", ["-c", "sleep 30"]);
+
+    private static string FindTestHost()
+    {
+        var executableName = OperatingSystem.IsWindows()
+            ? "OpenClaw.Shared.TestHost.exe"
+            : "OpenClaw.Shared.TestHost";
+        var hostPath = Path.Combine(AppContext.BaseDirectory, executableName);
+        Assert.True(File.Exists(hostPath), $"Process test host was not built: {hostPath}");
+        return hostPath;
+    }
+
+    private static void KillProcessTree(int processId)
+    {
+        if (processId <= 0)
+            return;
+
+        try
+        {
+            using var process = Process.GetProcessById(processId);
+            process.Kill(entireProcessTree: true);
+            process.WaitForExit(2_000);
+        }
+        catch (ArgumentException)
+        {
+        }
+        catch (InvalidOperationException)
+        {
+        }
+        catch (Win32Exception)
+        {
+        }
+        catch (AggregateException)
+        {
+        }
+    }
+
+    private static (string Executable, string[] Arguments) HighVolumeOutputCommand(int lineCount)
+    {
+        if (!OperatingSystem.IsWindows())
+        {
+            return ("/bin/sh",
+            [
+                "-c",
+                "i=0; while [ $i -lt " + lineCount + " ]; do printf 'stdout-%s\\n' \"$i\"; i=$((i+1)); done; " +
+                "printf 'STDOUT_MARKER\\n'; " +
+                "i=0; while [ $i -lt " + lineCount + " ]; do printf 'stderr-%s\\n' \"$i\" >&2; i=$((i+1)); done; " +
+                "printf 'STDERR_MARKER\\n' >&2"
+            ]);
+        }
+
+        var script =
+            $"for ($i = 0; $i -lt {lineCount}; $i++) {{ [Console]::Out.WriteLine(\"stdout-$i\") }}; " +
+            "[Console]::Out.WriteLine(\"STDOUT_MARKER\"); " +
+            $"for ($i = 0; $i -lt {lineCount}; $i++) {{ [Console]::Error.WriteLine(\"stderr-$i\") }}; " +
+            "[Console]::Error.WriteLine(\"STDERR_MARKER\")";
+        return ("powershell.exe", ["-NoProfile", "-NonInteractive", "-Command", script]);
+    }
+
+    private static int CountLinesStartingWith(string value, string prefix) =>
+        value.Split(Environment.NewLine, StringSplitOptions.RemoveEmptyEntries)
+            .Count(line => line.StartsWith(prefix, StringComparison.Ordinal));
 
     private static (string Executable, string[] Arguments) CopyStdinCommand(string path)
     {
