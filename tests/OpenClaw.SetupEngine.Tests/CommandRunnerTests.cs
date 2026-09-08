@@ -1,3 +1,4 @@
+using System.ComponentModel;
 using System.Diagnostics;
 
 namespace OpenClaw.SetupEngine.Tests;
@@ -139,17 +140,36 @@ public class CommandRunnerTests
     public async Task RunAsync_ReturnsWhenDescendantKeepsOutputPipesOpen()
     {
         var runner = CreateRunner();
-        var (executable, arguments) = ExitsLeavingPipeHolderCommand();
-        var stopwatch = Stopwatch.StartNew();
+        var pidFile = Path.GetTempFileName();
+        var childPid = 0;
 
-        var result = await runner.RunAsyncAllowingInheritedPipeHandleEscape(
-            executable,
-            arguments,
-            TimeSpan.FromSeconds(30));
+        try
+        {
+            var result = await runner.RunAsyncAllowingInheritedPipeHandleEscape(
+                FindTestHost(),
+                ["--process-fixture", "inherit-handles", "30000", pidFile],
+                TimeSpan.FromSeconds(30));
+            var completedAt = DateTime.UtcNow;
 
-        Assert.False(result.TimedOut);
-        Assert.Equal(0, result.ExitCode);
-        Assert.InRange(stopwatch.Elapsed, TimeSpan.Zero, TimeSpan.FromSeconds(5));
+            Assert.False(
+                result.TimedOut,
+                $"Command timed out. stdout={result.Stdout} stderr={result.Stderr}");
+            Assert.True(
+                result.ExitCode == 0,
+                $"exit={result.ExitCode} stdout={result.Stdout} stderr={result.Stderr}");
+
+            childPid = int.Parse(await File.ReadAllTextAsync(pidFile));
+            var drainElapsed = completedAt - File.GetLastWriteTimeUtc(pidFile);
+
+            using var child = Process.GetProcessById(childPid);
+            Assert.False(child.HasExited);
+            Assert.InRange(drainElapsed, TimeSpan.FromSeconds(2), TimeSpan.FromSeconds(15));
+        }
+        finally
+        {
+            KillProcessTree(childPid);
+            File.Delete(pidFile);
+        }
     }
 
     [Fact]
@@ -227,15 +247,45 @@ public class CommandRunnerTests
     private static CommandRunner CreateRunner()
         => new(new SetupLogger(filePath: null, LogLevel.Trace));
 
-    private static (string Executable, string[] Arguments) ExitsLeavingPipeHolderCommand()
-        => OperatingSystem.IsWindows()
-            ? ("cmd.exe", ["/d", "/s", "/c", "start /b ping 127.0.0.1 -n 20"])
-            : ("/bin/sh", ["-c", "sleep 20 & exit 0"]);
-
     private static (string Executable, string[] Arguments) SleepingCommand()
         => OperatingSystem.IsWindows()
             ? ("cmd.exe", ["/d", "/s", "/c", "ping 127.0.0.1 -n 30 >nul"])
             : ("/bin/sh", ["-c", "sleep 30"]);
+
+    private static string FindTestHost()
+    {
+        var executableName = OperatingSystem.IsWindows()
+            ? "OpenClaw.Shared.TestHost.exe"
+            : "OpenClaw.Shared.TestHost";
+        var hostPath = Path.Combine(AppContext.BaseDirectory, executableName);
+        Assert.True(File.Exists(hostPath), $"Process test host was not built: {hostPath}");
+        return hostPath;
+    }
+
+    private static void KillProcessTree(int processId)
+    {
+        if (processId <= 0)
+            return;
+
+        try
+        {
+            using var process = Process.GetProcessById(processId);
+            process.Kill(entireProcessTree: true);
+            process.WaitForExit(2_000);
+        }
+        catch (ArgumentException)
+        {
+        }
+        catch (InvalidOperationException)
+        {
+        }
+        catch (Win32Exception)
+        {
+        }
+        catch (AggregateException)
+        {
+        }
+    }
 
     private static (string Executable, string[] Arguments) HighVolumeOutputCommand(int lineCount)
     {
