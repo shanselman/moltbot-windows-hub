@@ -78,6 +78,15 @@ candidate proof.
 provenance and its GitHub release does not publish stable release-validation
 evidence.
 
+The Windows Extensions hub needs the stable Plugins lifecycle first released in
+`2026.8.1`. The newest stable candidate checked on 2026-09-08, `2026.9.3`, is
+evidence-rejected. It passed protocol v4, the security floor, SHA-512 package
+integrity, registry signatures, exact package-build/tag commit binding, the
+stable release manifest, and verified tag checks. Its npm SLSA provenance did
+not verify against the package digest and OpenClaw release identity. The
+Windows recommendation therefore remains `2026.6.34`; runtime UI uses advertised
+Gateway methods and fails closed when the Plugins APIs are absent.
+
 ## Consequences
 
 - Setup is reproducible and cannot silently move when npm tags change.

@@ -130,6 +130,8 @@ public static class GatewayReleasePolicy
     public const string NodeVersion = "24.19.0";
     public const string SecurityFloor = "2026.6.11";
     public const string RecommendedVersion = "2026.6.34";
+    public const string PluginLifecycleFirstStableVersion = "2026.8.1";
+    public const string PluginCapableEvidenceRejectedVersion = "2026.9.3";
     public const string RuntimeRejectedVersion = "2026.7.1";
     public const string EvidenceRejectedVersion = "2026.7.1-2";
 
@@ -166,11 +168,39 @@ public static class GatewayReleasePolicy
                 "https://github.com/openclaw/openclaw/releases/tag/v2026.7.1-2",
                 "Candidate preflight on 2026-08-06",
                 "npm provenance attestation and a stable release-validation manifest were not published"),
+            [PluginCapableEvidenceRejectedVersion] = new(
+                PluginCapableEvidenceRejectedVersion,
+                GatewayReleaseStatus.Rejected,
+                ProtocolGeneration,
+                "sha512-CzDHMeHdnjlIZ76ZyBb1lvLO4H/yBIMYXupFGGBN87x0853y3hg5nLAnKfxSKqLzqhbUKqy9ebDRAWWV4t8aew==",
+                "https://github.com/openclaw/openclaw/releases/tag/v2026.9.3",
+                "Candidate preflight on 2026-09-08 for the first Windows Extensions release",
+                "npm SLSA provenance did not verify against the package digest and OpenClaw release identity"),
         };
 
     public static string? FallbackVersion => "2026.6.11";
 
     public static IReadOnlyDictionary<string, GatewayReleaseEvidence> Releases => s_releases;
+
+    /// <summary>
+    /// True only when the embedded recommendation is both new enough to contain
+    /// the stable Plugins lifecycle and already promoted through the Windows gate.
+    /// Feature advertisements remain authoritative at runtime.
+    /// </summary>
+    public static bool RecommendedHasValidatedPluginLifecycle
+    {
+        get
+        {
+            if (!GatewayReleaseVersion.TryParse(RecommendedVersion, out var recommended) ||
+                !GatewayReleaseVersion.TryParse(PluginLifecycleFirstStableVersion, out var firstStable) ||
+                !s_releases.TryGetValue(RecommendedVersion, out var evidence))
+            {
+                return false;
+            }
+            return recommended.CompareTo(firstStable) >= 0 &&
+                evidence.Status == GatewayReleaseStatus.Validated;
+        }
+    }
 
     public static bool IsOfficialInstallerUrl(string? installUrl) =>
         string.IsNullOrWhiteSpace(installUrl) ||

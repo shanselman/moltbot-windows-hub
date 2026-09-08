@@ -37,6 +37,19 @@ public sealed class GatewayReleasePolicyTests
         Assert.False(GatewayReleasePolicy.IsReleaseEligible(rejected, allowCandidate: true));
     }
 
+    [Fact]
+    public void PluginLifecycleRelease_RemainsBlockedUntilAPluginCapableCandidateIsValidated()
+    {
+        Assert.False(GatewayReleasePolicy.RecommendedHasValidatedPluginLifecycle);
+        Assert.Equal(
+            GatewayReleaseStatus.Rejected,
+            GatewayReleasePolicy.Releases[GatewayReleasePolicy.PluginCapableEvidenceRejectedVersion].Status);
+        Assert.Contains(
+            "provenance",
+            GatewayReleasePolicy.Releases[GatewayReleasePolicy.PluginCapableEvidenceRejectedVersion].RejectionReason,
+            StringComparison.OrdinalIgnoreCase);
+    }
+
     [Theory]
     [InlineData("2026.7.1")]
     [InlineData("2026.7.1-2")]
