@@ -1948,16 +1948,88 @@ public class SetupStepsTests : IDisposable
     }
 
     [Fact]
-    public void InstallCli_BuildInstallCommand_AppendsExactReleaseAndRuntime()
+    public void InstallCli_BuildInstallCommand_DownloadsCompletelyBeforeExecuting()
     {
         var command = InstallCliStep.BuildInstallCommand(
             "https://openclaw.ai/install-cli.sh",
             "2026.5.22",
             GatewayReleasePolicy.NodeVersion);
 
+        Assert.StartsWith("set -euo pipefail", command);
+        Assert.Contains("umask 077", command);
+        Assert.Contains("installer_dir='/tmp/openclaw-installer-", command);
+        Assert.Contains("mkdir -m 0700 -- \"$installer_dir\"", command);
+        Assert.Contains("installer=\"$installer_dir/installer.sh\"", command);
+        Assert.Contains("trap 'rm -rf -- \"$installer_dir\"' EXIT", command);
+        Assert.Contains("--connect-timeout 15", command);
+        Assert.Contains("--max-time 60", command);
+        Assert.DoesNotContain("--remove-on-error", command);
+        Assert.Contains("--proto '=https'", command);
+        Assert.Contains("--tlsv1.2", command);
+        Assert.Contains("--output \"$installer\"", command);
+        Assert.Contains("'https://openclaw.ai/install-cli.sh'", command);
+        Assert.Contains("if ! test -s \"$installer\"", command);
+        Assert.Contains("bash -s -- --version '2026.5.22' --node-version '24.19.0' < \"$installer\"", command);
+        Assert.DoesNotContain("--retry", command);
+        Assert.DoesNotContain("| bash", command);
+    }
+
+    [Fact]
+    public void InstallCli_RetryPolicyLimitsPipelineToTwoTransfers()
+    {
+        var step = new InstallCliStep();
+        var command = InstallCliStep.BuildInstallCommand(
+            "https://openclaw.ai/install-cli.sh",
+            GatewayReleasePolicy.RecommendedVersion,
+            GatewayReleasePolicy.NodeVersion);
+
+        Assert.Equal(2, step.Retry.MaxAttempts);
+        Assert.Equal(TimeSpan.FromSeconds(5), step.Retry.EffectiveInitialDelay);
+        Assert.Equal(InstallCliStep.DownloadMaxTimeSeconds, 60);
+        Assert.DoesNotContain("--retry", command);
+    }
+
+    [Fact]
+    public void InstallCli_BuildInstallCommandPreviewUsesProductionInvocationShape()
+    {
+        const string installerDirectory =
+            "/tmp/openclaw-installer-0123456789abcdef0123456789abcdef";
+        var production = InstallCliStep.BuildInstallCommand(
+            "https://openclaw.ai/install-cli.sh",
+            "2026.5.22",
+            GatewayReleasePolicy.NodeVersion,
+            installerDirectory);
+
+        var preview = InstallCliStep.BuildInstallCommandPreview(
+            "https://openclaw.ai/install-cli.sh",
+            "2026.5.22",
+            GatewayReleasePolicy.NodeVersion);
+
         Assert.Equal(
-            "curl -fsSL --proto '=https' --tlsv1.2 'https://openclaw.ai/install-cli.sh' | bash -s -- --version '2026.5.22' --node-version '22.22.3'",
-            command);
+            production.Replace(
+                installerDirectory,
+                InstallCliStep.InstallerTempDirectoryPreview,
+                StringComparison.Ordinal),
+            preview);
+    }
+
+    [Fact]
+    public void InstallCli_BuildInstallCommandPreviewDoesNotRewriteCustomInstallerUrl()
+    {
+        const string installUrl =
+            "https://example.test/00000000000000000000000000000000/install.sh";
+
+        var preview = InstallCliStep.BuildInstallCommandPreview(
+            installUrl,
+            "2026.5.22");
+
+        Assert.Contains($"'{installUrl}'", preview);
+        Assert.Contains(
+            $"installer_dir='{InstallCliStep.InstallerTempDirectoryPreview}'",
+            preview);
+        Assert.DoesNotContain("--connect-timeout", preview);
+        Assert.DoesNotContain("--max-time", preview);
+        Assert.DoesNotContain("--remove-on-error", preview);
     }
 
     [Fact]
@@ -1965,7 +2037,317 @@ public class SetupStepsTests : IDisposable
     {
         var command = InstallCliStep.BuildInstallCommand("https://openclaw.ai/install-cli's.sh", "2026.5.22'a");
 
-        Assert.Equal("curl -fsSL --proto '=https' --tlsv1.2 'https://openclaw.ai/install-cli'\\''s.sh' | bash -s -- --version '2026.5.22'\\''a'", command);
+        Assert.Contains("'https://openclaw.ai/install-cli'\\''s.sh'", command);
+        Assert.Contains("--version '2026.5.22'\\''a'", command);
+    }
+
+    [Fact]
+    public async Task InstallCli_DownloadFailurePreservesCurlError()
+    {
+        var commands = new FakeCommandRunner(
+            _ => Ok(),
+            (_, command, _) => command.Contains("curl -fsSL", StringComparison.Ordinal)
+                ? new CommandResult(6, "", "curl: (6) Could not resolve host: openclaw.ai", TimeSpan.Zero, TimedOut: false)
+                : command.StartsWith("rm -rf -- /tmp/openclaw-installer-", StringComparison.Ordinal)
+                    ? Ok()
+                    : throw new InvalidOperationException($"Unexpected command: {command}"));
+        var config = new SetupConfig();
+        GatewayReleasePolicy.ResolveAndApply(config);
+        var ctx = CreateContext(config, commands);
+
+        var result = await new InstallCliStep().ExecuteAsync(ctx, CancellationToken.None);
+
+        Assert.Equal(StepOutcome.Failed, result.Outcome);
+        Assert.Contains("exit 6", result.Message);
+        Assert.Contains("Could not resolve host: openclaw.ai", result.Message);
+        Assert.True(commands.WslCalls[0].InputViaStdin);
+        AssertCleanupRan(commands);
+    }
+
+    [Fact]
+    public async Task InstallCli_TransientDnsFailureRecoversOnSecondPipelineAttempt()
+    {
+        var downloadAttempts = 0;
+        var commands = new FakeCommandRunner(
+            _ => Ok(),
+            (_, command, _) =>
+            {
+                if (command.Contains("curl -fsSL", StringComparison.Ordinal))
+                {
+                    downloadAttempts++;
+                    return downloadAttempts == 1
+                        ? new CommandResult(
+                            6,
+                            "",
+                            "curl: (6) Could not resolve host: openclaw.ai",
+                            TimeSpan.Zero,
+                            TimedOut: false)
+                        : Ok();
+                }
+
+                if (command.Contains("tools/node/bin/node --version", StringComparison.Ordinal))
+                    return Ok($"v{GatewayReleasePolicy.NodeVersion}");
+                if (command.EndsWith("openclaw --version", StringComparison.Ordinal))
+                    return Ok($"OpenClaw {GatewayReleasePolicy.RecommendedVersion}");
+                if (command.StartsWith("rm -rf -- /tmp/openclaw-installer-", StringComparison.Ordinal))
+                    return Ok();
+                return Ok();
+            });
+        var config = new SetupConfig();
+        GatewayReleasePolicy.ResolveAndApply(config);
+        var ctx = CreateContext(config, commands);
+        var step = new InstallCliStep();
+
+        var result = await RetryExecutor.ExecuteWithRetry(
+            () => step.ExecuteAsync(ctx, CancellationToken.None),
+            step.Retry with { InitialDelay = TimeSpan.FromMilliseconds(1) },
+            ctx.Logger,
+            step.Id,
+            CancellationToken.None);
+
+        Assert.True(result.IsSuccess, result.Message);
+        Assert.Equal(step.Retry.MaxAttempts, downloadAttempts);
+        Assert.Equal(
+            downloadAttempts,
+            commands.WslCalls.Count(call => call.Command.Contains("curl -fsSL", StringComparison.Ordinal)));
+    }
+
+    [Fact]
+    public async Task InstallCli_TransferTimeoutPreservesCurlExitAndStderr()
+    {
+        var commands = new FakeCommandRunner(
+            _ => Ok(),
+            (_, command, _) => command.Contains("curl -fsSL", StringComparison.Ordinal)
+                ? new CommandResult(
+                    28,
+                    "",
+                    "curl: (28) Operation timed out after 60000 milliseconds",
+                    TimeSpan.FromSeconds(60),
+                    TimedOut: false)
+                : command.StartsWith("rm -rf -- /tmp/openclaw-installer-", StringComparison.Ordinal)
+                    ? Ok()
+                    : throw new InvalidOperationException($"Unexpected command: {command}"));
+        var config = new SetupConfig();
+        GatewayReleasePolicy.ResolveAndApply(config);
+        var ctx = CreateContext(config, commands);
+
+        var result = await new InstallCliStep().ExecuteAsync(ctx, CancellationToken.None);
+
+        Assert.Equal(StepOutcome.Failed, result.Outcome);
+        Assert.Contains("exit 28", result.Message);
+        Assert.Contains("Operation timed out after 60000 milliseconds", result.Message);
+        AssertCleanupRan(commands);
+    }
+
+    [Fact]
+    public async Task InstallCli_CommandTimeoutReportsDeadlineInsteadOfSyntheticExit()
+    {
+        var commands = new FakeCommandRunner(
+            _ => Ok(),
+            (_, command, _) => command.Contains("curl -fsSL", StringComparison.Ordinal)
+                ? new CommandResult(
+                    -1,
+                    "",
+                    "last installer diagnostic",
+                    InstallCliStep.InstallerCommandTimeout,
+                    TimedOut: true)
+                : command.StartsWith("rm -rf -- /tmp/openclaw-installer-", StringComparison.Ordinal)
+                    ? Ok()
+                    : throw new InvalidOperationException($"Unexpected command: {command}"));
+        var config = new SetupConfig();
+        GatewayReleasePolicy.ResolveAndApply(config);
+        var ctx = CreateContext(config, commands);
+
+        var result = await new InstallCliStep().ExecuteAsync(ctx, CancellationToken.None);
+
+        Assert.Equal(StepOutcome.Failed, result.Outcome);
+        Assert.Contains("timed out after 5 minutes", result.Message);
+        Assert.Contains("last installer diagnostic", result.Message);
+        Assert.DoesNotContain("exit -1", result.Message);
+        AssertCleanupRan(commands);
+    }
+
+    [Fact]
+    public async Task InstallCli_PartialTransferDoesNotContinueToVerification()
+    {
+        var commands = new FakeCommandRunner(
+            _ => Ok(),
+            (_, command, _) => command.Contains("curl -fsSL", StringComparison.Ordinal)
+                ? new CommandResult(
+                    18,
+                    "",
+                    "curl: (18) transfer closed with outstanding read data remaining",
+                    TimeSpan.Zero,
+                    TimedOut: false)
+                : command.StartsWith("rm -rf -- /tmp/openclaw-installer-", StringComparison.Ordinal)
+                    ? Ok()
+                    : throw new InvalidOperationException($"Unexpected command: {command}"));
+        var config = new SetupConfig();
+        GatewayReleasePolicy.ResolveAndApply(config);
+        var ctx = CreateContext(config, commands);
+
+        var result = await new InstallCliStep().ExecuteAsync(ctx, CancellationToken.None);
+
+        Assert.Equal(StepOutcome.Failed, result.Outcome);
+        Assert.Contains("exit 18", result.Message);
+        Assert.Contains("outstanding read data", result.Message);
+        AssertCleanupRan(commands);
+    }
+
+    [Fact]
+    public async Task InstallCli_EmptyDownloadDoesNotContinueToVerification()
+    {
+        var commands = new FakeCommandRunner(
+            _ => Ok(),
+            (_, command, _) => command.Contains("curl -fsSL", StringComparison.Ordinal)
+                ? new CommandResult(
+                    65,
+                    "",
+                    "CLI installer download was empty.",
+                    TimeSpan.Zero,
+                    TimedOut: false)
+                : command.StartsWith("rm -rf -- /tmp/openclaw-installer-", StringComparison.Ordinal)
+                    ? Ok()
+                    : throw new InvalidOperationException($"Unexpected command: {command}"));
+        var config = new SetupConfig();
+        GatewayReleasePolicy.ResolveAndApply(config);
+        var ctx = CreateContext(config, commands);
+
+        var result = await new InstallCliStep().ExecuteAsync(ctx, CancellationToken.None);
+
+        Assert.Equal(StepOutcome.Failed, result.Outcome);
+        Assert.Contains("download was empty", result.Message);
+        AssertCleanupRan(commands);
+    }
+
+    [Fact]
+    public async Task InstallCli_CallerCancellationStillRunsIndependentCleanup()
+    {
+        using var cancellation = new CancellationTokenSource();
+        var commands = new FakeCommandRunner(
+            _ => Ok(),
+            (_, command, _) =>
+            {
+                if (command.Contains("curl -fsSL", StringComparison.Ordinal))
+                {
+                    cancellation.Cancel();
+                    throw new OperationCanceledException(cancellation.Token);
+                }
+
+                return command.StartsWith("rm -rf -- /tmp/openclaw-installer-", StringComparison.Ordinal)
+                    ? Ok()
+                    : throw new InvalidOperationException($"Unexpected command: {command}");
+            });
+        var config = new SetupConfig();
+        GatewayReleasePolicy.ResolveAndApply(config);
+        var ctx = CreateContext(config, commands);
+
+        await Assert.ThrowsAsync<OperationCanceledException>(
+            () => new InstallCliStep().ExecuteAsync(ctx, cancellation.Token));
+
+        var cleanup = AssertCleanupRan(commands);
+        Assert.NotEqual(cancellation.Token, cleanup.CancellationToken);
+        Assert.False(cleanup.CancellationToken.IsCancellationRequested);
+    }
+
+    [Fact]
+    public async Task InstallCli_CleanupExceptionDoesNotMaskDownloadFailure()
+    {
+        var commands = new FakeCommandRunner(
+            _ => Ok(),
+            (_, command, _) => command.Contains("curl -fsSL", StringComparison.Ordinal)
+                ? new CommandResult(
+                    6,
+                    "",
+                    "curl: (6) Could not resolve host: openclaw.ai",
+                    TimeSpan.Zero,
+                    TimedOut: false)
+                : command.StartsWith("rm -rf -- /tmp/openclaw-installer-", StringComparison.Ordinal)
+                    ? throw new IOException("cleanup launch failed")
+                    : throw new InvalidOperationException($"Unexpected command: {command}"));
+        var config = new SetupConfig();
+        GatewayReleasePolicy.ResolveAndApply(config);
+        var ctx = CreateContext(config, commands);
+
+        StepResult result = await new InstallCliStep().ExecuteAsync(ctx, CancellationToken.None);
+
+        Assert.Equal(StepOutcome.Failed, result.Outcome);
+        Assert.Contains("exit 6", result.Message);
+        Assert.Contains("Could not resolve host: openclaw.ai", result.Message);
+        Assert.Contains("Cleanup also failed: failed (IOException)", result.Message);
+    }
+
+    [Fact]
+    public async Task InstallCli_CleanupExceptionDoesNotMaskCallerCancellation()
+    {
+        using var cancellation = new CancellationTokenSource();
+        var commands = new FakeCommandRunner(
+            _ => Ok(),
+            (_, command, _) =>
+            {
+                if (command.Contains("curl -fsSL", StringComparison.Ordinal))
+                {
+                    cancellation.Cancel();
+                    throw new OperationCanceledException(cancellation.Token);
+                }
+
+                return command.StartsWith("rm -rf -- /tmp/openclaw-installer-", StringComparison.Ordinal)
+                    ? throw new IOException("cleanup launch failed")
+                    : throw new InvalidOperationException($"Unexpected command: {command}");
+            });
+        var config = new SetupConfig();
+        GatewayReleasePolicy.ResolveAndApply(config);
+        var ctx = CreateContext(config, commands);
+
+        await Assert.ThrowsAsync<OperationCanceledException>(
+            () => new InstallCliStep().ExecuteAsync(ctx, cancellation.Token));
+
+        AssertCleanupRan(commands);
+    }
+
+    [Fact]
+    public async Task InstallCli_CleanupCancellationDoesNotMaskDownloadFailure()
+    {
+        using var cleanupCancellation = new CancellationTokenSource();
+        cleanupCancellation.Cancel();
+        var commands = new FakeCommandRunner(
+            _ => Ok(),
+            (_, command, _) => command.Contains("curl -fsSL", StringComparison.Ordinal)
+                ? new CommandResult(
+                    6,
+                    "",
+                    "curl: (6) Could not resolve host: openclaw.ai",
+                    TimeSpan.Zero,
+                    TimedOut: false)
+                : command.StartsWith("rm -rf -- /tmp/openclaw-installer-", StringComparison.Ordinal)
+                    ? throw new OperationCanceledException(cleanupCancellation.Token)
+                    : throw new InvalidOperationException($"Unexpected command: {command}"));
+        var config = new SetupConfig();
+        GatewayReleasePolicy.ResolveAndApply(config);
+        var ctx = CreateContext(config, commands);
+
+        StepResult result = await new InstallCliStep().ExecuteAsync(ctx, CancellationToken.None);
+
+        Assert.Equal(StepOutcome.Failed, result.Outcome);
+        Assert.Contains("exit 6", result.Message);
+        Assert.Contains("Could not resolve host: openclaw.ai", result.Message);
+        Assert.Contains("Cleanup also failed: was cancelled", result.Message);
+    }
+
+    private static (
+        string DistroName,
+        string Command,
+        TimeSpan Timeout,
+        string? User,
+        bool InputViaStdin,
+        CancellationToken CancellationToken) AssertCleanupRan(FakeCommandRunner commands)
+    {
+        Assert.Equal(2, commands.WslCalls.Count);
+        var cleanup = commands.WslCalls[1];
+        Assert.StartsWith("rm -rf -- /tmp/openclaw-installer-", cleanup.Command);
+        Assert.Equal(TimeSpan.FromSeconds(15), cleanup.Timeout);
+        Assert.False(cleanup.InputViaStdin);
+        return cleanup;
     }
 
     [Fact]

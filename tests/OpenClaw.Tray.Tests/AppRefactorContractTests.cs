@@ -1378,6 +1378,22 @@ public sealed class AppRefactorContractTests
     }
 
     [Fact]
+    public void CapabilitiesPage_InstallerReviewUsesGeneratedExactCommands()
+    {
+        var root = TestRepositoryPaths.GetRepositoryRoot();
+        var xaml = File.ReadAllText(
+            Path.Combine(root, "src", "OpenClaw.SetupEngine.UI", "Pages", "CapabilitiesPage.xaml"));
+        var source = File.ReadAllText(
+            Path.Combine(root, "src", "OpenClaw.SetupEngine.UI", "Pages", "CapabilitiesPage.xaml.cs"));
+
+        Assert.Contains("x:Name=\"ExactCommandsText\"", xaml);
+        Assert.Contains("ExactCommandsText.Text = summary.ExactCommands", source);
+        Assert.DoesNotContain("test -s", xaml);
+        Assert.DoesNotContain("--retry", xaml);
+        Assert.DoesNotContain("| bash", xaml);
+    }
+
+    [Fact]
     public void CapabilitiesPage_PermissionProbeFaultsShowInlineWarning()
     {
         var root = TestRepositoryPaths.GetRepositoryRoot();
