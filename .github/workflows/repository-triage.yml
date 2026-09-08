@@ -36,7 +36,7 @@ jobs:
           persist-credentials: false
 
       - name: Run deterministic triage tests
-        run: node --test .github/scripts/repository-triage.test.cjs
+        run: node --test .github/scripts/repository-triage.test.cjs .github/extensions/openclaw-triage-dashboard/triage-state.test.mjs
 
       - name: Build triage report
         uses: actions/github-script@v9
@@ -81,7 +81,7 @@ jobs:
           persist-credentials: false
 
       - name: Run deterministic triage tests before mutation
-        run: node --test .github/scripts/repository-triage.test.cjs
+        run: node --test .github/scripts/repository-triage.test.cjs .github/extensions/openclaw-triage-dashboard/triage-state.test.mjs
 
       - name: Re-check and remove allowlisted expired labels
         uses: actions/github-script@v9

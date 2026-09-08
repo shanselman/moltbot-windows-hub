@@ -306,7 +306,9 @@ public sealed partial class SetupWindow : Window
         TimeSpan elapsed,
         string? logPath,
         string? errorMessage = null,
-        GatewayCompatibilityFailureKind? compatibilityFailure = null)
+        GatewayCompatibilityFailureKind? compatibilityFailure = null,
+        LocalAiFailureDetail? detail = null,
+        bool restartRequired = false)
     {
         var canRetryFallback =
             compatibilityFailure is { } failureKind &&
@@ -324,7 +326,11 @@ public sealed partial class SetupWindow : Window
                 CanRetryGatewayFallback: canRetryFallback,
                 GatewayFallbackVersion: canRetryFallback
                     ? GatewayReleasePolicy.FallbackVersion
-                    : null));
+                    : null,
+                Detail: detail)
+            {
+                RequiresRestart = restartRequired,
+            });
     }
 
     public bool TryRetryWithGatewayFallback(out string? error)
@@ -500,5 +506,9 @@ public sealed record CompletePageArgs(
     bool ShowStartupPreference = true,
     SetupReviewSummary? ReviewSummary = null,
     bool CanRetryGatewayFallback = false,
-    string? GatewayFallbackVersion = null);
+    string? GatewayFallbackVersion = null,
+    LocalAiFailureDetail? Detail = null)
+{
+    public bool RequiresRestart { get; init; }
+}
 public sealed record SetupCompletedEventArgs(bool EnableAutoStart);

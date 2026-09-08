@@ -673,7 +673,7 @@ public sealed class NodeService : IDisposable, IAsyncDisposable
                 $"(executor={executor.Name}; MXC availability probe deferred to first use; " +
                 $"sandboxEnabled={(_settings?.SystemRunSandboxEnabled ?? true)})");
         }
-        else if (peeked.HasAnyBackend)
+        else if (peeked.CanRunSystemRunSandbox)
         {
             _logger.Info(
                 $"[mxc] system.run runner = MxcCommandRunner " +
@@ -681,16 +681,16 @@ public sealed class NodeService : IDisposable, IAsyncDisposable
         }
         else
         {
-            // MXC unavailable on this host. The runner's top-level
+            // Supported BaseContainer process containment is unavailable. The runner's top-level
             // !_isSandboxAvailable() guard will either block or use the
             // compatibility host fallback, depending on settings. The executor is
             // constructed only to satisfy the constructor contract and is never
             // invoked.
-            var reason = string.Join("; ", peeked.UnsupportedReasons);
+            var reason = string.Join("; ", peeked.SystemRunSandboxUnsupportedReasons);
             var unavailableMode = (_settings?.SystemRunBlockHostFallbackWhenMxcUnavailable ?? false)
                 ? "commands will be blocked by strict fallback settings"
                 : "commands will run through host fallback";
-            _logger.Info($"[mxc] system.run runner = MxcCommandRunner (MXC unavailable, {unavailableMode}: {reason})");
+            _logger.Info($"[mxc] system.run runner = MxcCommandRunner (BaseContainer unavailable, {unavailableMode}: {reason})");
         }
 
         var settingsDirectory = SettingsManager.SettingsDirectoryPath;
@@ -702,7 +702,7 @@ public sealed class NodeService : IDisposable, IAsyncDisposable
             // Re-probe on demand when sandbox availability is checked: returns the
             // cached definitive verdict, or re-probes (single-flight) after a
             // transient error / a prior SandboxUnavailableException-driven invalidation.
-            () => GetOrProbeMxcAvailability().HasAnyBackend,
+            () => GetOrProbeMxcAvailability().CanRunSystemRunSandbox,
             invalidateAvailability: InvalidateMxcAvailability,
             _logger);
     }

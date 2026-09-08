@@ -32,7 +32,6 @@ public sealed class ChatComposerControllerTests
 
     private static ChatComposerInputs MakeInputs(long revision = 1, ChatThread? thread = null, string connectionState = "connected") =>
         new(
-            revision,
             connectionState,
             false,
             thread ?? MakeThread(),
@@ -42,7 +41,10 @@ public sealed class ChatComposerControllerTests
             false,
             System.Array.Empty<ChatQueuedMessage>(),
             null,
-            false);
+            false)
+        {
+            Revision = revision,
+        };
 
     private static (ChatComposerViewModel Vm, ChatComposerController Controller, FakeChatComposerRuntimePort Port, ChatComposerHostActions HostActions)
         MakeController(ChatComposerHostActions? hostActions = null, RecordingUiDispatcher? dispatcher = null)

@@ -28,6 +28,8 @@ namespace OpenClawTray.Chat;
 /// </summary>
 internal sealed record ReactorChatComposerViewProps(
     ChatComposerSession Session,
+    ChatComposerInputs Inputs,
+    ChatDataSnapshot InputSnapshot,
     Action OnSendRequested,
     bool IsCompact);
 
@@ -49,6 +51,7 @@ internal sealed class ReactorChatComposer : Component<ReactorChatComposerViewPro
         var props = Props;
         var vm = props.Session.ViewModel;
         var controller = props.Session.Controller;
+        var inputs = props.Inputs;
         var colorScheme = UseColorScheme();
 
         // The Reactor view subscribes to the view model exactly once per mount and
@@ -76,6 +79,8 @@ internal sealed class ReactorChatComposer : Component<ReactorChatComposerViewPro
         {
             void OnChanged(object? sender, PropertyChangedEventArgs args) => setRenderRevision(vm.RenderRevision);
             vm.PropertyChanged += OnChanged;
+            if (renderRevision != vm.RenderRevision)
+                setRenderRevision(vm.RenderRevision);
             return () =>
             {
                 vm.PropertyChanged -= OnChanged;
@@ -83,8 +88,11 @@ internal sealed class ReactorChatComposer : Component<ReactorChatComposerViewPro
             };
         }), Array.Empty<object>());
 
-        if (vm.Inputs is not { } inputs)
-            return Empty();
+        UseEffect((Func<Action>)(() =>
+        {
+            props.Session.ApplyInputs(inputs);
+            return static () => { };
+        }), props.InputSnapshot, inputs.CurrentThread);
 
         var text = vm.Draft;
         var isSending = vm.IsSending;

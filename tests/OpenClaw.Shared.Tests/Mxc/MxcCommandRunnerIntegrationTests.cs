@@ -27,11 +27,11 @@ public class MxcCommandRunnerIntegrationTests
         }
 
         var availability = MxcAvailability.Probe(NullLogger.Instance);
-        if (!availability.HasAnyBackend)
+        if (!availability.CanRunSystemRunSandbox)
         {
             Console.WriteLine(
-                $"[mxc-integration] SKIPPING: MXC not available. Reasons: " +
-                string.Join("; ", availability.UnsupportedReasons));
+                $"[mxc-integration] SKIPPING: MXC BaseContainer not available. Reasons: " +
+                string.Join("; ", availability.SystemRunSandboxUnsupportedReasons));
             return null;
         }
 

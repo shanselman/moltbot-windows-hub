@@ -1,3 +1,8 @@
+---
+name: winnode
+description: Invoke and troubleshoot OpenClaw Windows-node commands through the local winnode CLI and MCP endpoint, including command argument schemas and A2UI JSONL calls.
+---
+
 <!--
   REGENERATE-ME-WHEN-CAPABILITIES-CHANGE
 

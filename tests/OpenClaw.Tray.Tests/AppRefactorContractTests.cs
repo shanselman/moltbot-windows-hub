@@ -868,7 +868,7 @@ public sealed class AppRefactorContractTests
         };
         const string runtimeContractKey = "PermissionsPage_PatternsAreMatchedLeft.Text";
 
-        foreach (var locale in new[] { "fr-fr", "nl-nl", "zh-cn", "zh-tw" })
+        foreach (var locale in new[] { "fr-fr", "nl-nl", "zh-cn", "zh-tw", "pt-br" })
         {
             var localized = ReadReswValues(Path.Combine(stringsRoot, locale, "Resources.resw"));
             foreach (var key in localizedKeys)
@@ -1326,6 +1326,40 @@ public sealed class AppRefactorContractTests
     }
 
     [Fact]
+    public void CompletePage_OffersTypedRestartChoiceWithoutForcingApplicationsClosed()
+    {
+        var root = TestRepositoryPaths.GetRepositoryRoot();
+        var xaml = File.ReadAllText(Path.Combine(root, "src", "OpenClaw.SetupEngine.UI", "Pages", "CompletePage.xaml"));
+        var complete = File.ReadAllText(Path.Combine(root, "src", "OpenClaw.SetupEngine.UI", "Pages", "CompletePage.xaml.cs"));
+        var restartLauncher = File.ReadAllText(Path.Combine(root, "src", "OpenClaw.SetupEngine.UI", "WindowsRestartLauncher.cs"));
+        var progress = File.ReadAllText(Path.Combine(root, "src", "OpenClaw.SetupEngine.UI", "Pages", "ProgressPage.xaml.cs"));
+        var setupWindow = File.ReadAllText(Path.Combine(root, "src", "OpenClaw.SetupEngine.UI", "SetupWindow.xaml.cs"));
+        var deferRestart = ExtractMethod(complete, "RestartLaterButton_Click");
+
+        Assert.Contains("restartRequired: result.RequiresRestart", progress);
+        Assert.Contains("if (args.RequiresRestart)", complete);
+        Assert.Contains("OpenClaw needs to restart Windows to continue the installation. Would you like to restart now?", complete);
+        Assert.Contains("Content=\"Yes, restart now\"", xaml);
+        Assert.Contains("Content=\"No, I'm not ready yet\"", xaml);
+        Assert.Contains("Path.Combine(Environment.SystemDirectory, \"shutdown.exe\")", restartLauncher);
+        Assert.Contains("ArgumentList = { \"/r\", \"/t\", \"0\" }", restartLauncher);
+        Assert.DoesNotContain("\"/f\"", restartLauncher);
+        Assert.Contains("SetupWindow.Active?.Close()", deferRestart);
+        Assert.DoesNotContain("Process.", deferRestart);
+        var restartNow = ExtractMethod(complete, "RestartNowButton_Click");
+        var restartWindows = ExtractMethod(complete, "RestartWindowsAsync");
+        var restartError = ExtractMethod(complete, "ShowRestartError");
+        Assert.Contains("AsyncEventHandlerGuard.Run(", restartNow);
+        Assert.Contains("RestartWindowsAsync", restartNow);
+        Assert.Contains("ShowRestartError", restartNow);
+        Assert.Contains("await s_windowsRestartLauncher.RestartAsync()", restartWindows);
+        Assert.Contains("RestartNowButton.IsEnabled = true", restartError);
+        Assert.Contains("RestartLaterButton.IsEnabled = true", restartError);
+        Assert.Contains("public bool RequiresRestart { get; init; }", setupWindow);
+        Assert.DoesNotContain("LocalAiFailureDetail? Detail = null,\n    bool RequiresRestart", setupWindow.Replace("\r\n", "\n"));
+    }
+
+    [Fact]
     public void CapabilitiesPage_PersistsSelectedProfileIntoRuntimeNodeSettings()
     {
         var root = TestRepositoryPaths.GetRepositoryRoot();
@@ -1341,6 +1375,22 @@ public sealed class AppRefactorContractTests
         Assert.Contains("_config.UsesBundledDefaultConfig", source);
         Assert.Contains("_treatBundledAllOnAsPlaceholder ? 1 : 2", source);
         Assert.Contains("return -1", source);
+    }
+
+    [Fact]
+    public void CapabilitiesPage_InstallerReviewUsesGeneratedExactCommands()
+    {
+        var root = TestRepositoryPaths.GetRepositoryRoot();
+        var xaml = File.ReadAllText(
+            Path.Combine(root, "src", "OpenClaw.SetupEngine.UI", "Pages", "CapabilitiesPage.xaml"));
+        var source = File.ReadAllText(
+            Path.Combine(root, "src", "OpenClaw.SetupEngine.UI", "Pages", "CapabilitiesPage.xaml.cs"));
+
+        Assert.Contains("x:Name=\"ExactCommandsText\"", xaml);
+        Assert.Contains("ExactCommandsText.Text = summary.ExactCommands", source);
+        Assert.DoesNotContain("test -s", xaml);
+        Assert.DoesNotContain("--retry", xaml);
+        Assert.DoesNotContain("| bash", xaml);
     }
 
     [Fact]
@@ -1932,8 +1982,9 @@ public sealed class AppRefactorContractTests
             "UpdatePresetHighlight();",
             "UpdateSandboxStatusCard();",
             "UpdateControlsEnabledState();");
-        Assert.Contains("HasAnyBackend: false", definitiveUnavailable);
+        Assert.Contains("CanRunSystemRunSandbox: false", definitiveUnavailable);
         Assert.Contains("ProbeErrored: false", definitiveUnavailable);
+        Assert.Contains("ProbeSuppressedBySkuGate: false", definitiveUnavailable);
         AssertInOrder(
             normalize,
             "settings.SystemRunSandboxEnabled",
@@ -1942,6 +1993,19 @@ public sealed class AppRefactorContractTests
         Assert.Contains("settings.SystemRunSandboxEnabled = false", normalize);
         Assert.Contains("SandboxEnabledToggle.IsOn = false", normalize);
         Assert.Contains("Save();", normalize);
+    }
+
+    [Fact]
+    public void SandboxPage_SkuSuppressionIsNotClassifiedAsMissingComponents()
+    {
+        var source = ReadSandboxPageSource();
+        var actionBar = ExtractMethod(source, "UpdateUnavailableActionBar");
+
+        AssertInOrder(
+            actionBar,
+            "var isSetupIssue",
+            "!availability.ProbeSuppressedBySkuGate",
+            "!availability.IsWxcExecResolvable");
     }
 
     [Fact]
@@ -1961,7 +2025,7 @@ public sealed class AppRefactorContractTests
             "return;");
         Assert.Contains("SandboxEnabledToggle.IsOn = false", reject);
         Assert.Contains("Node Sandbox unavailable", reject);
-        Assert.Contains("usable MXC backend", reject);
+        Assert.Contains("MXC BaseContainer without host DACL augmentation", reject);
     }
 
     private static string ReadCoordinatorSource()

@@ -20,6 +20,7 @@ namespace OpenClawTray.Chat;
 public sealed class ChatComposerSession : IDisposable
 {
     private int _disposed;
+    private long _inputRevision;
 
     internal ChatComposerSession(
         ChatComposerViewModel viewModel,
@@ -37,8 +38,13 @@ public sealed class ChatComposerSession : IDisposable
 
     internal ChatComposerHostActions HostActions { get; }
 
-    /// <summary>Applies the root's latest immutable projection to the view model.</summary>
-    internal void ApplyInputs(ChatComposerInputs inputs) => ViewModel.ApplyInputs(inputs);
+    /// <summary>Applies the latest committed immutable projection with a
+    /// session-monotonic revision that survives composer view remounts.</summary>
+    internal void ApplyInputs(ChatComposerInputs inputs) =>
+        ViewModel.ApplyInputs(inputs with
+        {
+            Revision = Interlocked.Increment(ref _inputRevision),
+        });
 
     /// <summary>Disposes the controller then the view model exactly once. Safe to
     /// call multiple times; repeated calls are a no-op.</summary>

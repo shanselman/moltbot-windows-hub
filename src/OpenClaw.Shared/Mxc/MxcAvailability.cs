@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using System.Runtime.InteropServices;
 using System.Text;
 using System.Text.Json;
 
@@ -44,6 +45,7 @@ public sealed class MxcAvailability
     public bool IsIsolationSessionAvailable { get; }
     public bool IsWxcExecResolvable { get; }
     public string? WxcExecPath { get; }
+    public bool ProbeSuppressedBySkuGate { get; }
 
     /// <summary>
     /// True when the availability verdict came from a <em>probe error</em>
@@ -58,8 +60,8 @@ public sealed class MxcAvailability
     /// <summary>
     /// Isolation tier the probe selected for this host (e.g. <c>base-container</c>,
     /// <c>appcontainer-bfs</c>, <c>appcontainer-dacl</c>), or null when unsupported
-    /// / not probed. Informational; <see cref="IsDegradedContainment"/> is the
-    /// derived signal UX should react to.
+    /// / not probed. <see cref="CanRunSystemRunSandbox"/> is the narrower
+    /// OpenClaw process-containment admission signal.
     /// </summary>
     public string? IsolationTier { get; }
 
@@ -70,17 +72,56 @@ public sealed class MxcAvailability
     public bool NeedsDaclAugmentation { get; }
 
     /// <summary>
+    /// Operator-visible warnings emitted by <c>wxc-exec --probe</c>.
+    /// </summary>
+    public IReadOnlyList<string> Warnings { get; }
+
+    /// <summary>
+    /// True when this host can run OpenClaw <c>system.run</c> with MXC's
+    /// BaseContainer tier and no host-DACL augmentation.
+    /// </summary>
+    public bool CanRunSystemRunSandbox =>
+        IsAppContainerAvailable &&
+        IsWxcExecResolvable &&
+        string.Equals(
+            IsolationTier,
+            MxcIsolationTierPolicy.BaseContainer,
+            StringComparison.Ordinal) &&
+        !NeedsDaclAugmentation;
+
+    /// <summary>
     /// Human-readable list of reasons MXC may not be available. Empty when fully supported.
     /// Surface to UX so users know why the sandbox toggle is disabled.
     /// </summary>
     public IReadOnlyList<string> UnsupportedReasons { get; }
 
-    /// <summary>Tiers we consider full-strength containment. Anything else that
-    /// still contains (e.g. <c>appcontainer-dacl</c>, or an unrecognized future
-    /// tier string) is treated as degraded so UX can warn without dropping the
-    /// host all the way to uncontained.</summary>
-    private static readonly HashSet<string> FullStrengthTiers =
-        new(StringComparer.OrdinalIgnoreCase) { "base-container", "appcontainer-bfs" };
+    /// <summary>
+    /// Reasons OpenClaw cannot use this probe result for <c>system.run</c>.
+    /// General MXC or session-containment availability remains separate.
+    /// </summary>
+    public IReadOnlyList<string> SystemRunSandboxUnsupportedReasons
+    {
+        get
+        {
+            if (CanRunSystemRunSandbox)
+                return Array.Empty<string>();
+
+            if (UnsupportedReasons.Count > 0)
+                return UnsupportedReasons;
+
+            var tier = string.IsNullOrWhiteSpace(IsolationTier)
+                ? "no process-containment tier"
+                : IsolationTier;
+            var dacl = NeedsDaclAugmentation
+                ? " Host DACL augmentation is required."
+                : string.Empty;
+            return
+            [
+                $"OpenClaw Node Sandbox requires MXC BaseContainer without host DACL augmentation. " +
+                $"This PC reports {tier}.{dacl}",
+            ];
+        }
+    }
 
     /// <summary>True iff at least one MXC backend is supported AND
     /// <c>wxc-exec.exe</c> is resolvable. (Without wxc-exec the executor will refuse
@@ -88,18 +129,6 @@ public sealed class MxcAvailability
     public bool HasAnyBackend =>
         (IsAppContainerAvailable || IsIsolationSessionAvailable)
         && IsWxcExecResolvable;
-
-    /// <summary>
-    /// True when MXC is available but only via a weaker, last-resort isolation tier
-    /// (DACL augmentation, or a tier we don't recognize as full-strength). Still
-    /// contained — surface as a warning, not a block; refusing would drop the host
-    /// to fully uncontained execution, which is strictly worse.
-    /// </summary>
-    public bool IsDegradedContainment =>
-        HasAnyBackend
-        && (NeedsDaclAugmentation
-            || string.IsNullOrEmpty(IsolationTier)
-            || !FullStrengthTiers.Contains(IsolationTier));
 
     public MxcAvailability(
         bool isAppContainerAvailable,
@@ -109,7 +138,9 @@ public sealed class MxcAvailability
         IReadOnlyList<string> unsupportedReasons,
         bool probeErrored = false,
         string? isolationTier = null,
-        bool needsDaclAugmentation = false)
+        bool needsDaclAugmentation = false,
+        IReadOnlyList<string>? warnings = null,
+        bool probeSuppressedBySkuGate = false)
     {
         IsAppContainerAvailable = isAppContainerAvailable;
         IsIsolationSessionAvailable = isIsolationSessionAvailable;
@@ -119,6 +150,8 @@ public sealed class MxcAvailability
         ProbeErrored = probeErrored;
         IsolationTier = isolationTier;
         NeedsDaclAugmentation = needsDaclAugmentation;
+        Warnings = warnings ?? Array.Empty<string>();
+        ProbeSuppressedBySkuGate = probeSuppressedBySkuGate;
     }
 
     /// <summary>
@@ -137,20 +170,43 @@ public sealed class MxcAvailability
     /// </summary>
     internal static MxcAvailability Probe(
         IOpenClawLogger? logger,
-        Func<string, WxcProbeInvocation>? probeRunner)
+        Func<string, WxcProbeInvocation>? probeRunner,
+        Func<bool?>? windowsServerProvider = null,
+        Func<bool>? windowsProvider = null,
+        Func<(bool Resolvable, string? Path)>? wxcResolver = null)
     {
         var log = logger ?? NullLogger.Instance;
         var reasons = new List<string>();
 
-        if (!OperatingSystem.IsWindows())
+        if (!(windowsProvider?.Invoke() ?? OperatingSystem.IsWindows()))
         {
             reasons.Add("MXC requires Windows.");
             return new MxcAvailability(false, false, false, null, reasons);
         }
 
+        var isWindowsServer = (windowsServerProvider ?? DetectWindowsServerSku)();
+        if (isWindowsServer != false)
+        {
+            var reason = isWindowsServer == true
+                ? "Windows Server does not support OpenClaw MXC containment."
+                : "OpenClaw could not verify that this is a supported Windows client SKU.";
+            reasons.Add(reason);
+            log.Warn(
+                $"[mxc] availability: supported=false sku=" +
+                $"{(isWindowsServer == true ? "windows_server" : "unknown")} probe=skipped");
+            return new MxcAvailability(
+                false,
+                false,
+                false,
+                null,
+                reasons,
+                probeErrored: isWindowsServer is null,
+                probeSuppressedBySkuGate: true);
+        }
+
         // wxc-exec is the source of truth for host support, so resolve it first.
         // Without the binary we cannot probe and therefore report unavailable.
-        var (wxcResolvable, wxcPath) = ResolveWxcExec();
+        var (wxcResolvable, wxcPath) = (wxcResolver ?? ResolveWxcExec)();
         if (!wxcResolvable || string.IsNullOrEmpty(wxcPath))
         {
             reasons.Add($"wxc-exec.exe not found. Set {WxcExecOverrideEnvVar} or build the tray app to copy it into the output folder.");
@@ -200,7 +256,86 @@ public sealed class MxcAvailability
             reasons,
             probeErrored: probeErrored,
             isolationTier: probe.Tier,
-            needsDaclAugmentation: probe.NeedsDaclAugmentation);
+            needsDaclAugmentation: probe.NeedsDaclAugmentation,
+            warnings: probe.Warnings);
+    }
+
+    internal static bool? DetectWindowsServerSku()
+    {
+        try
+        {
+            // Managed equivalent of VersionHelpers.h IsWindowsServer(). A false
+            // workstation comparison with ERROR_OLD_WIN_VERSION means Server.
+            var versionInfo = new OsVersionInfoEx
+            {
+                OsVersionInfoSize = (uint)Marshal.SizeOf<OsVersionInfoEx>(),
+                ServicePack = string.Empty,
+                ProductType = NativeMethods.VerNtWorkstation,
+            };
+            var conditionMask = NativeMethods.VerSetConditionMask(
+                0,
+                NativeMethods.VerProductType,
+                NativeMethods.VerEqual);
+
+            if (NativeMethods.VerifyVersionInfo(
+                    ref versionInfo,
+                    NativeMethods.VerProductType,
+                    conditionMask))
+            {
+                return false;
+            }
+
+            return Marshal.GetLastWin32Error() == NativeMethods.ErrorOldWinVersion
+                ? true
+                : null;
+        }
+        catch (Exception ex) when (ex is DllNotFoundException
+            or EntryPointNotFoundException
+            or BadImageFormatException
+            or MarshalDirectiveException)
+        {
+            return null;
+        }
+    }
+
+    [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)]
+    private struct OsVersionInfoEx
+    {
+        public uint OsVersionInfoSize;
+        public uint MajorVersion;
+        public uint MinorVersion;
+        public uint BuildNumber;
+        public uint PlatformId;
+
+        [MarshalAs(UnmanagedType.ByValTStr, SizeConst = 128)]
+        public string? ServicePack;
+
+        public ushort ServicePackMajor;
+        public ushort ServicePackMinor;
+        public ushort SuiteMask;
+        public byte ProductType;
+        public byte Reserved;
+    }
+
+    private static class NativeMethods
+    {
+        internal const uint VerProductType = 0x00000080;
+        internal const byte VerEqual = 1;
+        internal const byte VerNtWorkstation = 1;
+        internal const int ErrorOldWinVersion = 1150;
+
+        [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
+        [return: MarshalAs(UnmanagedType.Bool)]
+        internal static extern bool VerifyVersionInfo(
+            ref OsVersionInfoEx versionInfo,
+            uint typeMask,
+            ulong conditionMask);
+
+        [DllImport("kernel32.dll")]
+        internal static extern ulong VerSetConditionMask(
+            ulong conditionMask,
+            uint typeMask,
+            byte condition);
     }
 
     /// <summary>
@@ -237,8 +372,18 @@ public sealed class MxcAvailability
         {
             using var doc = JsonDocument.Parse(stdout);
             var root = doc.RootElement;
+            if (root.ValueKind != JsonValueKind.Object)
+            {
+                return Error(
+                    "Could not determine MXC sandbox support (wxc-exec --probe returned a non-object JSON value).");
+            }
+
             var warnings = ReadWarnings(root);
 
+            // Explicit unsupported verdicts are already fail-closed and do not
+            // need tier metadata. Validate needsDaclAugmentation only before
+            // accepting a candidate supported result; otherwise an unsupported
+            // host would be re-probed indefinitely as a transient parse error.
             if (TryGetString(root, "error") is { } error)
             {
                 return Unsupported(
@@ -261,16 +406,21 @@ public sealed class MxcAvailability
                     $"Could not determine MXC sandbox support (wxc-exec --probe exited {exitCode}{(detail is null ? "" : $": {Summarize(detail)}")}).");
             }
 
-            if (root.ValueKind != JsonValueKind.Object
-                || !root.TryGetProperty("tier", out var tierEl)
+            if (!root.TryGetProperty("tier", out var tierEl)
                 || tierEl.ValueKind != JsonValueKind.String
                 || string.IsNullOrWhiteSpace(tierEl.GetString()))
             {
                 return Error("Could not determine MXC sandbox support (wxc-exec --probe did not report an isolation tier).");
             }
 
-            var needsDacl = root.TryGetProperty("needsDaclAugmentation", out var d)
-                && d.ValueKind == JsonValueKind.True;
+            if (!root.TryGetProperty("needsDaclAugmentation", out var d) ||
+                d.ValueKind is not (JsonValueKind.True or JsonValueKind.False))
+            {
+                return Error(
+                    "Could not determine MXC sandbox support (wxc-exec --probe did not report a boolean needsDaclAugmentation value).");
+            }
+
+            var needsDacl = d.ValueKind == JsonValueKind.True;
 
             return new MxcProbeResult(MxcProbeOutcome.Supported, tierEl.GetString(), needsDacl, warnings, null);
         }

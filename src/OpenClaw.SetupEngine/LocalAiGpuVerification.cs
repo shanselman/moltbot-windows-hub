@@ -1,6 +1,5 @@
 using System.Diagnostics;
 using System.Globalization;
-using System.Text;
 using System.Text.RegularExpressions;
 using OpenClaw.Connection.LocalAi;
 using OpenClaw.Shared.Inference;
@@ -36,7 +35,6 @@ internal interface ILocalAiGpuEvidenceProbe
 
 internal sealed partial class WindowsLocalAiGpuEvidenceProbe : ILocalAiGpuEvidenceProbe
 {
-    private const int MaximumLogBytes = 2 * 1024 * 1024;
     private readonly IHostHardwareProbe _hardwareProbe;
 
     public WindowsLocalAiGpuEvidenceProbe()
@@ -165,8 +163,8 @@ internal sealed partial class WindowsLocalAiGpuEvidenceProbe : ILocalAiGpuEviden
         do
         {
             cancellationToken.ThrowIfCancellationRequested();
-            string log = await ReadLogTailAsync(paths.StandardOutputLogPath, cancellationToken) + "\n" +
-                await ReadLogTailAsync(paths.StandardErrorLogPath, cancellationToken);
+            string log = await LocalAiLogTail.ReadCombinedTailAsync(
+                paths, LocalAiLogTail.GpuEvidenceTailBytes, cancellationToken);
             try
             {
                 return ParseGpuLoadEvidence(log);
@@ -179,27 +177,6 @@ internal sealed partial class WindowsLocalAiGpuEvidenceProbe : ILocalAiGpuEviden
         }
         while (DateTimeOffset.UtcNow < deadline);
         throw lastFailure ?? new InvalidDataException("llama-server GPU offload evidence was unavailable.");
-    }
-
-    private static async Task<string> ReadLogTailAsync(string path, CancellationToken cancellationToken)
-    {
-        if (!File.Exists(path))
-            return string.Empty;
-        await using var stream = new FileStream(
-            path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete,
-            16 * 1024, FileOptions.Asynchronous | FileOptions.SequentialScan);
-        long count = Math.Min(stream.Length, MaximumLogBytes);
-        stream.Seek(-count, SeekOrigin.End);
-        var bytes = new byte[checked((int)count)];
-        int read = 0;
-        while (read < bytes.Length)
-        {
-            int next = await stream.ReadAsync(bytes.AsMemory(read), cancellationToken);
-            if (next == 0)
-                break;
-            read += next;
-        }
-        return Encoding.UTF8.GetString(bytes, 0, read);
     }
 
     private static GpuInfo FindGpu(HostHardwareInfo hardware, string selectedGpuId) =>

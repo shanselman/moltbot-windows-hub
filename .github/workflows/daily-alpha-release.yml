@@ -1,0 +1,178 @@
+name: Daily Alpha Release
+
+on:
+  schedule:
+    - cron: '0 21 * * *'
+    - cron: '0 22 * * *'
+
+permissions:
+  actions: write
+  contents: write
+
+concurrency:
+  group: daily-alpha-release
+  cancel-in-progress: false
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Select Pacific 2:00 PM schedule
+        id: pacific_schedule
+        shell: bash
+        env:
+          SCHEDULE: ${{ github.event.schedule }}
+        run: |
+          set -euo pipefail
+
+          pacific_offset="$(TZ=America/Los_Angeles date +%z)"
+          case "$pacific_offset" in
+            -0700) expected_schedule='0 21 * * *' ;;
+            -0800) expected_schedule='0 22 * * *' ;;
+            *)
+              echo "::error::Unexpected America/Los_Angeles UTC offset $pacific_offset."
+              exit 1
+              ;;
+          esac
+
+          if [[ "$SCHEDULE" == "$expected_schedule" ]]; then
+            echo "run=true" >> "$GITHUB_OUTPUT"
+            echo "Running the Pacific 2:00 PM schedule ($expected_schedule)."
+          else
+            echo "run=false" >> "$GITHUB_OUTPUT"
+            echo "Skipping inactive Pacific schedule $SCHEDULE; expected $expected_schedule."
+          fi
+
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        if: steps.pacific_schedule.outputs.run == 'true'
+        with:
+          fetch-depth: 0
+          ref: ${{ github.event.repository.default_branch }}
+
+      - name: Find the previous published release
+        if: steps.pacific_schedule.outputs.run == 'true'
+        id: previous_release
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+
+          releases_json="$(
+            gh api --paginate "repos/${GITHUB_REPOSITORY}/releases?per_page=100" |
+              jq -s 'add'
+          )"
+          previous_tag="$(
+            jq -r '
+              map(select(.draft == false and .published_at != null))
+              | sort_by(.published_at)
+              | last
+              | .tag_name // empty
+            ' <<< "$releases_json"
+          )"
+          if [[ -z "$previous_tag" ]]; then
+            echo "::error::No previous published release was found."
+            exit 1
+          fi
+
+          current_sha="$(git rev-parse HEAD)"
+          published_head_tag="$(
+            while IFS= read -r release_tag; do
+              release_sha="$(git rev-list -n 1 "refs/tags/$release_tag" 2>/dev/null || true)"
+              if [[ "$release_sha" == "$current_sha" ]]; then
+                echo "$release_tag"
+                break
+              fi
+            done < <(
+              jq -r '
+                map(select(.draft == false and .published_at != null))
+                | .[].tag_name
+              ' <<< "$releases_json"
+            )
+          )"
+          head_non_alpha_tag="$(
+            git tag --points-at "$current_sha" --list 'v*' |
+              grep -Ev '^v[0-9]+\.[0-9]+\.[0-9]+-alpha\.[0-9]+$' |
+              head -n 1 || true
+          )"
+          echo "current_sha=$current_sha" >> "$GITHUB_OUTPUT"
+          if [[ -n "$published_head_tag" ]]; then
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+            echo "No changes since published release $published_head_tag; skipping today's alpha release."
+          elif [[ -n "$head_non_alpha_tag" ]]; then
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+            echo "Deferring alpha release because main already has unpublished non-alpha tag $head_non_alpha_tag."
+          else
+            echo "changed=true" >> "$GITHUB_OUTPUT"
+            echo "No published release points at $current_sha; changes found after $previous_tag."
+          fi
+
+      - name: Install GitVersion
+        if: steps.pacific_schedule.outputs.run == 'true' && steps.previous_release.outputs.changed == 'true'
+        uses: gittools/actions/gitversion/setup@7417b1089e2c7de93510f1901d656ddf60bb024f # v4.7.0
+        with:
+          versionSpec: '6.8.x'
+
+      - name: Determine alpha version
+        if: steps.pacific_schedule.outputs.run == 'true' && steps.previous_release.outputs.changed == 'true'
+        id: gitversion
+        uses: gittools/actions/gitversion/execute@7417b1089e2c7de93510f1901d656ddf60bb024f # v4.7.0
+
+      - name: Create or reuse alpha tag
+        if: steps.pacific_schedule.outputs.run == 'true' && steps.previous_release.outputs.changed == 'true'
+        id: alpha_tag
+        shell: bash
+        env:
+          CURRENT_SHA: ${{ steps.previous_release.outputs.current_sha }}
+          SEMVER: ${{ steps.gitversion.outputs.semVer }}
+        run: |
+          set -euo pipefail
+
+          if [[ ! "$SEMVER" =~ ^[0-9]+\.[0-9]+\.[0-9]+-alpha\.[0-9]+$ ]]; then
+            echo "::error::GitVersion produced '$SEMVER', not a canonical alpha version."
+            exit 1
+          fi
+
+          tag="v$SEMVER"
+          if git show-ref --verify --quiet "refs/tags/$tag"; then
+            tagged_sha="$(git rev-list -n 1 "$tag")"
+            if [[ "$tagged_sha" != "$CURRENT_SHA" ]]; then
+              echo "::error::Existing tag $tag points to $tagged_sha instead of $CURRENT_SHA."
+              exit 1
+            fi
+            echo "Reusing $tag at $CURRENT_SHA."
+          else
+            latest_alpha_tag="$(
+              git tag --merged HEAD --list 'v*-alpha.*' --sort=-v:refname |
+                grep -E '^v[0-9]+\.[0-9]+\.[0-9]+-alpha\.[0-9]+$' |
+                head -n 1 || true
+            )"
+            if [[ -n "$latest_alpha_tag" ]]; then
+              greatest_tag="$(
+                printf '%s\n%s\n' "$latest_alpha_tag" "$tag" |
+                  sort -V |
+                  tail -n 1
+              )"
+              if [[ "$greatest_tag" != "$tag" || "$tag" == "$latest_alpha_tag" ]]; then
+                echo "::error::GitVersion produced $tag, which is not newer than $latest_alpha_tag."
+                exit 1
+              fi
+            fi
+
+            git tag "$tag" "$CURRENT_SHA"
+            git push origin "refs/tags/$tag"
+            echo "Created $tag at $CURRENT_SHA."
+          fi
+
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+
+      - name: Dispatch validated release build
+        if: steps.pacific_schedule.outputs.run == 'true' && steps.previous_release.outputs.changed == 'true'
+        shell: bash
+        env:
+          ALPHA_TAG: ${{ steps.alpha_tag.outputs.tag }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          gh workflow run ci.yml --ref "$ALPHA_TAG"
+          echo "Dispatched the full validation and GitHub Release pipeline for $ALPHA_TAG."

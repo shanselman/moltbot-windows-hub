@@ -49,7 +49,7 @@ winnode --list-tools
 ```
 
 The live `tools/list` response is authoritative. The complete static command
-reference is `src\OpenClaw.WinNode.Cli\skill.md`, and
+reference is `.agents\skills\winnode\SKILL.md`, and
 `McpToolBridge.CommandDescriptions` is the canonical description source.
 
 ## Invoke through winnode
@@ -116,7 +116,7 @@ For a new or changed Windows node command:
 
 1. Register it through the shared `INodeCapability` path.
 2. Update `McpToolBridge.CommandDescriptions`.
-3. Update `src\OpenClaw.WinNode.Cli\skill.md`.
+3. Update `.agents\skills\winnode\SKILL.md`.
 4. Add capability, MCP bridge, and `winnode` tests.
 5. Prove `winnode --list-tools` and `winnode --command ...`.
 6. Prove the gateway path separately when gateway-mediated behavior changed.

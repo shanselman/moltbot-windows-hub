@@ -8,6 +8,7 @@ using OpenClaw.Shared;
 using OpenClaw.Shared.Inference;
 using OpenClaw.Shared.Inference.Catalog;
 using OpenClaw.SetupEngine.UI;
+using System.ComponentModel;
 using System.Diagnostics;
 
 namespace OpenClaw.SetupEngine.UI.Pages;
@@ -35,6 +36,8 @@ public sealed partial class CapabilitiesPage : Page
     private readonly LocalAiSetupAvailabilityCoordinator _localAiAvailability = new();
     private bool _treatBundledAllOnAsPlaceholder;
     private bool _forceLocalAiNetworkingConsent;
+    private CancellationTokenSource? _tailscaleStatusCancellation;
+    private int _tailscaleStatusGeneration;
     private int _step = 1;
 
     // Capability profiles preset only runtime-gated settings. Device info/status
@@ -120,6 +123,7 @@ public sealed partial class CapabilitiesPage : Page
     protected override void OnNavigatedFrom(NavigationEventArgs e)
     {
         _localAiAvailability.CancelCurrent();
+        CancelTailscaleStatusProbe();
         if (_setupWindow is not null)
         {
             _setupWindow.Activated -= SetupWindow_Activated;
@@ -826,36 +830,50 @@ public sealed partial class CapabilitiesPage : Page
 
     private void UpdateTailscaleOptions()
     {
+        CancelTailscaleStatusProbe();
         var enabled = TailscaleToggle.IsOn == true;
         TailscaleOptions.Visibility = enabled ? Visibility.Visible : Visibility.Collapsed;
         TailscaleAuthKeyBox.Visibility = enabled && TailscaleAuthModeSelector.SelectedIndex == 1
             ? Visibility.Visible
             : Visibility.Collapsed;
-        if (enabled)
-            _ = RefreshWindowsTailscaleStatusAsync();
+        if (!enabled)
+            return;
+
+        var cancellation = new CancellationTokenSource();
+        _tailscaleStatusCancellation = cancellation;
+        _ = RefreshWindowsTailscaleStatusAsync(
+            _tailscaleStatusGeneration,
+            cancellation);
     }
 
-    private async Task RefreshWindowsTailscaleStatusAsync()
+    private async Task RefreshWindowsTailscaleStatusAsync(
+        int generation,
+        CancellationTokenSource cancellation)
     {
         TailscaleStatusText.Text = "Checking Windows Tailscale…";
         try
         {
             var path = PreflightWindowsTailscaleStep.ResolveWindowsTailscaleCliPath();
-            var result = await Task.Run(() =>
+            var psi = new ProcessStartInfo
             {
-                var psi = new ProcessStartInfo(path, "status --json")
-                {
-                    RedirectStandardOutput = true,
-                    RedirectStandardError = true,
-                    UseShellExecute = false,
-                    CreateNoWindow = true,
-                };
-                using var process = Process.Start(psi);
-                if (process is null) return (ExitCode: -1, Output: string.Empty);
-                var output = process.StandardOutput.ReadToEnd();
-                process.WaitForExit(5000);
-                return (ExitCode: process.ExitCode, Output: output);
-            });
+                FileName = path,
+                RedirectStandardOutput = true,
+                RedirectStandardError = true,
+                UseShellExecute = false,
+                CreateNoWindow = true,
+            };
+            psi.ArgumentList.Add("status");
+            psi.ArgumentList.Add("--json");
+            psi.ArgumentList.Add("--peers=false");
+            var result = await Task.Run(
+                () => BoundedProcessOutput.ReadAsync(
+                    psi,
+                    BoundedProcessOutput.DefaultTimeoutMs,
+                    cancellation.Token),
+                cancellation.Token);
+            if (!IsCurrentTailscaleStatusProbe(generation, cancellation))
+                return;
+
             string? dnsName = null;
             string? tailnetDnsSuffix = null;
             if (result.ExitCode == 0 &&
@@ -874,8 +892,22 @@ public sealed partial class CapabilitiesPage : Page
                 ApplySetupReviewSummary(_config);
             }
         }
-        catch
+        catch (OperationCanceledException) when (cancellation.IsCancellationRequested)
         {
+        }
+        catch (Exception ex) when (
+            ex is Win32Exception or
+                IOException or
+                InvalidOperationException or
+                NotSupportedException or
+                AggregateException or
+                UnauthorizedAccessException)
+        {
+            if (!IsCurrentTailscaleStatusProbe(generation, cancellation))
+                return;
+
+            Trace.WriteLine(
+                $"CapabilitiesPage: Windows Tailscale status probe failed ({ex.GetType().Name}).");
             TailscaleStatusText.Text = "Windows Tailscale must be installed and signed in before setup can continue.";
             if (_config is not null && TailscaleToggle.IsOn == true)
             {
@@ -883,7 +915,28 @@ public sealed partial class CapabilitiesPage : Page
                 ApplySetupReviewSummary(_config);
             }
         }
+        finally
+        {
+            if (ReferenceEquals(_tailscaleStatusCancellation, cancellation))
+                _tailscaleStatusCancellation = null;
+            cancellation.Dispose();
+        }
     }
+
+    private void CancelTailscaleStatusProbe()
+    {
+        _tailscaleStatusGeneration++;
+        var cancellation = _tailscaleStatusCancellation;
+        _tailscaleStatusCancellation = null;
+        cancellation?.Cancel();
+    }
+
+    private bool IsCurrentTailscaleStatusProbe(
+        int generation,
+        CancellationTokenSource cancellation) =>
+        generation == _tailscaleStatusGeneration &&
+        ReferenceEquals(_tailscaleStatusCancellation, cancellation) &&
+        !cancellation.IsCancellationRequested;
 
     private string ProfileSummary()
     {

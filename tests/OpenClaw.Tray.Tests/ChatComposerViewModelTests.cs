@@ -36,7 +36,6 @@ public sealed class ChatComposerViewModelTests
         bool turnActive = false,
         ChatThread? thread = null) =>
         new(
-            revision,
             connectionState,
             turnActive,
             thread ?? MakeThread(),
@@ -46,7 +45,10 @@ public sealed class ChatComposerViewModelTests
             false,
             System.Array.Empty<ChatQueuedMessage>(),
             null,
-            false);
+            false)
+        {
+            Revision = revision,
+        };
 
     [Fact]
     public void SetDraft_UpdatesDraftAndBumpsRevision()
@@ -105,11 +107,81 @@ public sealed class ChatComposerViewModelTests
         var vm = new ChatComposerViewModel(new RecordingUiDispatcher(), initialSpeakerMuted: false);
         var newer = MakeInputs(revision: 5, thread: MakeThread("newer"));
         var stale = MakeInputs(revision: 3, thread: MakeThread("stale"));
+        var propertyChangedCount = 0;
+        vm.PropertyChanged += (_, _) => propertyChangedCount++;
 
         vm.ApplyInputs(newer);
+        var renderRevision = vm.RenderRevision;
         vm.ApplyInputs(stale);
 
         Assert.Equal("newer", vm.Inputs!.CurrentThread.Id);
+        Assert.Equal(renderRevision, vm.RenderRevision);
+        Assert.Equal(1, propertyChangedCount);
+    }
+
+    [Fact]
+    public void ApplyInputs_SemanticallyEquivalentProjection_DoesNotNotify()
+    {
+        var vm = new ChatComposerViewModel(new RecordingUiDispatcher(), initialSpeakerMuted: false);
+        var propertyChangedCount = 0;
+        vm.PropertyChanged += (_, _) => propertyChangedCount++;
+
+        vm.ApplyInputs(MakeInputs(revision: 1, thread: MakeThread("same")));
+        var renderRevision = vm.RenderRevision;
+        vm.ApplyInputs(MakeInputs(revision: 2, thread: MakeThread("same")));
+
+        Assert.Equal(1, propertyChangedCount);
+        Assert.Equal(renderRevision, vm.RenderRevision);
+        Assert.Equal(1, vm.Inputs!.Revision);
+    }
+
+    [Fact]
+    public void ApplyInputs_NewerEquivalentProjection_AdvancesStaleWatermark()
+    {
+        var vm = new ChatComposerViewModel(new RecordingUiDispatcher(), initialSpeakerMuted: false);
+        var propertyChangedCount = 0;
+        vm.PropertyChanged += (_, _) => propertyChangedCount++;
+
+        vm.ApplyInputs(MakeInputs(revision: 1, thread: MakeThread("current")));
+        vm.ApplyInputs(MakeInputs(revision: 3, thread: MakeThread("current")));
+        vm.ApplyInputs(MakeInputs(revision: 2, thread: MakeThread("stale")));
+
+        Assert.Equal("current", vm.Inputs!.CurrentThread.Id);
+        Assert.Equal(1, vm.RenderRevision);
+        Assert.Equal(1, propertyChangedCount);
+    }
+
+    [Fact]
+    public void ChatComposerInputs_ProjectionComparison_CoversEveryBehaviorField()
+    {
+        var baseline = MakeInputs(revision: 1);
+        var changes = new[]
+        {
+            baseline with { ConnectionState = "disconnected", Revision = 2 },
+            baseline with { TurnActive = true, Revision = 2 },
+            baseline with { CurrentThread = MakeThread("other"), Revision = 2 },
+            baseline with { AvailableChannels = new[] { MakeThread("other") }, Revision = 2 },
+            baseline with { AvailableModels = new[] { "model" }, Revision = 2 },
+            baseline with { ModelChoices = new[] { new ChatModelChoice("model", "Model") }, Revision = 2 },
+            baseline with { MessageOptionsDisabled = true, Revision = 2 },
+            baseline with
+            {
+                QueuedMessages = new[]
+                {
+                    new ChatQueuedMessage("message", "hello", System.DateTimeOffset.UnixEpoch, "nonce"),
+                },
+                Revision = 2,
+            },
+            baseline with
+            {
+                AvailableCommands = new[] { new GatewayCommand { Name = "status" } },
+                Revision = 2,
+            },
+            baseline with { CommandsSupported = true, Revision = 2 },
+        };
+
+        Assert.True(baseline.HasSameProjection(baseline with { Revision = 2 }));
+        Assert.All(changes, changed => Assert.False(baseline.HasSameProjection(changed)));
     }
 
     [Fact]

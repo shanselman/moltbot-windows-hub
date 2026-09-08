@@ -22,6 +22,12 @@ public sealed class ChatRootComposerClosureTests
             "OpenClaw.Tray.WinUI",
             "Chat",
             "OpenClawReactorChatRoot.cs"));
+        var composer = File.ReadAllText(Path.Combine(
+            TestRepositoryPaths.GetRepositoryRoot(),
+            "src",
+            "OpenClaw.Tray.WinUI",
+            "Chat",
+            "ReactorChatComposer.cs"));
 
         // Composer draft/attachment/slash/voice/send state must not come back as
         // Reactor UseState/refs on the root.
@@ -48,7 +54,14 @@ public sealed class ChatRootComposerClosureTests
         // Allowed residue: the root still owns provider subscription, selection,
         // timeline projection, and constructs the composer's immutable inputs.
         Assert.Contains("nativeProvider.LoadHistoryAsync", root);
-        Assert.Contains("props.ComposerSession.ApplyInputs(new ChatComposerInputs(", root);
+        Assert.Contains("var composerInputs = new ChatComposerInputs(", root);
+        Assert.DoesNotContain("ComposerSession.ApplyInputs", root);
         Assert.Contains("props.ComposerSession.Controller.BindSelectionHandoff(SelectThread)", root);
+
+        // Applying those inputs is a post-commit view effect keyed by stable source
+        // values. It must never move back into the root's Render path.
+        Assert.Contains("props.Session.ApplyInputs(inputs);", composer);
+        Assert.Contains("}), props.InputSnapshot, inputs.CurrentThread);", composer);
+        Assert.DoesNotContain("if (vm.Inputs is not { } inputs)", composer);
     }
 }

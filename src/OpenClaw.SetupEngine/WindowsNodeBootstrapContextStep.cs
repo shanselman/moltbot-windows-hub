@@ -178,13 +178,15 @@ public sealed class WindowsNodeBootstrapContextStep : SetupStep
         var distro = ctx.DistroName;
         if (string.IsNullOrWhiteSpace(distro))
             return null;
-        var registered = await ctx.Commands.RunAsync(
+        var registered = await ctx.Commands.RunAsyncAllowingInheritedPipeHandleEscape(
             WslConstants.WslExePath,
             ["--list", "--quiet"],
             TimeSpan.FromSeconds(15),
             ct: ct);
         if (registered.ExitCode != 0)
         {
+            if (IsWslUnavailableResult(registered) || IsMissingDistroResult(registered))
+                return null;
             throw new InvalidOperationException(
                 "Could not inspect WSL distributions while cleaning legacy Windows node context: " +
                 FirstNonEmpty(registered.Stderr, registered.Stdout));
@@ -277,9 +279,20 @@ public sealed class WindowsNodeBootstrapContextStep : SetupStep
             return false;
 
         var output = string.Concat(result.Stderr, '\n', result.Stdout);
+
         return output.Contains("There is no distribution with the supplied name", StringComparison.OrdinalIgnoreCase) ||
                output.Contains("WSL_E_DISTRO_NOT_FOUND", StringComparison.OrdinalIgnoreCase);
     }
+
+    // A conclusive "WSL is unavailable" answer still proves no app-owned distro can
+    // hold legacy Windows node context, so uninstall has nothing to clean. Only an
+    // ambiguous inspection failure (timeout, access denied, empty output) stays an
+    // explicit error. Matches ExistingConfigDetector.InterpretDistroList and the
+    // lenient uninstall behavior in StartGatewayStep and CleanupStaleDistroStep.
+    internal static bool IsWslUnavailableResult(CommandResult result)
+        => result.ExitCode != 0
+            && (WslViabilityInspector.LooksUnavailable(result)
+                || result.Stderr.Contains("Failed to start process", StringComparison.Ordinal));
 
     internal static async Task<string?> ResolveLinuxHomeAsync(SetupContext ctx, string distro, string user, CancellationToken ct)
     {

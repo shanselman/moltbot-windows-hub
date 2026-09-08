@@ -84,6 +84,25 @@ and artifact naming. It then passes that resolved value to product builds as
 one exact identity. CI must not pass a competing hardcoded version literal that
 could hide drift.
 
+The daily alpha workflow runs at 2:00 PM in `America/Los_Angeles`. GitHub
+Actions schedules use UTC, so the workflow registers both possible UTC hours
+and runs only the one matching the current Pacific UTC offset. It compares the
+default-branch head with all published GitHub Releases and does nothing when
+one already points at that commit. It defers while an unpublished non-alpha tag
+points at the head. When changes exist, it uses the same GitVersion 6.8.x line
+to create the next canonical `vX.Y.Z-alpha.N` tag and refuses to create a tag
+that is not strictly newer than the newest reachable canonical alpha tag. It
+then explicitly dispatches the Build and Test workflow at that tag. The
+explicit dispatch is required because a tag pushed with the workflow's
+`GITHUB_TOKEN` does not itself start another workflow. The normal test, E2E,
+build, signing, and release jobs remain the publication gate; the alpha GitHub
+Release is created only when all validation succeeds. After each successful
+alpha publication, CI deletes canonical alpha release objects and their assets
+once they are older than 30 days. It intentionally retains every Git tag so
+GitVersion can continue deriving the next monotonic alpha version from complete
+tag history. If the new release is not yet visible through the Releases API,
+cleanup defers until the next alpha publication.
+
 GitVersion interprets `X.Y.Z-N` as a prerelease, so numeric stable corrections
 use one narrow exception: the release-version step recognizes the correction
 tag, validates its stable ordering with

@@ -8,7 +8,8 @@ description: "Run complete OpenClaw Windows Node issue and PR triage, including 
 Run a complete maintainer triage of `openclaw/openclaw-windows-node`. Read every
 open issue and pull request, identify safe landing lanes, schedule OpenClaw's
 Windows proof pools, and produce the same evidence-backed Markdown report used
-for the August 27 and September 1 maintainer sweeps.
+for the August 27 and September 1 maintainer sweeps. Open the interactive
+OpenClaw triage canvas when the user requests it as an additional handoff.
 
 This skill is repository-specific. If the current repository is not
 `openclaw/openclaw-windows-node`, stop and say that this skill applies only to
@@ -39,7 +40,9 @@ triage-YYYY-MM-DD\pr-<number>.patch
 Keep raw JSON when practical. Do not add triage artifacts to the repository.
 Use `templates\global-triage-report.md` as the report skeleton and
 `examples\global-triage-2026-08-27.md` plus
-`examples\global-triage-2026-09-01.md` as quality references.
+`examples\global-triage-2026-09-01.md` as quality references. Use
+`templates\triage-state.template.json` only when producing the optional
+interactive dashboard.
 
 ## Ground rules
 
@@ -64,6 +67,11 @@ Use `templates\global-triage-report.md` as the report skeleton and
 8. **Do not revive stale architecture wholesale.** Transplant the smallest
    useful fix onto current owners rather than rebasing obsolete god-object or
    pre-ledger branches.
+9. **Canvas actions are requests, not mutations.** The dashboard may refresh
+   read-only GitHub state and route a guarded action request to one dedicated
+   child project session per item. Reuse that session for later actions on the
+   same PR or issue. The dashboard must never merge, close, label, comment, push,
+   rerun CI, or delete a session directly.
 
 ## Decision vocabulary
 
@@ -93,7 +101,7 @@ Read:
 Confirm the deterministic triage implementation is healthy:
 
 ```powershell
-node --test .github\scripts\repository-triage.test.cjs
+node --test .github\scripts\repository-triage.test.cjs .github\extensions\openclaw-triage-dashboard\triage-state.test.mjs
 ```
 
 Prefer the latest successful scheduled `Repository Triage Report` artifact as
@@ -320,6 +328,71 @@ Recommendation confidence | Effort | Risk | Owner / next action
 Every row needs a concrete owner and next action. Cover all open items, including
 low-priority and declined work.
 
+## 10. Optionally publish the interactive dashboard
+
+Only produce the interactive canvas when the user requests it in addition to the
+static Markdown report. Create `global-triage-YYYY-MM-DD.json` as its session
+state artifact.
+
+Write `global-triage-YYYY-MM-DD.json` using
+`templates\triage-state.template.json`. Every item needs:
+
+- its PR or issue number, title, URL, decision, both confidence values, effort,
+  risk, owner, and concrete next action
+- exact reviewed head SHA for PRs
+- expected required check names for PRs; issues must use an empty `expectedChecks`
+  array
+- review status and proof status
+- every applicable proof-pool ID, validated against
+  `.github\proof-pools.json`
+- dependencies on other items in the same triage
+
+Populate `report` so the dashboard tabs preserve the report template's
+decision context:
+
+- `changes`
+- `ownership`
+- `reviews`
+- `automation`
+
+Use `plan` as the single ordered execution plan. Set each step's optional
+`horizon` to `today` or `later`; omitted values default to `today`. A plan step
+may declare `dependsOn` with other plan-step IDs and `gates` that point to an
+item's `inventory`, `review`, `checks`, `proof`, or `landing` stage. Dependencies
+must form an acyclic graph. The `landing` stage applies only to pull requests.
+The canvas derives each gated step's live status
+whenever GitHub checks change. It renders connected steps as dependency lanes
+and independent steps as parallel work. Plan order breaks ties within a lane.
+Do not repeat plan steps in `report`.
+
+Then:
+
+1. Call `list_canvas_capabilities` for `openclaw-triage-dashboard`.
+2. Open `openclaw-triage-dashboard` with the JSON object as input and use a
+   stable instance ID such as `global-triage-YYYY-MM-DD`.
+3. Reopen that same instance ID whenever triage decisions, proof status, review
+   status, expected checks, or plan steps change.
+4. Leave the canvas open. It refreshes GitHub PR and issue state at the declared
+   30-to-300-second interval and pushes updates to the panel.
+
+The canvas exposes:
+
+- search and readiness filters
+- live check totals and missing expected jobs
+- item stages and plan-gate status
+- proof, review, exact-head, draft, and mergeability gates
+- `Request next step`, which creates or reuses the item's child project session
+  and sends a read-only-by-default request there
+- `Prepare merge`, enabled only for an exact-head `TAKE` at 90% or higher with
+  complete review and proof, clean merge state, and all expected checks present
+  and passing
+
+`Prepare merge` must only ask the item's child session to re-fetch evidence and
+request explicit confirmation. Every item action uses the same routing rule:
+find the exact `Triage PR #<number>` or `Triage Issue #<number>` session and
+append to it, or create it once when absent. The extension never calls a GitHub
+mutation command.
+
 ## Completion bar
 
 Do not call the triage complete until:
@@ -333,3 +406,12 @@ Do not call the triage complete until:
 - a numbered day plan identifies safe parallelism and dependency order
 - release contents and exclusions are explicit when a release is discussed
 - the Markdown report, CSV summaries, and reviewed PR patches are saved
+
+When the optional dashboard was requested, also require:
+
+- the versioned triage-state JSON is saved
+- the dashboard opens successfully and its fetched item count matches the state
+  artifact
+- every plan gate references an item and stage in the state artifact
+- item actions remain child-session-routed and merge requests stay
+  confirmation-gated

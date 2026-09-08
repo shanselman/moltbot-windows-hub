@@ -7340,6 +7340,404 @@ public class OpenClawChatDataProviderTests
     }
 
     [Fact]
+    public async Task LoadHistoryAsync_KeyedCallAndFlattenedResult_AvoidIdentityCollision()
+    {
+        using var tempDir = new TempDirectory();
+        var cachePath = Path.Combine(
+            tempDir.DirectoryPath,
+            "tool-metadata.json");
+        File.WriteAllText(
+            cachePath,
+            JsonSerializer.Serialize(
+                new Dictionary<string, List<ChatMetadataStore.CachedToolMeta>>
+                {
+                    ["session-1"] =
+                    [
+                        new()
+                        {
+                            Ts = 100,
+                            ToolName = "Bash",
+                            Label = "cached flattened command",
+                            ToolCallId = "unverified-flat-id",
+                            RunId = "unverified-flat-run",
+                            ToolArgs = new JsonObject
+                            {
+                                ["command"] = "echo flattened",
+                            },
+                            IdentityStrength =
+                                ChatToolIdentityStrength.Specific,
+                        },
+                        new()
+                        {
+                            Ts = 200,
+                            ToolName = "Exec",
+                            Label = "cached structured command",
+                            ToolCallId = "history-tool-0",
+                            IdentityStrength =
+                                ChatToolIdentityStrength.Specific,
+                        },
+                    ],
+                }));
+        var (bridge, provider, snapshots, _) = CreateProvider(
+            [MainSession()],
+            toolMetaCachePath: cachePath);
+        bridge.HistoryBehavior = _ => Task.FromResult(new ChatHistoryInfo
+        {
+            SessionKey = "main",
+            SessionId = "session-1",
+            Messages =
+            [
+                new ChatMessageInfo
+                {
+                    Role = "assistant",
+                    Ts = 200,
+                    ToolContent =
+                    [
+                        new ChatToolContentInfo
+                        {
+                            Kind = ChatToolContentKind.Call,
+                            CallId = "history-tool-0",
+                            ToolName = "Exec",
+                        },
+                    ],
+                },
+                new ChatMessageInfo
+                {
+                    Role = "toolresult",
+                    Text = "flattened output",
+                    Ts = 300,
+                },
+            ],
+        });
+
+        await provider.LoadHistoryAsync("main");
+
+        Assert.Collection(
+            snapshots[^1].Timelines["main"].Entries,
+            structured =>
+            {
+                Assert.Equal("history-tool-0", structured.ToolCallId);
+                Assert.Equal("Exec", structured.ToolName);
+                Assert.Equal(
+                    ChatToolCallStatus.Interrupted,
+                    structured.ToolResult);
+                Assert.Null(structured.ToolOutput);
+            },
+            flattened =>
+            {
+                Assert.Equal("history-tool-1", flattened.ToolCallId);
+                Assert.NotEqual(
+                    "unverified-flat-id",
+                    flattened.ToolCallId);
+                Assert.Null(flattened.ToolRunId);
+                Assert.Equal("Bash", flattened.ToolName);
+                Assert.Equal(
+                    "echo flattened",
+                    flattened.ToolArgs?["command"]?.GetValue<string>());
+                Assert.Equal("flattened output", flattened.ToolOutput);
+                Assert.Equal(ChatToolCallStatus.Success, flattened.ToolResult);
+            });
+    }
+
+    [Fact]
+    public async Task LoadHistoryAsync_VerifiedIdMissStopsPositionalEnrichment()
+    {
+        using var tempDir = new TempDirectory();
+        var cachePath = Path.Combine(
+            tempDir.DirectoryPath,
+            "tool-metadata.json");
+        File.WriteAllText(
+            cachePath,
+            JsonSerializer.Serialize(
+                new Dictionary<string, List<ChatMetadataStore.CachedToolMeta>>
+                {
+                    ["session-1"] =
+                    [
+                        new()
+                        {
+                            Ts = 100,
+                            ToolName = "Bash",
+                            Label = "stale positional command",
+                            ToolArgs = new JsonObject
+                            {
+                                ["command"] = "stale command",
+                            },
+                            IdentityStrength =
+                                ChatToolIdentityStrength.Specific,
+                        },
+                        new()
+                        {
+                            Ts = 200,
+                            ToolName = "Read",
+                            ToolCallId = "call-b",
+                            IdentityStrength =
+                                ChatToolIdentityStrength.Specific,
+                        },
+                    ],
+                }));
+        var (bridge, provider, snapshots, _) = CreateProvider(
+            [MainSession()],
+            toolMetaCachePath: cachePath);
+        bridge.HistoryBehavior = _ => Task.FromResult(new ChatHistoryInfo
+        {
+            SessionKey = "main",
+            SessionId = "session-1",
+            Messages =
+            [
+                new ChatMessageInfo
+                {
+                    Role = "assistant",
+                    Ts = 100,
+                    ToolContent =
+                    [
+                        new ChatToolContentInfo
+                        {
+                            Kind = ChatToolContentKind.Call,
+                            CallId = "call-a",
+                            ToolName = "Exec",
+                        },
+                    ],
+                },
+                new ChatMessageInfo
+                {
+                    Role = "assistant",
+                    Ts = 200,
+                    ToolContent =
+                    [
+                        new ChatToolContentInfo
+                        {
+                            Kind = ChatToolContentKind.Call,
+                            CallId = "call-b",
+                            ToolName = "Read",
+                        },
+                    ],
+                },
+                new ChatMessageInfo
+                {
+                    Role = "toolresult",
+                    Text = "unrelated flattened output",
+                    Ts = 300,
+                },
+            ],
+        });
+
+        await provider.LoadHistoryAsync("main");
+
+        var flattened = Assert.Single(
+            snapshots[^1].Timelines["main"].Entries,
+            entry => entry.ToolOutput == "unrelated flattened output");
+        Assert.NotEqual("Bash", flattened.ToolName);
+        Assert.NotEqual(
+            "stale positional command",
+            flattened.Text);
+        Assert.Null(flattened.ToolArgs);
+        Assert.Equal("history-tool-0", flattened.ToolCallId);
+    }
+
+    [Fact]
+    public async Task LoadHistoryAsync_PairedDuplicateResultsKeepPositionalEnrichment()
+    {
+        using var tempDir = new TempDirectory();
+        var cachePath = Path.Combine(
+            tempDir.DirectoryPath,
+            "tool-metadata.json");
+        File.WriteAllText(
+            cachePath,
+            JsonSerializer.Serialize(
+                new Dictionary<string, List<ChatMetadataStore.CachedToolMeta>>
+                {
+                    ["session-1"] =
+                    [
+                        new()
+                        {
+                            Ts = 100,
+                            ToolName = "Read",
+                            ToolCallId = "call-x",
+                        },
+                        new()
+                        {
+                            Ts = 250,
+                            ToolName = "Bash",
+                            Label = "flattened command",
+                            ToolArgs = new JsonObject
+                            {
+                                ["command"] = "echo flattened",
+                            },
+                        },
+                    ],
+                }));
+        var (bridge, provider, snapshots, _) = CreateProvider(
+            [MainSession()],
+            toolMetaCachePath: cachePath);
+        bridge.HistoryBehavior = _ => Task.FromResult(new ChatHistoryInfo
+        {
+            SessionKey = "main",
+            SessionId = "session-1",
+            Messages =
+            [
+                new ChatMessageInfo
+                {
+                    Role = "assistant",
+                    Ts = 100,
+                    ToolContent =
+                    [
+                        new ChatToolContentInfo
+                        {
+                            Kind = ChatToolContentKind.Call,
+                            CallId = "call-x",
+                            ToolName = "Read",
+                        },
+                    ],
+                },
+                new ChatMessageInfo
+                {
+                    Role = "developer",
+                    Text = "turn boundary",
+                    Ts = 150,
+                },
+                new ChatMessageInfo
+                {
+                    Role = "toolresult",
+                    Ts = 200,
+                    ToolContent =
+                    [
+                        new ChatToolContentInfo
+                        {
+                            Kind = ChatToolContentKind.Result,
+                            CallId = "call-x",
+                            ToolName = "Read",
+                            Text = "read output",
+                        },
+                        new ChatToolContentInfo
+                        {
+                            Kind = ChatToolContentKind.Result,
+                            CallId = "call-x",
+                            ToolName = "Read",
+                            Text = "more read output",
+                        },
+                    ],
+                },
+                new ChatMessageInfo
+                {
+                    Role = "toolresult",
+                    Text = "flattened output",
+                    Ts = 300,
+                },
+            ],
+        });
+
+        await provider.LoadHistoryAsync("main");
+
+        var flattened = Assert.Single(
+            snapshots[^1].Timelines["main"].Entries,
+            entry => entry.ToolOutput == "flattened output");
+        Assert.Equal("Bash", flattened.ToolName);
+        Assert.Equal("flattened command", flattened.Text);
+        Assert.Equal(
+            "echo flattened",
+            flattened.ToolArgs?["command"]?.GetValue<string>());
+    }
+
+    [Fact]
+    public async Task LoadHistoryAsync_SyntheticToolIdsSkipReservedStructuredIds()
+    {
+        var (bridge, provider, snapshots, _) =
+            CreateProvider([MainSession()]);
+        bridge.HistoryBehavior = _ => Task.FromResult(new ChatHistoryInfo
+        {
+            SessionKey = "main",
+            Messages =
+            [
+                new ChatMessageInfo
+                {
+                    Role = "assistant",
+                    Ts = 100,
+                    ToolContent =
+                    [
+                        new ChatToolContentInfo
+                        {
+                            Kind = ChatToolContentKind.Call,
+                            CallId = "history-tool-0",
+                            ToolName = "Exec",
+                        },
+                        new ChatToolContentInfo
+                        {
+                            Kind = ChatToolContentKind.Call,
+                            CallId = "history-tool-2",
+                            ToolName = "Read",
+                        },
+                    ],
+                },
+                new ChatMessageInfo
+                {
+                    Role = "toolresult",
+                    Text = "first flattened",
+                    Ts = 200,
+                },
+                new ChatMessageInfo
+                {
+                    Role = "toolresult",
+                    Text = "second flattened",
+                    Ts = 300,
+                },
+            ],
+        });
+
+        await provider.LoadHistoryAsync("main");
+
+        var flattened = snapshots[^1].Timelines["main"].Entries
+            .Where(entry => entry.ToolOutput is not null)
+            .ToArray();
+        Assert.Equal(
+            ["history-tool-1", "history-tool-3"],
+            flattened.Select(entry => entry.ToolCallId));
+        Assert.Equal(
+            ["first flattened", "second flattened"],
+            flattened.Select(entry => entry.ToolOutput));
+    }
+
+    [Fact]
+    public async Task AccessibilityHistoryCollisionFixture_UsesCurrentHistoryOwners()
+    {
+        using var tempDir = new TempDirectory();
+        var (provider, bridge) =
+            AccessibilityHistoryCollisionFixture.CreateForTesting(
+                tempDir.DirectoryPath,
+                name => name switch
+                {
+                    "OPENCLAW_ACCESSIBILITY_TEST_CHAT" => "1",
+                    "OPENCLAW_ACCESSIBILITY_TEST_CHAT_FIXTURE" =>
+                        AccessibilityHistoryCollisionFixture.FixtureName,
+                    "OPENCLAW_TRAY_DATA_DIR" => tempDir.DirectoryPath,
+                    _ => null,
+                });
+        await using var providerScope = provider;
+
+        var snapshot = await provider.LoadAsync();
+
+        Assert.Equal(1, bridge.HistoryRequestCount);
+        Assert.Collection(
+            snapshot.Timelines[
+                AccessibilityHistoryCollisionFixture.ThreadId].Entries,
+            structured =>
+            {
+                Assert.Equal("history-tool-0", structured.ToolCallId);
+                Assert.Equal("Exec", structured.ToolName);
+                Assert.Equal(
+                    ChatToolCallStatus.Interrupted,
+                    structured.ToolResult);
+            },
+            flattened =>
+            {
+                Assert.Equal("history-tool-1", flattened.ToolCallId);
+                Assert.Equal("Bash", flattened.ToolName);
+                Assert.Equal(
+                    "flattened output owned by history-tool-1",
+                    flattened.ToolOutput);
+            });
+    }
+
+    [Fact]
     public async Task LoadHistoryAsync_StringEncodedToolArguments_PreservesSafeInput()
     {
         var (bridge, provider, snapshots, _) = CreateProvider(new[] { MainSession() });
