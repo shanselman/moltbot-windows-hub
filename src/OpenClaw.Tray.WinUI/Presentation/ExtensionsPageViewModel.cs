@@ -26,10 +26,14 @@ internal sealed record SkillListItemPresentation(
     string? UpdateReference,
     string? SecurityLabel,
     string? SafeSkillUrl,
-    string? SafeSecurityAuditUrl)
+    string? SafeSecurityAuditUrl,
+    string AgentId,
+    long ConnectionEpoch,
+    IOperatorGatewayClient ConnectionClient)
 {
     public bool HasSkillUrl => SafeSkillUrl is not null;
     public bool HasSecurityAuditUrl => SafeSecurityAuditUrl is not null;
+    public override string ToString() => Name;
 }
 
 internal sealed record SkillSearchItemPresentation(
@@ -37,11 +41,19 @@ internal sealed record SkillSearchItemPresentation(
     string Name,
     string Summary,
     string VersionLabel,
+    string? RequestedVersion,
     string TrustLabel,
+    string? TrustState,
     string? SafeInstallReference,
     bool InstallOnly,
     bool CanReview,
-    bool CanInstall);
+    bool CanInstall,
+    string AgentId,
+    long ConnectionEpoch,
+    IOperatorGatewayClient ConnectionClient)
+{
+    public override string ToString() => Name;
+}
 
 internal sealed record SkillReviewPresentation(
     SkillSearchItemPresentation Item,
@@ -49,6 +61,11 @@ internal sealed record SkillReviewPresentation(
     string Summary,
     string Version,
     string Metadata,
+    string InstallReference,
+    string? RequestedVersion,
+    string AgentId,
+    long ConnectionEpoch,
+    IOperatorGatewayClient ConnectionClient,
     bool RequiresUnscannedConfirmation);
 
 internal sealed record SkillActionOutcome(
@@ -66,9 +83,13 @@ internal sealed partial class ExtensionsPageViewModel : INavigationAware, IDispo
     private readonly IExtensionsRuntimeSource _runtime;
     private readonly IUiDispatcher _dispatcher;
     private IReadOnlyList<SkillStatusEntry> _skillSnapshot = [];
-    private IReadOnlyDictionary<string, SkillSecurityVerdict> _securityBySkillKey =
-        new Dictionary<string, SkillSecurityVerdict>(StringComparer.OrdinalIgnoreCase);
+    private IReadOnlyList<SkillSecurityVerdict> _securityVerdicts = [];
     private long _loadGeneration;
+    private long _skillSearchGeneration;
+    private long _skillReviewGeneration;
+    private IOperatorGatewayClient? _skillSnapshotClient;
+    private long _skillSnapshotEpoch;
+    private string _skillSnapshotAgentId = "main";
     private bool _disposed;
     private bool _active;
     private IOperatorGatewayClient? _subscribedClient;
@@ -84,6 +105,7 @@ internal sealed partial class ExtensionsPageViewModel : INavigationAware, IDispo
     private bool _canManageExtensions;
     private string? _statusMessage;
     private string? _errorMessage;
+    private long _connectionScopeVersion;
 
     public ExtensionsPageViewModel(IExtensionsRuntimeSource runtime, IUiDispatcher dispatcher)
     {
@@ -178,6 +200,12 @@ internal sealed partial class ExtensionsPageViewModel : INavigationAware, IDispo
         private set => SetField(ref _errorMessage, value);
     }
 
+    public long ConnectionScopeVersion
+    {
+        get => _connectionScopeVersion;
+        private set => SetField(ref _connectionScopeVersion, value);
+    }
+
     public string SkillCountText => _runtime.FormatText(
         "ExtensionsPage_SkillsCountFormat",
         VisibleSkills.Count,
@@ -192,6 +220,8 @@ internal sealed partial class ExtensionsPageViewModel : INavigationAware, IDispo
         _active = true;
         AgentIds = _runtime.GetAgentIds();
         SelectedAgentId = ResolveAgentId(parameter, AgentIds);
+        _runtime.CurrentClientChanged -= OnRuntimeClientChanged;
+        _runtime.CurrentClientChanged += OnRuntimeClientChanged;
         SubscribeToCurrentClient();
         _ = LoadSkillsAsync();
         _ = LoadPluginsAsync();
@@ -201,7 +231,12 @@ internal sealed partial class ExtensionsPageViewModel : INavigationAware, IDispo
     {
         _active = false;
         Interlocked.Increment(ref _loadGeneration);
+        Interlocked.Increment(ref _skillSearchGeneration);
+        Interlocked.Increment(ref _skillReviewGeneration);
         Interlocked.Increment(ref _pluginLoadGeneration);
+        Interlocked.Increment(ref _pluginSearchGeneration);
+        Interlocked.Increment(ref _pluginReviewGeneration);
+        _runtime.CurrentClientChanged -= OnRuntimeClientChanged;
         UnsubscribeClient();
     }
 
@@ -220,6 +255,8 @@ internal sealed partial class ExtensionsPageViewModel : INavigationAware, IDispo
         if (string.Equals(SelectedAgentId, resolved, StringComparison.OrdinalIgnoreCase))
             return;
         SelectedAgentId = resolved;
+        Interlocked.Increment(ref _skillSearchGeneration);
+        ClearSkillSnapshot();
         await LoadSkillsAsync().ConfigureAwait(false);
     }
 
@@ -250,7 +287,7 @@ internal sealed partial class ExtensionsPageViewModel : INavigationAware, IDispo
             {
                 IsLoadingSkills = false;
                 ErrorMessage = _runtime.GetText("ExtensionsPage_Error_Disconnected");
-                VisibleSkills = [];
+                ClearSkillSnapshot();
             });
             return;
         }
@@ -262,7 +299,7 @@ internal sealed partial class ExtensionsPageViewModel : INavigationAware, IDispo
                 IsLoadingSkills = false;
                 SkillsSupported = false;
                 StatusMessage = _runtime.GetText("ExtensionsPage_SkillsUpgradeRequired");
-                VisibleSkills = [];
+                ClearSkillSnapshot();
             });
             return;
         }
@@ -286,10 +323,10 @@ internal sealed partial class ExtensionsPageViewModel : INavigationAware, IDispo
                 _skillSnapshot = report.Skills
                     .OrderBy(static skill => skill.Name, StringComparer.CurrentCultureIgnoreCase)
                     .ToArray();
-                _securityBySkillKey = verdicts.Items
-                    .Where(static item => !string.IsNullOrWhiteSpace(item.RequestedSlug))
-                    .GroupBy(static item => item.RequestedSlug, StringComparer.OrdinalIgnoreCase)
-                    .ToDictionary(static group => group.Key, static group => group.First(), StringComparer.OrdinalIgnoreCase);
+                _securityVerdicts = verdicts.Items;
+                _skillSnapshotClient = client;
+                _skillSnapshotEpoch = epoch;
+                _skillSnapshotAgentId = agentId;
                 RebuildVisibleSkills();
                 IsLoadingSkills = false;
                 if (!CanManageExtensions)
@@ -301,6 +338,7 @@ internal sealed partial class ExtensionsPageViewModel : INavigationAware, IDispo
             ApplyIfCurrent(generation, client, agentId, () =>
             {
                 IsLoadingSkills = false;
+                ClearSkillSnapshot();
                 ErrorMessage = _runtime.FormatText(
                     "ExtensionsPage_Error_LoadFormat",
                     TokenSanitizer.Sanitize(ex.Message));
@@ -310,17 +348,21 @@ internal sealed partial class ExtensionsPageViewModel : INavigationAware, IDispo
 
     public async Task SearchSkillsAsync(string? query)
     {
+        var generation = Interlocked.Increment(ref _skillSearchGeneration);
         var client = _runtime.CurrentClient;
+        var agentId = SelectedAgentId;
+        var epoch = client?.ConnectionEpoch ?? 0;
         Dispatch(() =>
         {
             IsSearchingSkills = true;
+            SkillSearchResults = [];
             ErrorMessage = null;
             StatusMessage = null;
         });
 
         if (client is null || !client.IsConnectedToGateway)
         {
-            Dispatch(() =>
+            ApplySkillSearchIfCurrent(generation, client, agentId, epoch, () =>
             {
                 IsSearchingSkills = false;
                 ErrorMessage = _runtime.GetText("ExtensionsPage_Error_Disconnected");
@@ -330,7 +372,7 @@ internal sealed partial class ExtensionsPageViewModel : INavigationAware, IDispo
 
         if (!client.AdvertisedFeatures.SupportsMethod("skills.search"))
         {
-            Dispatch(() =>
+            ApplySkillSearchIfCurrent(generation, client, agentId, epoch, () =>
             {
                 IsSearchingSkills = false;
                 SkillsSupported = false;
@@ -344,6 +386,7 @@ internal sealed partial class ExtensionsPageViewModel : INavigationAware, IDispo
             var result = await client.SearchSkillsAsync(query?.Trim(), 30).ConfigureAwait(false);
             var canInstall = HasAdminScope(client) &&
                 client.AdvertisedFeatures.SupportsMethod("skills.install");
+            var canDetail = client.AdvertisedFeatures.SupportsMethod("skills.detail");
             var rows = result.Results.Select(item => new SkillSearchItemPresentation(
                     item.Slug,
                     string.IsNullOrWhiteSpace(item.DisplayName) ? item.Slug : item.DisplayName,
@@ -351,15 +394,18 @@ internal sealed partial class ExtensionsPageViewModel : INavigationAware, IDispo
                     string.IsNullOrWhiteSpace(item.Version)
                         ? _runtime.GetText("ExtensionsPage_VersionUnknown")
                         : item.Version,
-                    string.IsNullOrWhiteSpace(item.TrustState)
-                        ? _runtime.GetText("ExtensionsPage_TrustUnknown")
-                        : item.TrustState,
+                    string.IsNullOrWhiteSpace(item.Version) ? null : item.Version,
+                    SkillTrustLabel(item.TrustState),
+                    item.TrustState,
                     item.SafeInstallReference,
                     item.InstallOnly,
-                    item.SafeInstallReference is not null,
-                    canInstall && item.SafeInstallReference is not null))
+                    item.SafeInstallReference is not null && (item.InstallOnly || canDetail),
+                    canInstall && item.SafeInstallReference is not null && (item.InstallOnly || canDetail),
+                    agentId,
+                    epoch,
+                    client))
                 .ToArray();
-            Dispatch(() =>
+            ApplySkillSearchIfCurrent(generation, client, agentId, epoch, () =>
             {
                 SkillSearchResults = rows;
                 IsSearchingSkills = false;
@@ -373,7 +419,7 @@ internal sealed partial class ExtensionsPageViewModel : INavigationAware, IDispo
         }
         catch (Exception ex)
         {
-            Dispatch(() =>
+            ApplySkillSearchIfCurrent(generation, client, agentId, epoch, () =>
             {
                 IsSearchingSkills = false;
                 ErrorMessage = _runtime.FormatText(
@@ -386,13 +432,22 @@ internal sealed partial class ExtensionsPageViewModel : INavigationAware, IDispo
     public async Task<SkillReviewPresentation?> ReviewSkillAsync(SkillSearchItemPresentation item)
     {
         ArgumentNullException.ThrowIfNull(item);
+        var reviewGeneration = Interlocked.Increment(ref _skillReviewGeneration);
         ErrorMessage = null;
         var client = _runtime.CurrentClient;
-        if (client is null || item.SafeInstallReference is null)
+        var agentId = SelectedAgentId;
+        if (client is null || item.SafeInstallReference is null ||
+            !ReferenceEquals(client, item.ConnectionClient) ||
+            client.ConnectionEpoch != item.ConnectionEpoch ||
+            !string.Equals(agentId, item.AgentId, StringComparison.OrdinalIgnoreCase))
         {
-            ErrorMessage = _runtime.GetText("ExtensionsPage_SearchIdentityUpgradeRequired");
+            ErrorMessage = item.SafeInstallReference is null
+                ? _runtime.GetText("ExtensionsPage_SearchIdentityUpgradeRequired")
+                : _runtime.GetText("ExtensionsPage_SkillReviewExpired");
             return null;
         }
+        var epoch = client.ConnectionEpoch;
+        var requiresUnscannedConfirmation = IsUnscannedTrustState(item.TrustState);
 
         if (item.InstallOnly)
         {
@@ -402,21 +457,39 @@ internal sealed partial class ExtensionsPageViewModel : INavigationAware, IDispo
                 item.Summary,
                 item.VersionLabel,
                 _runtime.GetText("ExtensionsPage_UnscannedMetadata"),
-                true);
+                item.SafeInstallReference,
+                null,
+                agentId,
+                epoch,
+                client,
+                requiresUnscannedConfirmation);
+        }
+
+        if (!client.AdvertisedFeatures.SupportsMethod("skills.detail"))
+        {
+            ErrorMessage = _runtime.GetText("ExtensionsPage_SkillsUpgradeRequired");
+            return null;
         }
 
         try
         {
             var detail = await client.GetSkillDetailAsync(item.SafeInstallReference).ConfigureAwait(false);
+            if (reviewGeneration != Volatile.Read(ref _skillReviewGeneration) ||
+                !IsCurrentSkillScope(client, epoch, agentId))
+                return null;
             if (!detail.IsSupported || detail.Skill is null)
             {
-                Dispatch(() => ErrorMessage = _runtime.GetText("ExtensionsPage_SkillsUpgradeRequired"));
+                ApplySkillReviewIfCurrent(reviewGeneration, client, epoch, agentId, () =>
+                    ErrorMessage = _runtime.GetText("ExtensionsPage_SkillsUpgradeRequired"));
                 return null;
             }
 
             var publisher = detail.Owner?.DisplayName ?? detail.Owner?.Handle ??
                 _runtime.GetText("ExtensionsPage_PublisherUnknown");
-            var version = detail.LatestVersion?.Version ?? item.VersionLabel;
+            var requestedVersion = string.IsNullOrWhiteSpace(detail.LatestVersion?.Version)
+                ? item.RequestedVersion
+                : detail.LatestVersion.Version;
+            var version = requestedVersion ?? item.VersionLabel;
             var metadata = BuildMetadata(detail.Metadata);
             return new SkillReviewPresentation(
                 item,
@@ -424,37 +497,52 @@ internal sealed partial class ExtensionsPageViewModel : INavigationAware, IDispo
                 detail.Skill.Summary ?? item.Summary,
                 version,
                 metadata,
-                false);
+                item.SafeInstallReference,
+                requestedVersion,
+                agentId,
+                epoch,
+                client,
+                requiresUnscannedConfirmation);
         }
         catch (Exception ex)
         {
-            Dispatch(() => ErrorMessage = _runtime.FormatText(
-                "ExtensionsPage_Error_DetailFormat",
-                TokenSanitizer.Sanitize(ex.Message)));
+            ApplySkillReviewIfCurrent(reviewGeneration, client, epoch, agentId, () =>
+                ErrorMessage = _runtime.FormatText(
+                    "ExtensionsPage_Error_DetailFormat",
+                    TokenSanitizer.Sanitize(ex.Message)));
             return null;
         }
     }
 
     public async Task<SkillActionOutcome> InstallSkillAsync(
-        SkillSearchItemPresentation item,
+        SkillReviewPresentation review,
         bool unscannedAcknowledged)
     {
-        ArgumentNullException.ThrowIfNull(item);
-        if (item.InstallOnly && !unscannedAcknowledged)
+        ArgumentNullException.ThrowIfNull(review);
+        if (review.RequiresUnscannedConfirmation && !unscannedAcknowledged)
         {
             return SkillActionOutcome.NeedsConfirmation(
                 _runtime.GetText("ExtensionsPage_UnscannedWarning"));
         }
 
         var client = _runtime.CurrentClient;
-        if (client is null || item.SafeInstallReference is null || !HasAdminScope(client))
+        if (client is null || !ReferenceEquals(client, review.ConnectionClient) ||
+            client.ConnectionEpoch != review.ConnectionEpoch ||
+            !string.Equals(SelectedAgentId, review.AgentId, StringComparison.OrdinalIgnoreCase))
+        {
+            return new(false, false, _runtime.GetText("ExtensionsPage_SkillReviewExpired"));
+        }
+        if (!HasAdminScope(client))
             return new(false, false, _runtime.GetText("ExtensionsPage_AdminRequired"));
+        if (!client.AdvertisedFeatures.SupportsMethod("skills.install"))
+            return new(false, false, _runtime.GetText("ExtensionsPage_SkillsUpgradeRequired"));
 
         try
         {
             var result = await client.InstallClawHubSkillAsync(new ClawHubSkillInstallRequest(
-                item.SafeInstallReference,
-                SelectedAgentId)).ConfigureAwait(false);
+                review.InstallReference,
+                review.AgentId,
+                review.RequestedVersion)).ConfigureAwait(false);
             if (!result.IsSupported)
                 return new(false, false, _runtime.GetText("ExtensionsPage_SkillsUpgradeRequired"));
             if (!result.Ok)
@@ -466,10 +554,11 @@ internal sealed partial class ExtensionsPageViewModel : INavigationAware, IDispo
         {
             var findings = warning!.Findings.Count == 0
                 ? string.Empty
-                : " " + string.Join(" ", warning.Findings.Select(static finding => finding.Message));
+                : " " + string.Join(" ", warning.Findings.Select(static finding =>
+                    TokenSanitizer.Sanitize(finding.Message)));
             return new(false, false, _runtime.FormatText(
                 "ExtensionsPage_InstallPolicyBlockedFormat",
-                warning.Reason + findings));
+                TokenSanitizer.Sanitize(warning.Reason) + findings));
         }
         catch (Exception ex) when (ex is TimeoutException or GatewayConnectionLostException)
         {
@@ -488,8 +577,12 @@ internal sealed partial class ExtensionsPageViewModel : INavigationAware, IDispo
     {
         ArgumentNullException.ThrowIfNull(item);
         var client = _runtime.CurrentClient;
-        if (client is null || !HasAdminScope(client))
+        if (client is null || !IsCurrentSkillItem(item, client))
+            return new(false, false, _runtime.GetText("ExtensionsPage_SkillReviewExpired"));
+        if (!HasAdminScope(client))
             return new(false, false, _runtime.GetText("ExtensionsPage_AdminRequired"));
+        if (!client.AdvertisedFeatures.SupportsMethod("skills.update"))
+            return new(false, false, _runtime.GetText("ExtensionsPage_SkillsUpgradeRequired"));
 
         try
         {
@@ -518,14 +611,18 @@ internal sealed partial class ExtensionsPageViewModel : INavigationAware, IDispo
     {
         ArgumentNullException.ThrowIfNull(item);
         var client = _runtime.CurrentClient;
-        if (client is null || !HasAdminScope(client) || string.IsNullOrWhiteSpace(item.UpdateReference))
+        if (client is null || !IsCurrentSkillItem(item, client))
+            return new(false, false, _runtime.GetText("ExtensionsPage_SkillReviewExpired"));
+        if (!HasAdminScope(client) || string.IsNullOrWhiteSpace(item.UpdateReference))
             return new(false, false, _runtime.GetText("ExtensionsPage_SafeUpdateUnavailable"));
+        if (!client.AdvertisedFeatures.SupportsMethod("skills.update"))
+            return new(false, false, _runtime.GetText("ExtensionsPage_SkillsUpgradeRequired"));
 
         try
         {
             var result = await client.UpdateClawHubSkillAsync(new ClawHubSkillUpdateRequest(
                 item.UpdateReference,
-                SelectedAgentId)).ConfigureAwait(false);
+                item.AgentId)).ConfigureAwait(false);
             if (!result.Ok)
                 return new(false, false, result.Message ?? _runtime.GetText("ExtensionsPage_ActionFailed"));
             await LoadSkillsAsync().ConfigureAwait(false);
@@ -560,15 +657,27 @@ internal sealed partial class ExtensionsPageViewModel : INavigationAware, IDispo
         VisibleSkills = rows;
     }
 
+    private void ClearSkillSnapshot()
+    {
+        Interlocked.Increment(ref _skillReviewGeneration);
+        _skillSnapshot = [];
+        _securityVerdicts = [];
+        _skillSnapshotClient = null;
+        _skillSnapshotEpoch = 0;
+        VisibleSkills = [];
+        SkillSearchResults = [];
+        IsSearchingSkills = false;
+        IsLoadingSkills = false;
+        CanManageExtensions = false;
+    }
+
     private SkillListItemPresentation BuildSkillRow(SkillStatusEntry skill)
     {
         var updateReference = skill.Clawhub is { Valid: true } link &&
             !string.IsNullOrWhiteSpace(link.RequestedReference)
                 ? link.RequestedReference
                 : null;
-        _securityBySkillKey.TryGetValue(skill.SkillKey, out var security);
-        if (security is null && skill.Clawhub?.Slug is { Length: > 0 } slug)
-            _securityBySkillKey.TryGetValue(slug, out security);
+        var security = FindSecurityVerdict(skill.Clawhub);
 
         return new SkillListItemPresentation(
             skill.SkillKey,
@@ -581,12 +690,36 @@ internal sealed partial class ExtensionsPageViewModel : INavigationAware, IDispo
             _runtime.GetText(skill.Disabled
                 ? "ExtensionsPage_EnableAction"
                 : "ExtensionsPage_DisableAction"),
-            CanManageExtensions,
-            CanManageExtensions && updateReference is not null,
+            CanManageExtensions &&
+                _skillSnapshotClient?.AdvertisedFeatures.SupportsMethod("skills.update") == true,
+            CanManageExtensions && updateReference is not null &&
+                _skillSnapshotClient?.AdvertisedFeatures.SupportsMethod("skills.update") == true,
             updateReference,
             SecurityLabel(security),
             SafeHttpUrl(security?.SkillUrl),
-            SafeHttpUrl(security?.SecurityAuditUrl));
+            SafeHttpUrl(security?.SecurityAuditUrl),
+            _skillSnapshotAgentId,
+            _skillSnapshotEpoch,
+            _skillSnapshotClient ?? throw new InvalidOperationException("Skill snapshot client is unavailable."));
+    }
+
+    private SkillSecurityVerdict? FindSecurityVerdict(ClawHubSkillLink? link)
+    {
+        if (link is null || string.IsNullOrWhiteSpace(link.Registry) ||
+            string.IsNullOrWhiteSpace(link.Slug) || string.IsNullOrWhiteSpace(link.InstalledVersion))
+        {
+            return null;
+        }
+
+        var matches = _securityVerdicts.Where(verdict =>
+            string.Equals(verdict.Registry, link.Registry, StringComparison.Ordinal) &&
+            string.Equals(verdict.RequestedSlug, link.Slug, StringComparison.Ordinal) &&
+            string.Equals(verdict.RequestedOwnerHandle ?? string.Empty, link.OwnerHandle ?? string.Empty,
+                StringComparison.Ordinal) &&
+            string.Equals(verdict.RequestedVersion, link.InstalledVersion, StringComparison.Ordinal))
+            .Take(2)
+            .ToArray();
+        return matches.Length == 1 ? matches[0] : null;
     }
 
     private string ReadinessLabel(SkillReadinessState readiness) => _runtime.GetText(readiness switch
@@ -641,12 +774,16 @@ internal sealed partial class ExtensionsPageViewModel : INavigationAware, IDispo
     {
         UnsubscribeClient();
         _subscribedClient = _runtime.CurrentClient;
+        if (_subscribedClient is not null)
+            _subscribedClient.HandshakeSucceeded += OnClientHandshakeSucceeded;
         if (_subscribedClient is ISkillsGatewayEvents skillEvents)
             skillEvents.SkillsChanged += OnSkillsChanged;
     }
 
     private void UnsubscribeClient()
     {
+        if (_subscribedClient is not null)
+            _subscribedClient.HandshakeSucceeded -= OnClientHandshakeSucceeded;
         if (_subscribedClient is ISkillsGatewayEvents skillEvents)
             skillEvents.SkillsChanged -= OnSkillsChanged;
         _subscribedClient = null;
@@ -657,6 +794,33 @@ internal sealed partial class ExtensionsPageViewModel : INavigationAware, IDispo
         if (!_active)
             return;
         Dispatch(() => _ = LoadSkillsAsync());
+    }
+
+    private void OnRuntimeClientChanged(object? sender, EventArgs e) =>
+        Dispatch(RefreshConnectionScope);
+
+    private void OnClientHandshakeSucceeded(object? sender, EventArgs e) =>
+        Dispatch(RefreshConnectionScope);
+
+    private void RefreshConnectionScope()
+    {
+        if (!_active)
+            return;
+
+        Interlocked.Increment(ref _loadGeneration);
+        Interlocked.Increment(ref _skillSearchGeneration);
+        Interlocked.Increment(ref _skillReviewGeneration);
+        Interlocked.Increment(ref _pluginLoadGeneration);
+        Interlocked.Increment(ref _pluginSearchGeneration);
+        UnsubscribeClient();
+        SubscribeToCurrentClient();
+        AgentIds = _runtime.GetAgentIds();
+        SelectedAgentId = ResolveAgentId($"agent:{SelectedAgentId}:extensions", AgentIds);
+        ClearSkillSnapshot();
+        ClearPluginSnapshot();
+        ConnectionScopeVersion++;
+        _ = LoadSkillsAsync();
+        _ = LoadPluginsAsync();
     }
 
     private void ApplyIfCurrent(
@@ -673,6 +837,58 @@ internal sealed partial class ExtensionsPageViewModel : INavigationAware, IDispo
         }
         apply();
     });
+
+    private void ApplySkillSearchIfCurrent(
+        long generation,
+        IOperatorGatewayClient? client,
+        string agentId,
+        long epoch,
+        Action apply) => Dispatch(() =>
+    {
+        if (!_active || generation != Volatile.Read(ref _skillSearchGeneration) ||
+            !ReferenceEquals(client, _runtime.CurrentClient) ||
+            !string.Equals(agentId, SelectedAgentId, StringComparison.OrdinalIgnoreCase) ||
+            (client is not null && client.ConnectionEpoch != epoch))
+        {
+            return;
+        }
+        apply();
+    });
+
+    private bool IsCurrentSkillScope(
+        IOperatorGatewayClient client,
+        long epoch,
+        string agentId) =>
+        _active && ReferenceEquals(client, _runtime.CurrentClient) &&
+        client.ConnectionEpoch == epoch &&
+        string.Equals(agentId, SelectedAgentId, StringComparison.OrdinalIgnoreCase);
+
+    private void ApplySkillReviewIfCurrent(
+        long generation,
+        IOperatorGatewayClient client,
+        long epoch,
+        string agentId,
+        Action action) => Dispatch(() =>
+    {
+        if (generation == Volatile.Read(ref _skillReviewGeneration) &&
+            IsCurrentSkillScope(client, epoch, agentId))
+            action();
+    });
+
+    private bool IsCurrentSkillItem(
+        SkillListItemPresentation item,
+        IOperatorGatewayClient client) =>
+        ReferenceEquals(item.ConnectionClient, client) &&
+        item.ConnectionEpoch == client.ConnectionEpoch &&
+        string.Equals(item.AgentId, SelectedAgentId, StringComparison.OrdinalIgnoreCase);
+
+    private static bool IsUnscannedTrustState(string? trustState) =>
+        string.Equals(trustState, "not-scanned-by-clawhub", StringComparison.OrdinalIgnoreCase);
+
+    private string SkillTrustLabel(string? trustState) =>
+        IsUnscannedTrustState(trustState)
+            ? _runtime.GetText("ExtensionsPage_TrustNotScanned")
+            : _runtime.GetText("ExtensionsPage_TrustUnknown");
 
     private void Dispatch(Action action)
     {

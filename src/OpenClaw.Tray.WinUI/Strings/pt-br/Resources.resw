@@ -187,7 +187,7 @@
     <value>Abra a configuração de canais para fluxos de autenticação orientados por esquema, QR, login e painel, quando disponíveis.</value>
   </data>
   <data name="StatusSkillsTitle.Text" xml:space="preserve">
-    <value>Extensões</value>
+    <value>Habilidades</value>
   </data>
   <data name="StatusSkillsDescription.Text" xml:space="preserve">
     <value>Abra a configuração de Skills do Gateway quando o Gateway conectado oferecer suporte a esse recurso.</value>
@@ -2303,7 +2303,7 @@ Use uma destas opções:
     <value>Fluxo de eventos</value>
   </data>
   <data name="HubWindow_NavigationViewItem_97.Content" xml:space="preserve">
-    <value>Habilidades</value>
+    <value>Extensões</value>
   </data>
   <data name="AgentsNavItem.Content" xml:space="preserve">
     <value>Agentes</value>
@@ -7164,7 +7164,7 @@ O binário wxc-exec não pôde ser localizado. {1} Se esta for uma build de dese
   <data name="VoiceSettingsPage_MiniMaxVoiceIdBox.Header" xml:space="preserve"><value>ID da voz</value></data>
   <data name="VoiceSettingsPage_MiniMaxVoiceIdBox.PlaceholderText" xml:space="preserve"><value>por exemplo, male-qn-qingse</value></data>
   <data name="VoiceSettingsPage_TtsMiniMax.Content" xml:space="preserve"><value>MiniMax (nuvem, requer chave da API)</value></data>
-+  <data name="ExtensionsPage_Title.Text" xml:space="preserve"><value>Extensions</value></data>
+  <data name="ExtensionsPage_Title.Text" xml:space="preserve"><value>Extensions</value></data>
   <data name="ExtensionsPage_Description.Text" xml:space="preserve"><value>Browse, install, and manage skills and plugins for your Gateway.</value></data>
   <data name="ExtensionsPage_SkillsTab.Header" xml:space="preserve"><value>Skills</value></data>
   <data name="ExtensionsPage_PluginsTab.Header" xml:space="preserve"><value>Plugins</value></data>
@@ -7198,7 +7198,7 @@ O binário wxc-exec não pôde ser localizado. {1} Se esta for uma build de dese
   <data name="ExtensionsPage_SearchIdentityUpgradeRequired" xml:space="preserve"><value>Some results cannot be installed safely because the Gateway did not provide a source-qualified install reference. Upgrade the Gateway.</value></data>
   <data name="ExtensionsPage_PublisherUnknown" xml:space="preserve"><value>Unknown publisher</value></data>
   <data name="ExtensionsPage_UnscannedMetadata" xml:space="preserve"><value>Detailed metadata is unavailable for this install-only result.</value></data>
-  <data name="ExtensionsPage_UnscannedWarning" xml:space="preserve"><value>The Gateway marks this as an install-only result. Its detailed metadata was not scanned. Install only if you trust the publisher and package.</value></data>
+  <data name="ExtensionsPage_UnscannedWarning" xml:space="preserve"><value>ClawHub marks this source as not scanned. Install only if you trust the exact source and publisher shown.</value></data>
   <data name="ExtensionsPage_ActionFailed" xml:space="preserve"><value>The Gateway did not complete the action.</value></data>
   <data name="ExtensionsPage_InstallSucceeded" xml:space="preserve"><value>Skill installed.</value></data>
   <data name="ExtensionsPage_UpdateSucceeded" xml:space="preserve"><value>Skill updated.</value></data>
@@ -7229,10 +7229,10 @@ O binário wxc-exec não pôde ser localizado. {1} Se esta for uma build de dese
   <data name="ExtensionsPage_CloseAction" xml:space="preserve"><value>Close</value></data>
   <data name="ExtensionsPage_ActionCompleteTitle" xml:space="preserve"><value>Action complete</value></data>
   <data name="ExtensionsPage_ActionCouldNotCompleteTitle" xml:space="preserve"><value>Action could not complete</value></data>
-  <data name="ExtensionsPage_UnscannedAcknowledge.Content" xml:space="preserve"><value>I understand that detailed metadata was not scanned.</value></data>
+  <data name="ExtensionsPage_UnscannedAcknowledge.Content" xml:space="preserve"><value>I understand that ClawHub has not scanned this source.</value></data>
   <data name="ExtensionsPage_InstallActionButton.Content" xml:space="preserve"><value>Install</value></data>
   <data name="ExtensionsPage_CancelActionButton.Content" xml:space="preserve"><value>Cancel</value></data>
-+  <data name="ExtensionsPage_InstalledPluginsTab.Content" xml:space="preserve"><value>Installed</value></data>
+  <data name="ExtensionsPage_InstalledPluginsTab.Content" xml:space="preserve"><value>Installed</value></data>
   <data name="ExtensionsPage_DiscoverPluginsTab.Content" xml:space="preserve"><value>Discover</value></data>
   <data name="ExtensionsPage_ReviewPluginAction.Content" xml:space="preserve"><value>Review access</value></data>
   <data name="ExtensionsPage_NoInstalledPlugins.Text" xml:space="preserve"><value>No plugins are installed.</value></data>
@@ -7264,15 +7264,15 @@ O binário wxc-exec não pôde ser localizado. {1} Se esta for uma build de dese
   <data name="ExtensionsPage_PluginNoDeclaredSurfaces" xml:space="preserve"><value>No privileged surfaces were declared.</value></data>
   <data name="ExtensionsPage_PluginOriginFormat" xml:space="preserve"><value>Origin: {0}</value></data>
   <data name="ExtensionsPage_PluginTrustFormat" xml:space="preserve"><value>Trust: {0}</value></data>
-+  <data name="ExtensionsPage_UninstallPluginAction.Content" xml:space="preserve"><value>Uninstall</value></data>
+  <data name="ExtensionsPage_UninstallPluginAction.Content" xml:space="preserve"><value>Uninstall</value></data>
   <data name="ExtensionsPage_PluginPolicyAcknowledge.Content" xml:space="preserve"><value>I accept this separate install policy warning.</value></data>
   <data name="ExtensionsPage_PluginMutationUnavailable" xml:space="preserve"><value>Plugin changes are unavailable for this connection or Gateway policy.</value></data>
   <data name="ExtensionsPage_PluginInstalled" xml:space="preserve"><value>Plugin installed.</value></data>
   <data name="ExtensionsPage_PluginEnabled" xml:space="preserve"><value>Plugin enabled.</value></data>
   <data name="ExtensionsPage_PluginDisabled" xml:space="preserve"><value>Plugin disabled.</value></data>
   <data name="ExtensionsPage_PluginUninstalled" xml:space="preserve"><value>Plugin uninstalled.</value></data>
-  <data name="ExtensionsPage_PluginActionUnconfirmed" xml:space="preserve"><value>The connection changed before the plugin result was confirmed. The inventory was refreshed after reconnect; check its current state.</value></data>
-  <data name="ExtensionsPage_GatewayReconnected" xml:space="preserve"><value>The Gateway reconnected and the plugin inventory was refreshed.</value></data>
+  <data name="ExtensionsPage_PluginActionUnconfirmed" xml:space="preserve"><value>The connection changed before the plugin result was confirmed. An inventory refresh was requested; verify the current state after reconnect.</value></data>
+  <data name="ExtensionsPage_GatewayReconnected" xml:space="preserve"><value>A Gateway connection is available and an inventory refresh was requested. Verify the current runtime state.</value></data>
   <data name="ExtensionsPage_GatewayReconnectPending" xml:space="preserve"><value>The Gateway restart was not observed yet. Reconnect before relying on the new runtime state.</value></data>
   <data name="ExtensionsPage_PluginReviewExpired" xml:space="preserve"><value>The plugin review expired because the Gateway connection changed. Review the plugin again.</value></data>
   <data name="ExtensionsPage_PluginCapabilityConsentRequired" xml:space="preserve"><value>The Gateway requires a new explicit capability review before this action can continue.</value></data>
@@ -7285,4 +7285,33 @@ O binário wxc-exec não pôde ser localizado. {1} Se esta for uma build de dese
   <data name="ExtensionsPage_UninstallAction" xml:space="preserve"><value>Uninstall</value></data>
   <data name="ExtensionsPage_PluginCapabilityPromptFormat" xml:space="preserve"><value>Capabilities changed since the last review. Review the exact declared surfaces again. Newly widened surfaces: {0}</value></data>
   <data name="ExtensionsPage_PluginPolicyPromptFormat" xml:space="preserve"><value>Install policy warning: {0} Findings: {1}</value></data>
+  <data name="ExtensionsPage_PluginPolicyTargetFormat" xml:space="preserve"><value>Target reported by Gateway: {0}</value></data>
+  <data name="ExtensionsPage_SkillFilter.AutomationProperties.Name" xml:space="preserve"><value>Skill filter</value></data>
+  <data name="ExtensionsPage_SkillInstallIdentityFormat" xml:space="preserve"><value>Install identity: {0}</value></data>
+  <data name="ExtensionsPage_SkillReviewExpired" xml:space="preserve"><value>This skill review is no longer current. Review it again before continuing.</value></data>
+  <data name="ExtensionsPage_TrustNotScanned" xml:space="preserve"><value>Not scanned by ClawHub</value></data>
+  <data name="ExtensionsPage_ClawHubCatalogOrigin" xml:space="preserve"><value>ClawHub catalog</value></data>
+  <data name="ExtensionsPage_IntegrityPending" xml:space="preserve"><value>Available after the Gateway stages the package</value></data>
+  <data name="ExtensionsPage_IntegrityUnavailable" xml:space="preserve"><value>Unavailable</value></data>
+  <data name="ExtensionsPage_PluginSurfacesPendingInstall" xml:space="preserve"><value>The Gateway will stage and inspect this package before requesting capability consent.</value></data>
+  <data name="ExtensionsPage_PluginGrantsPendingInstall" xml:space="preserve"><value>Effective grants will be shown after package inspection.</value></data>
+  <data name="ExtensionsPage_PluginSurfaceContracts" xml:space="preserve"><value>Contracts: {0}</value></data>
+  <data name="ExtensionsPage_PluginGrantPromptInjection" xml:space="preserve"><value>Prompt injection access</value></data>
+  <data name="ExtensionsPage_PluginGrantConversationAccess" xml:space="preserve"><value>Conversation access</value></data>
+  <data name="ExtensionsPage_PluginGrantModelOverride" xml:space="preserve"><value>Model override access</value></data>
+  <data name="ExtensionsPage_PluginGrantAllowedModels" xml:space="preserve"><value>Allowed models: {0}</value></data>
+  <data name="ExtensionsPage_PluginGrantAllowedCompletionModels" xml:space="preserve"><value>Allowed completion models: {0}</value></data>
+  <data name="ExtensionsPage_PluginGrantAuthProfileOverride" xml:space="preserve"><value>Authentication profile override access</value></data>
+  <data name="ExtensionsPage_PluginGrantAgentOverride" xml:space="preserve"><value>Agent identity override access</value></data>
+  <data name="ExtensionsPage_PluginGrantSubagentModelOverride" xml:space="preserve"><value>Subagent model override access</value></data>
+  <data name="ExtensionsPage_PluginGrantSubagentModels" xml:space="preserve"><value>Allowed subagent models: {0}</value></data>
+  <data name="ExtensionsPage_PluginNoEffectiveGrants" xml:space="preserve"><value>No effective operator grants.</value></data>
+  <data name="ExtensionsPage_PluginTrustPending" xml:space="preserve"><value>Verification is pending.</value></data>
+  <data name="ExtensionsPage_PluginTrustStale" xml:space="preserve"><value>Verification is stale.</value></data>
+  <data name="ExtensionsPage_OfficialCatalogVerification" xml:space="preserve"><value>Official Gateway catalog</value></data>
+  <data name="ExtensionsPage_PluginInstallIdentityFormat" xml:space="preserve"><value>Install identity: {0}</value></data>
+  <data name="ExtensionsPage_PluginIntegrityFormat" xml:space="preserve"><value>Integrity: {0}</value></data>
+  <data name="ExtensionsPage_GrantedAccessHeading.Text" xml:space="preserve"><value>Effective grants</value></data>
+  <data name="ExtensionsPage_PluginDisableAcknowledge" xml:space="preserve"><value>I understand that disabling this plugin may restart the Gateway.</value></data>
+  <data name="ExtensionsPage_PluginInstallAcknowledge" xml:space="preserve"><value>I understand that the Gateway will stage and inspect this exact package before installation.</value></data>
 </root>

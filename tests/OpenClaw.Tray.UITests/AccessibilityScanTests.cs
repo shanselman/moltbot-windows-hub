@@ -52,7 +52,7 @@ public sealed class AccessibilityScanTests
         yield return ["SandboxPage", "sandbox", "SandboxPageMarker"];
         yield return ["SessionsPage", "sessions", "SessionsPageMarker"];
         yield return ["SettingsPage", "settings", "SettingsPageMarker"];
-        yield return ["SkillsPage", "skills", "SkillsPageMarker"];
+        yield return ["ExtensionsPage", "extensions", "ExtensionsPageMarker"];
         yield return ["UsagePage", "usage", "UsagePageMarker"];
         yield return ["VoiceSettingsPage", "voice", "VoiceSettingsPageMarker"];
         yield return ["WorkspacePage", "workspace", "WorkspacePageMarker"];

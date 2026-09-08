@@ -13,13 +13,18 @@ internal sealed record PluginListItemPresentation(
     bool Removable,
     bool CanReview,
     bool CanSetEnabled,
-    bool CanUninstall)
+    bool CanUninstall,
+    long ConnectionEpoch,
+    IOperatorGatewayClient ConnectionClient)
 {
     public string ToggleLabel { get; init; } = string.Empty;
+    public override string ToString() => Name;
 }
 
 internal sealed record PluginSearchItemPresentation(
-    string PackageName,
+    PluginInstallSource? InstallSource,
+    string? PackageName,
+    string? OfficialPluginId,
     string Name,
     string Summary,
     string Version,
@@ -27,7 +32,12 @@ internal sealed record PluginSearchItemPresentation(
     string? RuntimeId,
     bool IsOfficial,
     bool CanReview,
-    bool CanInstall);
+    bool CanInstall,
+    long ConnectionEpoch,
+    IOperatorGatewayClient ConnectionClient)
+{
+    public override string ToString() => Name;
+}
 
 internal sealed record PluginReviewPresentation(
     string PluginId,
@@ -35,7 +45,10 @@ internal sealed record PluginReviewPresentation(
     string Description,
     string Version,
     string Origin,
+    string InstallIdentity,
+    string Integrity,
     string DeclaredSurfaces,
+    string GrantedAccess,
     string Trust,
     string ReviewToken,
     long ConnectionEpoch,
@@ -44,8 +57,7 @@ internal sealed record PluginReviewPresentation(
     PluginListItemPresentation? InstalledItem = null);
 
 internal sealed record PluginCapabilityPrompt(
-    string PluginId,
-    string DeclaredSurfaces,
+    PluginReviewPresentation Review,
     string WidenedSurfaces,
     PluginCapabilityAcknowledgement Acknowledgement);
 
@@ -63,8 +75,12 @@ internal sealed record PluginActionOutcome(
 internal sealed partial class ExtensionsPageViewModel
 {
     private long _pluginLoadGeneration;
+    private long _pluginSearchGeneration;
+    private long _pluginReviewGeneration;
+    private string _activePluginQuery = string.Empty;
     private IReadOnlyList<PluginListItemPresentation> _installedPlugins = [];
     private IReadOnlyList<PluginSearchItemPresentation> _pluginSearchResults = [];
+    private IReadOnlyList<PluginSearchItemPresentation> _catalogPlugins = [];
     private bool _isLoadingPlugins;
     private bool _isSearchingPlugins;
     private bool _pluginsSupported = true;
@@ -162,7 +178,7 @@ internal sealed partial class ExtensionsPageViewModel
             {
                 IsLoadingPlugins = false;
                 PluginErrorMessage = _runtime.GetText("ExtensionsPage_Error_Disconnected");
-                InstalledPlugins = [];
+                ClearPluginSnapshot();
             });
             return;
         }
@@ -174,7 +190,7 @@ internal sealed partial class ExtensionsPageViewModel
                 IsLoadingPlugins = false;
                 PluginsSupported = false;
                 PluginStatusMessage = _runtime.GetText("ExtensionsPage_PluginsUpgradeRequired");
-                InstalledPlugins = [];
+                ClearPluginSnapshot();
             });
             return;
         }
@@ -200,13 +216,23 @@ internal sealed partial class ExtensionsPageViewModel
                     plugin.Enabled,
                     plugin.Removable,
                     canInspect,
-                    canMutate && client.AdvertisedFeatures.SupportsMethod("plugins.setEnabled"),
-                    canMutate && plugin.Removable && client.AdvertisedFeatures.SupportsMethod("plugins.uninstall"))
+                    canInspect && canMutate && client.AdvertisedFeatures.SupportsMethod("plugins.setEnabled"),
+                    canInspect && canMutate && plugin.Removable &&
+                        client.AdvertisedFeatures.SupportsMethod("plugins.uninstall"),
+                    epoch,
+                    client)
                 {
                     ToggleLabel = _runtime.GetText(plugin.Enabled
                         ? "ExtensionsPage_DisableAction"
                         : "ExtensionsPage_EnableAction"),
                 })
+                .ToArray();
+            var catalogRows = result.Plugins
+                .Where(static plugin => !plugin.Installed && plugin.Install is not null)
+                .OrderByDescending(static plugin => plugin.Featured)
+                .ThenBy(static plugin => plugin.Order ?? double.MaxValue)
+                .ThenBy(static plugin => plugin.Name, StringComparer.CurrentCultureIgnoreCase)
+                .Select(plugin => BuildCatalogPluginRow(plugin, client, epoch, canInspect, canMutate))
                 .ToArray();
             ApplyPluginIfCurrent(generation, client, () =>
             {
@@ -216,6 +242,9 @@ internal sealed partial class ExtensionsPageViewModel
                 PluginMutationAllowed = result.MutationAllowed;
                 PluginDiagnosticCount = result.DiagnosticCount;
                 InstalledPlugins = rows;
+                _catalogPlugins = catalogRows;
+                if (_activePluginQuery.Length == 0)
+                    PluginSearchResults = catalogRows;
                 IsLoadingPlugins = false;
                 if (result.DiagnosticCount > 0)
                 {
@@ -230,6 +259,7 @@ internal sealed partial class ExtensionsPageViewModel
             ApplyPluginIfCurrent(generation, client, () =>
             {
                 IsLoadingPlugins = false;
+                ClearPluginSnapshot();
                 PluginErrorMessage = _runtime.FormatText(
                     "ExtensionsPage_Error_PluginLoadFormat",
                     TokenSanitizer.Sanitize(ex.Message));
@@ -239,23 +269,33 @@ internal sealed partial class ExtensionsPageViewModel
 
     public async Task SearchPluginsAsync(string? query)
     {
+        var generation = Interlocked.Increment(ref _pluginSearchGeneration);
         var trimmed = query?.Trim() ?? string.Empty;
+        _activePluginQuery = trimmed;
+        var client = _runtime.CurrentClient;
+        var epoch = client?.ConnectionEpoch ?? 0;
         if (trimmed.Length == 0)
         {
-            PluginStatusMessage = _runtime.GetText("ExtensionsPage_PluginSearchRequired");
+            ApplyPluginSearchIfCurrent(generation, client, epoch, () =>
+            {
+                IsSearchingPlugins = false;
+                PluginErrorMessage = null;
+                PluginSearchResults = _catalogPlugins;
+                PluginStatusMessage = _runtime.GetText("ExtensionsPage_PluginSearchRequired");
+            });
             return;
         }
 
-        var client = _runtime.CurrentClient;
         Dispatch(() =>
         {
             IsSearchingPlugins = true;
+            PluginSearchResults = [];
             PluginErrorMessage = null;
             PluginStatusMessage = null;
         });
         if (client is null || !client.IsConnectedToGateway)
         {
-            Dispatch(() =>
+            ApplyPluginSearchIfCurrent(generation, client, epoch, () =>
             {
                 IsSearchingPlugins = false;
                 PluginErrorMessage = _runtime.GetText("ExtensionsPage_Error_Disconnected");
@@ -264,7 +304,7 @@ internal sealed partial class ExtensionsPageViewModel
         }
         if (!client.AdvertisedFeatures.SupportsMethod("plugins.search"))
         {
-            Dispatch(() =>
+            ApplyPluginSearchIfCurrent(generation, client, epoch, () =>
             {
                 IsSearchingPlugins = false;
                 PluginsSupported = false;
@@ -277,8 +317,12 @@ internal sealed partial class ExtensionsPageViewModel
         {
             var result = await client.SearchPluginsAsync(trimmed, 30).ConfigureAwait(false);
             var canInspect = client.AdvertisedFeatures.SupportsMethod("plugins.inspect");
+            var canInstall = HasAdminScope(client) && PluginMutationAllowed &&
+                client.AdvertisedFeatures.SupportsMethod("plugins.install") && canInspect;
             var rows = result.Results.Select(entry => new PluginSearchItemPresentation(
+                    PluginInstallSource.ClawHub,
                     entry.Package.Name,
+                    null,
                     string.IsNullOrWhiteSpace(entry.Package.DisplayName)
                         ? entry.Package.Name
                         : entry.Package.DisplayName,
@@ -287,12 +331,12 @@ internal sealed partial class ExtensionsPageViewModel
                     entry.Package.VerificationTier ?? _runtime.GetText("ExtensionsPage_TrustUnknown"),
                     entry.Package.RuntimeId,
                     entry.Package.IsOfficial,
-                    canInspect && !string.IsNullOrWhiteSpace(entry.Package.RuntimeId),
-                    HasAdminScope(client) && PluginMutationAllowed &&
-                        client.AdvertisedFeatures.SupportsMethod("plugins.install") &&
-                        !string.IsNullOrWhiteSpace(entry.Package.Name)))
+                    (canInspect && !string.IsNullOrWhiteSpace(entry.Package.RuntimeId)) || canInstall,
+                    canInstall && !string.IsNullOrWhiteSpace(entry.Package.Name),
+                    epoch,
+                    client))
                 .ToArray();
-            Dispatch(() =>
+            ApplyPluginSearchIfCurrent(generation, client, epoch, () =>
             {
                 PluginSearchResults = rows;
                 IsSearchingPlugins = false;
@@ -304,7 +348,7 @@ internal sealed partial class ExtensionsPageViewModel
         }
         catch (Exception ex)
         {
-            Dispatch(() =>
+            ApplyPluginSearchIfCurrent(generation, client, epoch, () =>
             {
                 IsSearchingPlugins = false;
                 PluginErrorMessage = _runtime.FormatText(
@@ -316,22 +360,93 @@ internal sealed partial class ExtensionsPageViewModel
 
     public async Task<PluginReviewPresentation?> ReviewPluginAsync(PluginListItemPresentation item)
     {
-        var review = await ReviewPluginByIdAsync(item.PluginId).ConfigureAwait(false);
+        var reviewGeneration = Interlocked.Increment(ref _pluginReviewGeneration);
+        var client = _runtime.CurrentClient;
+        if (client is null || !ReferenceEquals(client, item.ConnectionClient) ||
+            client.ConnectionEpoch != item.ConnectionEpoch)
+        {
+            PluginStatusMessage = _runtime.GetText("ExtensionsPage_PluginReviewExpired");
+            return null;
+        }
+        var review = await ReviewPluginByIdAsync(
+                item.PluginId,
+                client,
+                item.ConnectionEpoch,
+                reviewGeneration)
+            .ConfigureAwait(false);
         return review is null ? null : review with { InstalledItem = item };
     }
 
     public async Task<PluginReviewPresentation?> ReviewPluginAsync(PluginSearchItemPresentation item)
     {
+        var reviewGeneration = Interlocked.Increment(ref _pluginReviewGeneration);
+        var client = _runtime.CurrentClient;
+        if (client is null || !ReferenceEquals(client, item.ConnectionClient) ||
+            client.ConnectionEpoch != item.ConnectionEpoch)
+        {
+            PluginStatusMessage = _runtime.GetText("ExtensionsPage_PluginReviewExpired");
+            return null;
+        }
+
+        if (item.InstallSource == PluginInstallSource.Official &&
+            !string.IsNullOrWhiteSpace(item.RuntimeId) &&
+            client.AdvertisedFeatures.SupportsMethod("plugins.inspect"))
+        {
+            var officialReview = await ReviewPluginByIdAsync(
+                item.RuntimeId,
+                client,
+                item.ConnectionEpoch,
+                reviewGeneration).ConfigureAwait(false);
+            return officialReview is null ? null : officialReview with { SearchItem = item };
+        }
+
+        if (item.CanInstall)
+        {
+            var installIdentity = item.InstallSource switch
+            {
+                PluginInstallSource.ClawHub => item.PackageName,
+                PluginInstallSource.Official => item.OfficialPluginId,
+                _ => null,
+            };
+            if (string.IsNullOrWhiteSpace(installIdentity))
+                return null;
+            return new PluginReviewPresentation(
+                item.RuntimeId ?? item.OfficialPluginId ?? item.PackageName!,
+                item.Name,
+                item.Summary,
+                item.Version,
+                _runtime.GetText("ExtensionsPage_ClawHubCatalogOrigin"),
+                installIdentity,
+                _runtime.GetText("ExtensionsPage_IntegrityPending"),
+                _runtime.GetText("ExtensionsPage_PluginSurfacesPendingInstall"),
+                _runtime.GetText("ExtensionsPage_PluginGrantsPendingInstall"),
+                item.Verification,
+                string.Empty,
+                item.ConnectionEpoch,
+                client,
+                SearchItem: item);
+        }
+
         if (string.IsNullOrWhiteSpace(item.RuntimeId))
             return null;
-        var review = await ReviewPluginByIdAsync(item.RuntimeId).ConfigureAwait(false);
+        var review = await ReviewPluginByIdAsync(
+                item.RuntimeId,
+                client,
+                item.ConnectionEpoch,
+                reviewGeneration)
+            .ConfigureAwait(false);
         return review is null ? null : review with { SearchItem = item };
     }
 
-    private async Task<PluginReviewPresentation?> ReviewPluginByIdAsync(string pluginId)
+    private async Task<PluginReviewPresentation?> ReviewPluginByIdAsync(
+        string pluginId,
+        IOperatorGatewayClient client,
+        long epoch,
+        long reviewGeneration)
     {
-        var client = _runtime.CurrentClient;
-        if (client is null || !client.AdvertisedFeatures.SupportsMethod("plugins.inspect"))
+        if (!ReferenceEquals(client, _runtime.CurrentClient) ||
+            client.ConnectionEpoch != epoch ||
+            !client.AdvertisedFeatures.SupportsMethod("plugins.inspect"))
         {
             PluginStatusMessage = _runtime.GetText("ExtensionsPage_PluginsUpgradeRequired");
             return null;
@@ -340,9 +455,13 @@ internal sealed partial class ExtensionsPageViewModel
         try
         {
             var result = await client.InspectPluginAsync(pluginId).ConfigureAwait(false);
+            if (reviewGeneration != Volatile.Read(ref _pluginReviewGeneration) ||
+                !ReferenceEquals(client, _runtime.CurrentClient) || client.ConnectionEpoch != epoch)
+                return null;
             if (!result.IsSupported || !result.Ok)
             {
-                Dispatch(() => PluginStatusMessage = _runtime.GetText("ExtensionsPage_PluginInspectUnavailable"));
+                ApplyPluginReviewIfCurrent(reviewGeneration, client, epoch, () =>
+                    PluginStatusMessage = _runtime.GetText("ExtensionsPage_PluginInspectUnavailable"));
                 return null;
             }
             return new PluginReviewPresentation(
@@ -351,7 +470,10 @@ internal sealed partial class ExtensionsPageViewModel
                 result.Plugin.Description ?? string.Empty,
                 result.Plugin.Version ?? _runtime.GetText("ExtensionsPage_VersionUnknown"),
                 result.Plugin.Origin ?? result.Source?.Kind ?? _runtime.GetText("ExtensionsPage_OriginUnknown"),
+                result.Source?.PackageName ?? result.Source?.Spec ?? result.Plugin.Id,
+                result.Source?.Integrity ?? _runtime.GetText("ExtensionsPage_IntegrityUnavailable"),
                 FormatDeclaredSurfaces(result.Declared),
+                FormatOperatorGrants(result.Grants),
                 FormatPluginTrust(result.Trust),
                 result.ReviewToken,
                 client.ConnectionEpoch,
@@ -359,11 +481,53 @@ internal sealed partial class ExtensionsPageViewModel
         }
         catch (Exception ex)
         {
-            Dispatch(() => PluginErrorMessage = _runtime.FormatText(
-                "ExtensionsPage_Error_PluginInspectFormat",
-                TokenSanitizer.Sanitize(ex.Message)));
+            ApplyPluginReviewIfCurrent(reviewGeneration, client, epoch, () =>
+                PluginErrorMessage = _runtime.FormatText(
+                    "ExtensionsPage_Error_PluginInspectFormat",
+                    TokenSanitizer.Sanitize(ex.Message)));
             return null;
         }
+    }
+
+    private PluginSearchItemPresentation BuildCatalogPluginRow(
+        PluginCatalogEntry plugin,
+        IOperatorGatewayClient client,
+        long epoch,
+        bool canInspect,
+        bool canMutate)
+    {
+        var source = plugin.Install?.Source switch
+        {
+            "clawhub" => PluginInstallSource.ClawHub,
+            "official" => PluginInstallSource.Official,
+            _ => (PluginInstallSource?)null,
+        };
+        var packageName = plugin.Install?.PackageName ?? plugin.PackageName;
+        var officialPluginId = plugin.Install?.PluginId ?? plugin.Id;
+        var hasExactInstallIdentity = source switch
+        {
+            PluginInstallSource.ClawHub => !string.IsNullOrWhiteSpace(packageName),
+            PluginInstallSource.Official => !string.IsNullOrWhiteSpace(officialPluginId),
+            _ => false,
+        };
+        var canInstall = canMutate && hasExactInstallIdentity &&
+            client.AdvertisedFeatures.SupportsMethod("plugins.install") && canInspect;
+        return new PluginSearchItemPresentation(
+            source,
+            packageName,
+            source == PluginInstallSource.Official ? officialPluginId : null,
+            string.IsNullOrWhiteSpace(plugin.Name) ? plugin.Id : plugin.Name,
+            plugin.Description ?? string.Empty,
+            plugin.Version ?? _runtime.GetText("ExtensionsPage_VersionUnknown"),
+            source == PluginInstallSource.Official
+                ? _runtime.GetText("ExtensionsPage_OfficialCatalogVerification")
+                : _runtime.GetText("ExtensionsPage_TrustUnknown"),
+            plugin.Id,
+            source == PluginInstallSource.Official,
+            (canInspect && !string.IsNullOrWhiteSpace(plugin.Id)) || canInstall,
+            canInstall,
+            epoch,
+            client);
     }
 
     private string FormatDeclaredSurfaces(PluginDeclaredSurface declared)
@@ -372,6 +536,7 @@ internal sealed partial class ExtensionsPageViewModel
         AddSurface(lines, "ExtensionsPage_PluginSurfaceChannels", declared.Channels);
         AddSurface(lines, "ExtensionsPage_PluginSurfaceProviders", declared.Providers);
         AddSurface(lines, "ExtensionsPage_PluginSurfaceTools", declared.Tools);
+        AddSurface(lines, "ExtensionsPage_PluginSurfaceContracts", declared.Contracts);
         AddSurface(lines, "ExtensionsPage_PluginSurfaceHooks", declared.Hooks);
         AddSurface(lines, "ExtensionsPage_PluginSurfaceMcpServers", declared.McpServers);
         AddSurface(lines, "ExtensionsPage_PluginSurfaceSkills", declared.Skills);
@@ -379,6 +544,38 @@ internal sealed partial class ExtensionsPageViewModel
         AddSurface(lines, "ExtensionsPage_PluginSurfaceConfig", declared.DangerousConfigFlags);
         return lines.Count == 0
             ? _runtime.GetText("ExtensionsPage_PluginNoDeclaredSurfaces")
+            : string.Join(Environment.NewLine, lines);
+    }
+
+    private string FormatOperatorGrants(PluginOperatorGrants grants)
+    {
+        var lines = new List<string>();
+        if (grants.Hooks.AllowPromptInjection.Effective)
+            lines.Add(_runtime.GetText("ExtensionsPage_PluginGrantPromptInjection"));
+        if (grants.Hooks.AllowConversationAccess.Effective)
+            lines.Add(_runtime.GetText("ExtensionsPage_PluginGrantConversationAccess"));
+
+        if (grants.Llm is { } llm)
+        {
+            if (llm.AllowModelOverride == true)
+                lines.Add(_runtime.GetText("ExtensionsPage_PluginGrantModelOverride"));
+            AddSurface(lines, "ExtensionsPage_PluginGrantAllowedModels", llm.AllowedModels);
+            AddSurface(lines, "ExtensionsPage_PluginGrantAllowedCompletionModels", llm.AllowedCompletionModels);
+            if (llm.AllowAuthProfileOverride == true)
+                lines.Add(_runtime.GetText("ExtensionsPage_PluginGrantAuthProfileOverride"));
+            if (llm.AllowAgentIdOverride == true)
+                lines.Add(_runtime.GetText("ExtensionsPage_PluginGrantAgentOverride"));
+        }
+
+        if (grants.Subagent is { } subagent)
+        {
+            if (subagent.AllowModelOverride == true)
+                lines.Add(_runtime.GetText("ExtensionsPage_PluginGrantSubagentModelOverride"));
+            AddSurface(lines, "ExtensionsPage_PluginGrantSubagentModels", subagent.AllowedModels);
+        }
+
+        return lines.Count == 0
+            ? _runtime.GetText("ExtensionsPage_PluginNoEffectiveGrants")
             : string.Join(Environment.NewLine, lines);
     }
 
@@ -395,10 +592,16 @@ internal sealed partial class ExtensionsPageViewModel
             return _runtime.GetText("ExtensionsPage_TrustUnknown");
         var disposition = string.IsNullOrWhiteSpace(trust.Disposition)
             ? _runtime.GetText("ExtensionsPage_TrustUnknown")
-            : trust.Disposition;
-        return trust.Reasons.Count == 0
+            : TokenSanitizer.Sanitize(trust.Disposition);
+        var summary = trust.Reasons.Count == 0
             ? disposition
-            : disposition + ": " + string.Join(" ", trust.Reasons);
+            : disposition + ": " + string.Join(" ", trust.Reasons.Select(static reason =>
+                TokenSanitizer.Sanitize(reason)));
+        if (trust.Pending)
+            summary += " " + _runtime.GetText("ExtensionsPage_PluginTrustPending");
+        if (trust.Stale)
+            summary += " " + _runtime.GetText("ExtensionsPage_PluginTrustStale");
+        return summary;
     }
 
     public async Task<PluginActionOutcome> InstallPluginAsync(
@@ -414,10 +617,24 @@ internal sealed partial class ExtensionsPageViewModel
             return Failure("ExtensionsPage_PluginMutationUnavailable");
         if (!client.AdvertisedFeatures.SupportsMethod("plugins.install"))
             return Failure("ExtensionsPage_PluginsUpgradeRequired");
+        if (!client.AdvertisedFeatures.SupportsMethod("plugins.inspect"))
+            return Failure("ExtensionsPage_PluginsUpgradeRequired");
 
-        var request = PluginInstallRequest.FromClawHub(item.PackageName) with
+        var request = item.InstallSource switch
         {
-            Version = IsKnownVersion(item.Version) ? item.Version : null,
+            PluginInstallSource.ClawHub when !string.IsNullOrWhiteSpace(item.PackageName) =>
+                PluginInstallRequest.FromClawHub(item.PackageName),
+            PluginInstallSource.Official when !string.IsNullOrWhiteSpace(item.OfficialPluginId) =>
+                PluginInstallRequest.FromOfficialCatalog(item.OfficialPluginId),
+            _ => null,
+        };
+        if (request is null)
+            return Failure("ExtensionsPage_PluginMutationUnavailable");
+        request = request with
+        {
+            Version = item.InstallSource == PluginInstallSource.ClawHub && IsKnownVersion(review.Version)
+                ? review.Version
+                : null,
             AcknowledgeCapabilities = acknowledgement,
             AcknowledgeInstallPolicyWarning = acknowledgeInstallPolicyWarning,
         };
@@ -426,20 +643,26 @@ internal sealed partial class ExtensionsPageViewModel
             var result = await client.InstallPluginAsync(request).ConfigureAwait(false);
             return await CompletePluginMutationAsync(
                 client,
+                review.ConnectionEpoch,
                 result,
                 "ExtensionsPage_PluginInstalled").ConfigureAwait(false);
         }
         catch (GatewayRequestException ex) when (PluginCapabilityConsentDetails.TryParse(ex, out var consent))
         {
-            return await BuildCapabilityOutcomeAsync(client, consent!).ConfigureAwait(false);
+            return await BuildCapabilityOutcomeAsync(client, review, consent!).ConfigureAwait(false);
         }
         catch (GatewayRequestException ex) when (InstallPolicyWarningDetails.TryParse(ex, out var policy))
         {
-            return BuildInstallPolicyOutcome(policy!);
+            return IsExpectedInstallPolicyWarning(policy!)
+                ? BuildInstallPolicyOutcome(policy!)
+                : Failure("ExtensionsPage_PluginReviewExpired");
         }
         catch (Exception ex) when (ex is TimeoutException or GatewayConnectionLostException)
         {
-            await WaitForPluginReconnectAndRefreshAsync(client, expectRestart: true).ConfigureAwait(false);
+            await WaitForPluginReconnectAndRefreshAsync(
+                client,
+                review.ConnectionEpoch,
+                expectRestart: true).ConfigureAwait(false);
             return Failure("ExtensionsPage_PluginActionUnconfirmed");
         }
         catch (Exception ex)
@@ -466,16 +689,20 @@ internal sealed partial class ExtensionsPageViewModel
                 acknowledgement)).ConfigureAwait(false);
             return await CompletePluginMutationAsync(
                 client,
+                review.ConnectionEpoch,
                 result,
                 item.Enabled ? "ExtensionsPage_PluginDisabled" : "ExtensionsPage_PluginEnabled").ConfigureAwait(false);
         }
         catch (GatewayRequestException ex) when (PluginCapabilityConsentDetails.TryParse(ex, out var consent))
         {
-            return await BuildCapabilityOutcomeAsync(client, consent!).ConfigureAwait(false);
+            return await BuildCapabilityOutcomeAsync(client, review, consent!).ConfigureAwait(false);
         }
         catch (Exception ex) when (ex is TimeoutException or GatewayConnectionLostException)
         {
-            await WaitForPluginReconnectAndRefreshAsync(client, expectRestart: true).ConfigureAwait(false);
+            await WaitForPluginReconnectAndRefreshAsync(
+                client,
+                review.ConnectionEpoch,
+                expectRestart: true).ConfigureAwait(false);
             return Failure("ExtensionsPage_PluginActionUnconfirmed");
         }
         catch (Exception ex)
@@ -497,12 +724,16 @@ internal sealed partial class ExtensionsPageViewModel
             var result = await client.UninstallPluginAsync(item.PluginId).ConfigureAwait(false);
             return await CompletePluginMutationAsync(
                 client,
+                review.ConnectionEpoch,
                 result,
                 "ExtensionsPage_PluginUninstalled").ConfigureAwait(false);
         }
         catch (Exception ex) when (ex is TimeoutException or GatewayConnectionLostException)
         {
-            await WaitForPluginReconnectAndRefreshAsync(client, expectRestart: true).ConfigureAwait(false);
+            await WaitForPluginReconnectAndRefreshAsync(
+                client,
+                review.ConnectionEpoch,
+                expectRestart: true).ConfigureAwait(false);
             return Failure("ExtensionsPage_PluginActionUnconfirmed");
         }
         catch (Exception ex)
@@ -525,6 +756,7 @@ internal sealed partial class ExtensionsPageViewModel
 
     private async Task<PluginActionOutcome> CompletePluginMutationAsync(
         IOperatorGatewayClient client,
+        long initialEpoch,
         PluginMutationResult result,
         string successKey)
     {
@@ -535,6 +767,7 @@ internal sealed partial class ExtensionsPageViewModel
 
         var recovered = await WaitForPluginReconnectAndRefreshAsync(
             client,
+            initialEpoch,
             result.RestartRequired).ConfigureAwait(false);
         var baseMessage = _runtime.GetText(successKey);
         var warnings = result.Warnings
@@ -555,20 +788,65 @@ internal sealed partial class ExtensionsPageViewModel
 
     private async Task<PluginActionOutcome> BuildCapabilityOutcomeAsync(
         IOperatorGatewayClient client,
+        PluginReviewPresentation review,
         PluginCapabilityConsentDetails consent)
     {
-        if (client.ConnectionEpoch != _runtime.CurrentClient?.ConnectionEpoch)
+        if (!ReferenceEquals(client, _runtime.CurrentClient) ||
+            client.ConnectionEpoch != review.ConnectionEpoch)
             return Failure("ExtensionsPage_PluginReviewExpired");
+        var expectedPluginId = review.InstalledItem?.PluginId ??
+            review.SearchItem?.RuntimeId ?? review.SearchItem?.OfficialPluginId;
+        if (!string.IsNullOrWhiteSpace(expectedPluginId) &&
+            !string.Equals(consent.PluginId, expectedPluginId, StringComparison.Ordinal))
+        {
+            return Failure("ExtensionsPage_PluginReviewExpired");
+        }
         try
         {
             var inspected = await client.InspectPluginAsync(consent.PluginId).ConfigureAwait(false);
-            if (!inspected.Ok || client.ConnectionEpoch != _runtime.CurrentClient?.ConnectionEpoch)
+            if (!inspected.IsSupported || !inspected.Ok ||
+                !ReferenceEquals(client, _runtime.CurrentClient) ||
+                client.ConnectionEpoch != review.ConnectionEpoch ||
+                string.IsNullOrWhiteSpace(inspected.ReviewToken) ||
+                !string.Equals(inspected.Plugin.Id, consent.PluginId, StringComparison.Ordinal))
+            {
                 return Failure("ExtensionsPage_PluginInspectUnavailable");
+            }
+
+            if (review.SearchItem is { InstallSource: PluginInstallSource.ClawHub } searchItem &&
+                (string.IsNullOrWhiteSpace(inspected.Source?.PackageName) ||
+                 !string.Equals(inspected.Source.PackageName, searchItem.PackageName, StringComparison.Ordinal)))
+            {
+                return Failure("ExtensionsPage_PluginReviewExpired");
+            }
+            var inspectedVersion = inspected.Plugin.Version;
+            if (IsKnownVersion(review.Version) &&
+                (string.IsNullOrWhiteSpace(inspectedVersion) ||
+                 !string.Equals(review.Version, inspectedVersion, StringComparison.Ordinal)))
+            {
+                return Failure("ExtensionsPage_PluginReviewExpired");
+            }
+
+            var refreshedReview = review with
+            {
+                PluginId = inspected.Plugin.Id,
+                Name = string.IsNullOrWhiteSpace(inspected.Plugin.Name)
+                    ? inspected.Plugin.Id
+                    : inspected.Plugin.Name,
+                Description = inspected.Plugin.Description ?? review.Description,
+                Version = string.IsNullOrWhiteSpace(inspectedVersion) ? review.Version : inspectedVersion,
+                Origin = inspected.Plugin.Origin ?? inspected.Source?.Kind ?? review.Origin,
+                InstallIdentity = inspected.Source?.PackageName ?? inspected.Source?.Spec ?? review.InstallIdentity,
+                Integrity = inspected.Source?.Integrity ?? _runtime.GetText("ExtensionsPage_IntegrityUnavailable"),
+                DeclaredSurfaces = FormatDeclaredSurfaces(inspected.Declared),
+                GrantedAccess = FormatOperatorGrants(inspected.Grants),
+                Trust = FormatPluginTrust(inspected.Trust),
+                ReviewToken = inspected.ReviewToken,
+            };
             var prompt = new PluginCapabilityPrompt(
-                consent.PluginId,
-                FormatDeclaredSurfaces(inspected.Declared),
+                refreshedReview,
                 FormatDeclaredSurfaces(consent.Widened),
-                new PluginCapabilityAcknowledgement(consent.ReviewToken, client.ConnectionEpoch));
+                new PluginCapabilityAcknowledgement(inspected.ReviewToken, client.ConnectionEpoch));
             return new(
                 false,
                 _runtime.GetText("ExtensionsPage_PluginCapabilityConsentRequired"),
@@ -590,18 +868,28 @@ internal sealed partial class ExtensionsPageViewModel
             false,
             _runtime.GetText("ExtensionsPage_PluginInstallPolicyConsentRequired"),
             InstallPolicyPrompt: new PluginInstallPolicyPrompt(
-                TokenSanitizer.Sanitize(policy.Reason),
+                _runtime.FormatText(
+                    "ExtensionsPage_PluginPolicyTargetFormat",
+                    TokenSanitizer.Sanitize(policy.TargetName)) + Environment.NewLine +
+                    TokenSanitizer.Sanitize(policy.Reason),
                 findings));
+    }
+
+    private static bool IsExpectedInstallPolicyWarning(InstallPolicyWarningDetails policy)
+    {
+        return string.Equals(policy.TargetType, "plugin", StringComparison.Ordinal) &&
+            string.Equals(policy.RequestMode, "install", StringComparison.Ordinal) &&
+            !string.IsNullOrWhiteSpace(policy.TargetName);
     }
 
     private async Task<bool> WaitForPluginReconnectAndRefreshAsync(
         IOperatorGatewayClient initialClient,
+        long initialEpoch,
         bool expectRestart)
     {
         var recovered = !expectRestart;
         if (expectRestart)
         {
-            var initialEpoch = initialClient.ConnectionEpoch;
             var observedRestart = false;
             for (var attempt = 0; attempt < 10 && _active; attempt++)
             {
@@ -638,6 +926,19 @@ internal sealed partial class ExtensionsPageViewModel
 
     private PluginActionOutcome Failure(string key) => new(false, _runtime.GetText(key));
 
+    private void ClearPluginSnapshot()
+    {
+        Interlocked.Increment(ref _pluginReviewGeneration);
+        _activePluginQuery = string.Empty;
+        InstalledPlugins = [];
+        _catalogPlugins = [];
+        PluginSearchResults = [];
+        PluginMutationAllowed = false;
+        PluginDiagnosticCount = 0;
+        IsSearchingPlugins = false;
+        IsLoadingPlugins = false;
+    }
+
     private PluginActionOutcome FailureWithError(Exception exception) => new(
         false,
         _runtime.FormatText(
@@ -659,5 +960,34 @@ internal sealed partial class ExtensionsPageViewModel
             return;
         }
         action();
+    });
+
+    private void ApplyPluginSearchIfCurrent(
+        long generation,
+        IOperatorGatewayClient? client,
+        long epoch,
+        Action action) => Dispatch(() =>
+    {
+        if (!_active || generation != Volatile.Read(ref _pluginSearchGeneration) ||
+            !ReferenceEquals(client, _runtime.CurrentClient) ||
+            (client is not null && client.ConnectionEpoch != epoch))
+        {
+            return;
+        }
+        action();
+    });
+
+    private void ApplyPluginReviewIfCurrent(
+        long generation,
+        IOperatorGatewayClient client,
+        long epoch,
+        Action action) => Dispatch(() =>
+    {
+        if (_active && generation == Volatile.Read(ref _pluginReviewGeneration) &&
+            ReferenceEquals(client, _runtime.CurrentClient) &&
+            client.ConnectionEpoch == epoch)
+        {
+            action();
+        }
     });
 }

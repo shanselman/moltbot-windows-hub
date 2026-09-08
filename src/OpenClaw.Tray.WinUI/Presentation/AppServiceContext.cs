@@ -2,6 +2,7 @@ using OpenClaw.Shared.ExecApprovals;
 using OpenClaw.Connection.LocalAi;
 using OpenClawTray.Services;
 using OpenClaw.Shared;
+using OpenClaw.Connection;
 
 namespace OpenClawTray.Presentation;
 
@@ -23,7 +24,8 @@ internal sealed class AppServiceContext
         Func<IOperatorGatewayClient?>? gatewayClientAccessor = null,
         Func<IReadOnlyList<string>>? agentIdsAccessor = null,
         Func<string, string>? resourceAccessor = null,
-        Func<string, object?[], string>? resourceFormatter = null)
+        Func<string, object?[], string>? resourceFormatter = null,
+        IGatewayConnectionManager? gatewayConnectionManager = null)
     {
         Dispatcher = dispatcher ?? throw new ArgumentNullException(nameof(dispatcher));
         AppCommands = appCommands ?? throw new ArgumentNullException(nameof(appCommands));
@@ -35,6 +37,7 @@ internal sealed class AppServiceContext
         AgentIdsAccessor = agentIdsAccessor;
         ResourceAccessor = resourceAccessor;
         ResourceFormatter = resourceFormatter;
+        GatewayConnectionManager = gatewayConnectionManager;
     }
 
     public IUiDispatcher Dispatcher { get; }
@@ -47,4 +50,5 @@ internal sealed class AppServiceContext
     public Func<IReadOnlyList<string>>? AgentIdsAccessor { get; }
     public Func<string, string>? ResourceAccessor { get; }
     public Func<string, object?[], string>? ResourceFormatter { get; }
+    public IGatewayConnectionManager? GatewayConnectionManager { get; }
 }

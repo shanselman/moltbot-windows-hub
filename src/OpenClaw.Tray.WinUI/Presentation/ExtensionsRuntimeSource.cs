@@ -1,10 +1,12 @@
 using OpenClaw.Shared;
+using OpenClaw.Connection;
 
 namespace OpenClawTray.Presentation;
 
 internal interface IExtensionsRuntimeSource
 {
     IOperatorGatewayClient? CurrentClient { get; }
+    event EventHandler? CurrentClientChanged;
     IReadOnlyList<string> GetAgentIds();
     string GetText(string resourceKey);
     string FormatText(string resourceKey, params object?[] args);
@@ -20,6 +22,7 @@ internal sealed class ExtensionsRuntimeSource : IExtensionsRuntimeSource
     private readonly Func<IReadOnlyList<string>> _getAgentIds;
     private readonly Func<string, string> _getText;
     private readonly Func<string, object?[], string> _formatText;
+    private readonly IGatewayConnectionManager? _connectionManager;
 
     public ExtensionsRuntimeSource(
         Func<IOperatorGatewayClient?> getClient,
@@ -33,7 +36,31 @@ internal sealed class ExtensionsRuntimeSource : IExtensionsRuntimeSource
         _formatText = formatText ?? throw new ArgumentNullException(nameof(formatText));
     }
 
+    public ExtensionsRuntimeSource(
+        IGatewayConnectionManager connectionManager,
+        Func<IReadOnlyList<string>> getAgentIds,
+        Func<string, string> getText,
+        Func<string, object?[], string> formatText)
+        : this(
+            () => connectionManager.OperatorClient,
+            getAgentIds,
+            getText,
+            formatText)
+    {
+        _connectionManager = connectionManager ??
+            throw new ArgumentNullException(nameof(connectionManager));
+        _connectionManager.OperatorClientChanged += OnOperatorClientChanged;
+    }
+
     public IOperatorGatewayClient? CurrentClient => _getClient();
+
+    public event EventHandler? CurrentClientChanged;
+
+    internal void NotifyCurrentClientChanged() =>
+        CurrentClientChanged?.Invoke(this, EventArgs.Empty);
+
+    private void OnOperatorClientChanged(object? sender, OperatorClientChangedEventArgs e) =>
+        NotifyCurrentClientChanged();
 
     public IReadOnlyList<string> GetAgentIds()
     {

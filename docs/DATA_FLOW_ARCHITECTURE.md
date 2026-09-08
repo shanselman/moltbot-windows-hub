@@ -129,13 +129,13 @@ private void OnAppStateChanged(object? sender, PropertyChangedEventArgs e)
 | ConfigPage | Config, ConfigSchema |
 | BindingsPage | Config |
 | CronPage | CronList, CronStatus, CronRuns |
-| SkillsPage | SkillsData |
 | WorkspacePage | AgentFilesList, AgentFileContent |
 | AgentEventsPage | AgentEventAdded (separate event) |
 | AboutPage | GatewaySelf |
 
-Pages that don't observe AppState: ChatPage, SettingsPage, SandboxPage,
-VoiceSettingsPage.
+Pages that don't observe AppState: ChatPage, ExtensionsPage, SettingsPage,
+SandboxPage, VoiceSettingsPage. ExtensionsPage uses typed skills and plugins RPC
+results owned by its injected view model.
 
 ### HubWindow - minimal role
 

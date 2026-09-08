@@ -44,11 +44,18 @@ internal static class AppServiceRegistration
             context.ResourceAccessor is not null &&
             context.ResourceFormatter is not null)
         {
-            services.AddSingleton<IExtensionsRuntimeSource>(new ExtensionsRuntimeSource(
-                context.GatewayClientAccessor,
-                context.AgentIdsAccessor,
-                context.ResourceAccessor,
-                context.ResourceFormatter));
+            var runtime = context.GatewayConnectionManager is null
+                ? new ExtensionsRuntimeSource(
+                    context.GatewayClientAccessor,
+                    context.AgentIdsAccessor,
+                    context.ResourceAccessor,
+                    context.ResourceFormatter)
+                : new ExtensionsRuntimeSource(
+                    context.GatewayConnectionManager,
+                    context.AgentIdsAccessor,
+                    context.ResourceAccessor,
+                    context.ResourceFormatter);
+            services.AddSingleton<IExtensionsRuntimeSource>(runtime);
             services.AddTransient<ExtensionsPageViewModel>();
         }
         // Settings facade over the App-owned SettingsManager. Container-owned so it can dispose

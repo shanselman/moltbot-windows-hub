@@ -20,7 +20,7 @@
                 left-shift the column. A Grid in between gives the
                 StackPanel a finite viewport-width slot so Stretch fills
                 up to MaxWidth and centers with growing side margins.
-                (Pattern matches ConnectionPage / SkillsPage.)
+                (Pattern matches ConnectionPage / ExtensionsPage.)
             -->
             <Grid HorizontalAlignment="Stretch">
                 <StackPanel Padding="24" Spacing="8" HorizontalAlignment="Stretch" MaxWidth="900">

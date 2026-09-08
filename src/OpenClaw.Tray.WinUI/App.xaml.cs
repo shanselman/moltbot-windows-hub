@@ -471,7 +471,8 @@ public partial class App : Application, OpenClawTray.Services.IAppCommands, IPer
             gatewayClientAccessor: () => _connectionManager?.OperatorClient,
             agentIdsAccessor: () => _appState?.GetAgentIds() ?? ["main"],
             resourceAccessor: LocalizationHelper.GetString,
-            resourceFormatter: (key, values) => LocalizationHelper.Format(key, values));
+            resourceFormatter: (key, values) => LocalizationHelper.Format(key, values),
+            gatewayConnectionManager: _connectionManager);
 
         var services = new ServiceCollection();
         services.AddOpenClawTrayCore(context);

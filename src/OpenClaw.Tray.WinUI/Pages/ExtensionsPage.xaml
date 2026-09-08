@@ -40,10 +40,10 @@
                             <ColumnDefinition Width="*"/>
                             <ColumnDefinition Width="Auto"/>
                         </Grid.ColumnDefinitions>
-                        <Button x:Uid="ExtensionsPage_InstalledTab" x:Name="InstalledSkillsButton"
-                                Content="Installed" Click="OnInstalledSkillsClick"/>
-                        <Button x:Uid="ExtensionsPage_DiscoverTab" x:Name="DiscoverSkillsButton"
-                                Grid.Column="1" Content="Discover" Click="OnDiscoverSkillsClick"/>
+                        <ToggleButton x:Uid="ExtensionsPage_InstalledTab" x:Name="InstalledSkillsButton"
+                                      Content="Installed" IsChecked="True" Click="OnInstalledSkillsClick"/>
+                        <ToggleButton x:Uid="ExtensionsPage_DiscoverTab" x:Name="DiscoverSkillsButton"
+                                      Grid.Column="1" Content="Discover" Click="OnDiscoverSkillsClick"/>
                         <ComboBox x:Uid="ExtensionsPage_Agent" x:Name="AgentCombo"
                                   Grid.Column="3" Header="Agent" MinWidth="180"
                                   SelectionChanged="OnAgentSelectionChanged"/>
@@ -65,7 +65,8 @@
                             </Grid.ColumnDefinitions>
                             <TextBlock x:Name="SkillsCountText" VerticalAlignment="Center"
                                        Foreground="{ThemeResource TextFillColorSecondaryBrush}"/>
-                            <ComboBox x:Name="SkillFilterCombo" Grid.Column="1" MinWidth="160"
+                            <ComboBox x:Uid="ExtensionsPage_SkillFilter" x:Name="SkillFilterCombo"
+                                      Grid.Column="1" MinWidth="160" AutomationProperties.Name="Skill filter"
                                       SelectionChanged="OnSkillFilterChanged">
                                 <ComboBoxItem x:Uid="ExtensionsPage_FilterAll" Content="All" Tag="All"/>
                                 <ComboBoxItem x:Uid="ExtensionsPage_FilterReady" Content="Ready" Tag="Ready"/>
@@ -80,8 +81,15 @@
                                 <DataTemplate>
                                     <Border Background="{ThemeResource CardBackgroundFillColorDefaultBrush}"
                                             CornerRadius="8" Padding="16" Margin="0,0,0,8"
+                                            AutomationProperties.Name="{Binding Name}"
                                             HorizontalAlignment="Stretch">
                                         <Grid ColumnSpacing="12" RowSpacing="5">
+                                            <Grid.RowDefinitions>
+                                                <RowDefinition Height="Auto"/>
+                                                <RowDefinition Height="Auto"/>
+                                                <RowDefinition Height="Auto"/>
+                                                <RowDefinition Height="Auto"/>
+                                            </Grid.RowDefinitions>
                                             <Grid.ColumnDefinitions>
                                                 <ColumnDefinition Width="*"/>
                                                 <ColumnDefinition Width="Auto"/>
@@ -103,9 +111,13 @@
                                                         IsEnabled="{Binding CanUpdate}" Click="OnUpdateSkillClick"/>
                                                 <HyperlinkButton x:Uid="ExtensionsPage_OpenClawHubAction" Content="Open in ClawHub"
                                                                  Tag="{Binding SafeSkillUrl}" IsEnabled="{Binding HasSkillUrl}"
+                                                                 ToolTipService.ToolTip="{Binding SafeSkillUrl}"
+                                                                 AutomationProperties.HelpText="{Binding SafeSkillUrl}"
                                                                  Click="OnOpenExternalLinkClick"/>
                                                 <HyperlinkButton x:Uid="ExtensionsPage_OpenAuditAction" Content="Security audit"
                                                                  Tag="{Binding SafeSecurityAuditUrl}" IsEnabled="{Binding HasSecurityAuditUrl}"
+                                                                 ToolTipService.ToolTip="{Binding SafeSecurityAuditUrl}"
+                                                                 AutomationProperties.HelpText="{Binding SafeSecurityAuditUrl}"
                                                                  Click="OnOpenExternalLinkClick"/>
                                                 <TextBlock Text="{Binding SecurityLabel}" VerticalAlignment="Center"
                                                            Foreground="{ThemeResource TextFillColorSecondaryBrush}"/>
@@ -128,6 +140,7 @@
                     <Grid x:Name="DiscoverSkillsPanel" Grid.Row="2" Margin="0,12,0,0" Visibility="Collapsed">
                         <Grid.RowDefinitions>
                             <RowDefinition Height="Auto"/>
+                            <RowDefinition Height="Auto"/>
                             <RowDefinition Height="*"/>
                         </Grid.RowDefinitions>
                         <Grid ColumnSpacing="8">
@@ -149,12 +162,14 @@
                                 <TextBlock x:Name="SkillReviewSummary" TextWrapping="Wrap"/>
                                 <TextBlock x:Name="SkillReviewPublisher" TextWrapping="Wrap"/>
                                 <TextBlock x:Name="SkillReviewVersion"/>
+                                <TextBlock x:Name="SkillReviewInstallIdentity" TextWrapping="Wrap"
+                                           FontFamily="Consolas" IsTextSelectionEnabled="True"/>
                                 <TextBlock x:Name="SkillReviewMetadata" TextWrapping="Wrap"
                                            Foreground="{ThemeResource TextFillColorSecondaryBrush}"/>
                                 <InfoBar x:Name="UnscannedSkillWarning" IsOpen="False" IsClosable="False"
                                          Severity="Warning"/>
                                 <CheckBox x:Uid="ExtensionsPage_UnscannedAcknowledge" x:Name="UnscannedSkillAcknowledge"
-                                          Content="I understand that detailed metadata was not scanned."
+                                          Content="I understand that ClawHub has not scanned this source."
                                           Visibility="Collapsed" Checked="OnUnscannedAcknowledgeChanged"
                                           Unchecked="OnUnscannedAcknowledgeChanged"/>
                                 <StackPanel Orientation="Horizontal" Spacing="8">
@@ -170,8 +185,14 @@
                                 <DataTemplate>
                                     <Border Background="{ThemeResource CardBackgroundFillColorDefaultBrush}"
                                             CornerRadius="8" Padding="16" Margin="0,0,0,8"
+                                            AutomationProperties.Name="{Binding Name}"
                                             HorizontalAlignment="Stretch">
                                         <Grid ColumnSpacing="12" RowSpacing="5">
+                                            <Grid.RowDefinitions>
+                                                <RowDefinition Height="Auto"/>
+                                                <RowDefinition Height="Auto"/>
+                                                <RowDefinition Height="Auto"/>
+                                            </Grid.RowDefinitions>
                                             <Grid.ColumnDefinitions>
                                                 <ColumnDefinition Width="*"/>
                                                 <ColumnDefinition Width="Auto"/>
@@ -205,10 +226,10 @@
                         <RowDefinition Height="*"/>
                     </Grid.RowDefinitions>
                     <StackPanel Orientation="Horizontal" Spacing="8">
-                        <Button x:Uid="ExtensionsPage_InstalledPluginsTab" Content="Installed"
-                                Click="OnInstalledPluginsClick"/>
-                        <Button x:Uid="ExtensionsPage_DiscoverPluginsTab" Content="Discover"
-                                Click="OnDiscoverPluginsClick"/>
+                        <ToggleButton x:Uid="ExtensionsPage_InstalledPluginsTab" x:Name="InstalledPluginsButton"
+                                      Content="Installed" IsChecked="True" Click="OnInstalledPluginsClick"/>
+                        <ToggleButton x:Uid="ExtensionsPage_DiscoverPluginsTab" x:Name="DiscoverPluginsButton"
+                                      Content="Discover" Click="OnDiscoverPluginsClick"/>
                     </StackPanel>
                     <InfoBar x:Name="PluginInfoBar" Grid.Row="1" Margin="0,10,0,0"
                              IsOpen="False" IsClosable="True" Severity="Informational"/>
@@ -227,8 +248,14 @@
                                 <DataTemplate>
                                     <Border Background="{ThemeResource CardBackgroundFillColorDefaultBrush}"
                                             CornerRadius="8" Padding="16" Margin="0,0,0,8"
+                                            AutomationProperties.Name="{Binding Name}"
                                             HorizontalAlignment="Stretch">
                                         <Grid ColumnSpacing="12" RowSpacing="5">
+                                            <Grid.RowDefinitions>
+                                                <RowDefinition Height="Auto"/>
+                                                <RowDefinition Height="Auto"/>
+                                                <RowDefinition Height="Auto"/>
+                                            </Grid.RowDefinitions>
                                             <Grid.ColumnDefinitions>
                                                 <ColumnDefinition Width="*"/>
                                                 <ColumnDefinition Width="Auto"/>
@@ -292,9 +319,17 @@
                                 <TextBlock x:Name="PluginReviewDescription" TextWrapping="Wrap"/>
                                 <TextBlock x:Name="PluginReviewVersion"/>
                                 <TextBlock x:Name="PluginReviewOrigin"/>
+                                <TextBlock x:Name="PluginReviewIdentity" TextWrapping="Wrap"
+                                           FontFamily="Consolas" IsTextSelectionEnabled="True"/>
+                                <TextBlock x:Name="PluginReviewIntegrity" TextWrapping="Wrap"
+                                           FontFamily="Consolas" IsTextSelectionEnabled="True"/>
                                 <TextBlock x:Uid="ExtensionsPage_DeclaredAccessHeading" Text="Declared access"
                                            FontWeight="SemiBold" Margin="0,4,0,0"/>
                                 <TextBlock x:Name="PluginReviewSurfaces" TextWrapping="Wrap"
+                                           FontFamily="Consolas" IsTextSelectionEnabled="True"/>
+                                <TextBlock x:Uid="ExtensionsPage_GrantedAccessHeading" Text="Effective grants"
+                                           FontWeight="SemiBold" Margin="0,4,0,0"/>
+                                <TextBlock x:Name="PluginReviewGrants" TextWrapping="Wrap"
                                            FontFamily="Consolas" IsTextSelectionEnabled="True"/>
                                 <TextBlock x:Name="PluginReviewTrust" TextWrapping="Wrap"
                                            Foreground="{ThemeResource TextFillColorSecondaryBrush}"/>
@@ -322,8 +357,14 @@
                                 <DataTemplate>
                                     <Border Background="{ThemeResource CardBackgroundFillColorDefaultBrush}"
                                             CornerRadius="8" Padding="16" Margin="0,0,0,8"
+                                            AutomationProperties.Name="{Binding Name}"
                                             HorizontalAlignment="Stretch">
                                         <Grid ColumnSpacing="12" RowSpacing="5">
+                                            <Grid.RowDefinitions>
+                                                <RowDefinition Height="Auto"/>
+                                                <RowDefinition Height="Auto"/>
+                                                <RowDefinition Height="Auto"/>
+                                            </Grid.RowDefinitions>
                                             <Grid.ColumnDefinitions>
                                                 <ColumnDefinition Width="*"/>
                                                 <ColumnDefinition Width="Auto"/>
