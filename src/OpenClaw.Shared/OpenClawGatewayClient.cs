@@ -325,7 +325,11 @@ public partial class OpenClawGatewayClient : WebSocketClientBase, IOperatorGatew
         _connectEnvelopeSigner = new DeviceIdentityConnectEnvelopeSigner(_deviceIdentity);
         _connectAuthToken = HasUsableOperatorDeviceToken ? _deviceIdentity.DeviceToken! : (_tokenIsBootstrapToken ? string.Empty : _token);
         _useV2Signature |= _tokenIsBootstrapToken && !HasUsableOperatorDeviceToken;
-        _skillsGatewayApi = new SkillsGatewayApi(SendWizardRequestAsync, EnsureExtensionMethodSupported);
+        _skillsGatewayApi = new SkillsGatewayApi(
+            SendWizardRequestAsync,
+            EnsureExtensionMethodSupported,
+            () => ConnectionEpoch,
+            SendExtensionMutationRequestAsync);
         _pluginsGatewayApi = new PluginsGatewayApi(
             SendWizardRequestAsync,
             EnsureExtensionMethodSupported,

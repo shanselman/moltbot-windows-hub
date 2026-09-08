@@ -242,7 +242,8 @@ public sealed record ClawHubSkillInstallRequest(
     string InstallReference,
     string? AgentId = null,
     string? Version = null,
-    int? TimeoutMs = null);
+    int? TimeoutMs = null,
+    long? ConnectionEpoch = null);
 
 public sealed record ClawHubSkillUpdateRequest(
     string InstallReference,

@@ -591,7 +591,8 @@ public class OpenClawGatewayClientTests
         {
             if (_pauseMutationSend &&
                 (message.Contains("plugins.install", StringComparison.Ordinal) ||
-                 message.Contains("plugins.setEnabled", StringComparison.Ordinal)))
+                 message.Contains("plugins.setEnabled", StringComparison.Ordinal) ||
+                 message.Contains("skills.install", StringComparison.Ordinal)))
             {
                 _mutationSendEntered.TrySetResult(true);
                 await _continueMutationSend.Task.WaitAsync(cancellationToken);
@@ -867,6 +868,50 @@ public class OpenClawGatewayClientTests
         client.ContinueMutationSend();
 
         var exception = await Assert.ThrowsAsync<InvalidOperationException>(() => enableTask);
+        Assert.Contains("expired", exception.Message, StringComparison.OrdinalIgnoreCase);
+        using var noRequestTimeout = new CancellationTokenSource(TimeSpan.FromMilliseconds(250));
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(
+            () => server.ReceiveTextAsync(noRequestTimeout.Token));
+    }
+
+    [Fact]
+    public async Task InstallClawHubSkillAsync_RejectsReconnectBetweenReviewAndFinalWrite()
+    {
+        using var server = new LoopbackWebSocketServer();
+        using var identity = new TempDirectory("skill-install-race-");
+        await server.StartAsync();
+        using var client = new PausingGatewayClient(server.WebSocketUrl, identity.Path);
+        var helper = new GatewayClientTestHelper(client);
+        await client.ConnectAsync();
+        helper.TrackPendingRequest("connect-skill-install-race", "connect");
+        helper.ProcessRawMessage("""
+        {
+          "type": "res",
+          "id": "connect-skill-install-race",
+          "ok": true,
+          "payload": {
+            "type": "hello-ok",
+            "protocol": 4,
+            "features": {
+              "methods": ["skills.install"],
+              "events": []
+            },
+            "snapshot": {}
+          }
+        }
+        """);
+        var request = new ClawHubSkillInstallRequest(
+            "@openclaw/weather",
+            Version: "1.2.3",
+            ConnectionEpoch: client.ConnectionEpoch);
+        client.ArmMutationSendPause();
+
+        var installTask = client.InstallClawHubSkillAsync(request, timeoutMs: 10_000);
+        await client.MutationSendEntered.WaitAsync(TimeSpan.FromSeconds(2));
+        client.AdvanceConnectionEpochForTest();
+        client.ContinueMutationSend();
+
+        var exception = await Assert.ThrowsAsync<InvalidOperationException>(() => installTask);
         Assert.Contains("expired", exception.Message, StringComparison.OrdinalIgnoreCase);
         using var noRequestTimeout = new CancellationTokenSource(TimeSpan.FromMilliseconds(250));
         await Assert.ThrowsAnyAsync<OperationCanceledException>(

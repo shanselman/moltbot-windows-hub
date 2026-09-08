@@ -4,11 +4,18 @@ namespace OpenClaw.Shared;
 
 internal sealed class SkillsGatewayApi : GatewayExtensionApi
 {
+    private readonly Func<long> _getConnectionEpoch;
+    private readonly Func<string, object?, int, long, Task<JsonElement>> _sendMutationRequest;
+
     internal SkillsGatewayApi(
         Func<string, object?, int, Task<JsonElement>> sendRequest,
-        Action<string> ensureMethodSupported)
+        Action<string> ensureMethodSupported,
+        Func<long> getConnectionEpoch,
+        Func<string, object?, int, long, Task<JsonElement>> sendMutationRequest)
         : base(sendRequest, ensureMethodSupported)
     {
+        _getConnectionEpoch = getConnectionEpoch;
+        _sendMutationRequest = sendMutationRequest;
     }
 
     internal Task<SkillsStatusReport> GetStatusAsync(string? agentId, int timeoutMs) =>
@@ -58,7 +65,13 @@ internal sealed class SkillsGatewayApi : GatewayExtensionApi
         AddOptionalString(parameters, "version", request.Version);
         if (request.TimeoutMs.HasValue)
             parameters["timeoutMs"] = request.TimeoutMs.Value;
-        return SendAsync<SkillMutationResult>("skills.install", parameters, timeoutMs);
+        var connectionEpoch = _getConnectionEpoch();
+        if (request.ConnectionEpoch.HasValue && request.ConnectionEpoch.Value != connectionEpoch)
+        {
+            throw new InvalidOperationException(
+                "Skill review expired after the Gateway connection changed.");
+        }
+        return SendInstallAsync(parameters, timeoutMs, connectionEpoch);
     }
 
     internal Task<SkillMutationResult> UpdateAsync(
@@ -81,5 +94,20 @@ internal sealed class SkillsGatewayApi : GatewayExtensionApi
         RequireNonEmpty(skillKey, nameof(skillKey));
         return SendAsync<SkillMutationResult>(
             "skills.update", new { skillKey, enabled }, timeoutMs);
+    }
+
+    private async Task<SkillMutationResult> SendInstallAsync(
+        object? parameters,
+        int timeoutMs,
+        long connectionEpoch)
+    {
+        const string method = "skills.install";
+        EnsureMethodSupported(method);
+        var payload = await _sendMutationRequest(
+            method,
+            parameters,
+            timeoutMs,
+            connectionEpoch).ConfigureAwait(false);
+        return DeserializePayload<SkillMutationResult>(payload, method);
     }
 }
