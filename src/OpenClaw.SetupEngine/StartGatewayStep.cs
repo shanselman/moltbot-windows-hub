@@ -1,12 +1,4 @@
-using System.Diagnostics;
-using System.Net;
-using System.Net.Http;
-using System.Net.Sockets;
-using System.Runtime.InteropServices;
-using System.Security.Cryptography;
-using System.Text.Json;
-using OpenClaw.Connection;
-using OpenClaw.Shared;
+using System.Text.RegularExpressions;
 
 namespace OpenClaw.SetupEngine;
 
@@ -36,19 +28,32 @@ public sealed class StartGatewayStep : SetupStep
         if (!restart)
         {
             var portCheck = await ctx.Commands.RunInWslAsync(
-                distro, $"ss -tlnp 2>/dev/null | grep ':{ctx.Config.GatewayPort}\\b' || true",
+                distro, $"ss -H -ltnp 'sport = :{ctx.Config.GatewayPort}'",
                 TimeSpan.FromSeconds(10), ct: ct);
 
-            if (!string.IsNullOrWhiteSpace(portCheck.Stdout) && portCheck.Stdout.Contains($":{ctx.Config.GatewayPort}"))
+            if (portCheck.ExitCode != 0)
+                return StepResult.Fail($"Could not inspect gateway port {ctx.Config.GatewayPort} (exit {portCheck.ExitCode}).");
+
+            if (!string.IsNullOrWhiteSpace(portCheck.Stdout))
             {
-                if (!portCheck.Stdout.Contains("openclaw", StringComparison.OrdinalIgnoreCase))
+                // Installation may already start the service. Process names (including node) are not ownership proof.
+                var service = await ctx.Commands.RunInWslAsync(
+                    distro, "systemctl --user show openclaw-gateway.service -p MainPID --value",
+                    TimeSpan.FromSeconds(10), ct: ct);
+                var listeners = portCheck.Stdout.Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+                if (service.ExitCode != 0 || !int.TryParse(service.Stdout.Trim(), out var pid) || pid <= 0 ||
+                    listeners.Any(line => Regex.Matches(line, @"pid=(\d+),") is var owners &&
+                        (owners.Count == 0 || owners.Any(owner => owner.Groups[1].Value != pid.ToString()))))
                 {
-                    ctx.Logger.Warn($"Port {ctx.Config.GatewayPort} is in use by another process:\n{portCheck.Stdout.Trim()}");
+                    var names = string.Join(", ", Regex.Matches(portCheck.Stdout, "\\(\\\"([^\\\"]+)\\\",")
+                        .Select(owner => owner.Groups[1].Value).Distinct());
+                    var ownerDetail = names.Length > 0 ? $" Owning process: {names}." : "";
+                    ctx.Logger.Warn($"Port {ctx.Config.GatewayPort} is in use by another process.{ownerDetail}");
                     return StepResult.Fail(
-                        $"Port {ctx.Config.GatewayPort} is already in use by another process. Either stop the conflicting process or change GatewayPort in the setup config.");
+                        $"Port {ctx.Config.GatewayPort} is already in use by another process.{ownerDetail} Either stop the conflicting process or change GatewayPort in the setup config.");
                 }
 
-                ctx.Logger.Info($"Port {ctx.Config.GatewayPort} appears to be in use by openclaw — proceeding");
+                ctx.Logger.Info($"Port {ctx.Config.GatewayPort} is owned by openclaw-gateway.service (PID {pid}). Post-install port check succeeded.");
             }
         }
 

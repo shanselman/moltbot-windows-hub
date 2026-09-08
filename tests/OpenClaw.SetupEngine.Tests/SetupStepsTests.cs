@@ -3958,6 +3958,100 @@ public class SetupStepsTests : IDisposable
             decision.Result.Message);
     }
 
+    [Theory]
+    [InlineData("node", "321", true)]
+    [InlineData("openclaw-gateway", "321", true)]
+    [InlineData("node", "999", false)]
+    [InlineData("other-openclaw", "999", false)]
+    [InlineData("python3", "0", false)]
+    [InlineData("node", "", false)]
+    public async Task StartGateway_AfterFreePortAndInstall_RequiresServiceOwnedListener(
+        string processName, string mainPid, bool expectedSuccess)
+    {
+        var port = GetFreeTcpPort();
+        var installed = false;
+        var commands = new FakeCommandRunner(
+            _ => throw new InvalidOperationException("Unexpected Windows command"),
+            (_, command, _) =>
+            {
+                if (command.Contains("openclaw gateway install --force"))
+                {
+                    installed = true;
+                    return Ok();
+                }
+                Assert.True(installed);
+                return command switch
+                {
+                    var value when value == $"ss -H -ltnp 'sport = :{port}'" =>
+                        Ok($"LISTEN 0 511 127.0.0.1:{port} 0.0.0.0:* users:((\"{processName}\",pid=321,fd=22))"),
+                    "systemctl --user show openclaw-gateway.service -p MainPID --value" => Ok(mainPid),
+                    var value when value.Contains("openclaw gateway start") => Ok(),
+                    var value when value.Contains("curl -s") => Ok("200"),
+                    _ => throw new InvalidOperationException($"Unexpected command: {command}"),
+                };
+            });
+        var ctx = CreateContext(new SetupConfig { GatewayPort = port }, commands);
+        ctx.DistroName = "test-distro";
+
+        Assert.True((await new PreflightPortStep().ExecuteAsync(ctx, CancellationToken.None)).IsSuccess);
+        Assert.True((await new InstallGatewayServiceStep().ExecuteAsync(ctx, CancellationToken.None)).IsSuccess);
+        var result = await new StartGatewayStep().ExecuteAsync(ctx, CancellationToken.None);
+
+        Assert.Equal(expectedSuccess, result.IsSuccess);
+        Assert.All(commands.WslCalls, call => Assert.Equal(ctx.DistroName, call.DistroName));
+        if (!expectedSuccess)
+        {
+            Assert.Contains($"Port {port} is already in use by another process.", result.Message);
+            Assert.Contains($"Owning process: {processName}.", result.Message);
+            Assert.DoesNotContain(commands.WslCalls, call => call.Command.Contains("openclaw gateway start") || call.Command.Contains("curl -s"));
+        }
+    }
+
+    [Theory]
+    [InlineData("", "0", 0, true)]
+    [InlineData("LISTEN 0 511 127.0.0.1:18789 *:*", "321", 0, false)]
+    [InlineData("LISTEN 0 511 127.0.0.1:18789 *:* users:((\"node\",pid=321,fd=22))\nLISTEN 0 511 [::1]:18789 *:* users:((\"python3\",pid=999,fd=23))", "321", 0, false)]
+    [InlineData("LISTEN 0 511 127.0.0.1:18789 *:* users:((\"node\",pid=321,fd=22),(\"python3\",pid=999,fd=23))", "321", 0, false)]
+    [InlineData("", "321", 1, false)]
+    public async Task StartGateway_PortInspection_RejectsUnownedOrUnreadableListeners(
+        string listeners, string mainPid, int inspectionExitCode, bool expectedSuccess)
+    {
+        var commands = new FakeCommandRunner(_ => Ok(), (_, command, _) => command switch
+        {
+            var value when value.StartsWith("ss -H") => new CommandResult(inspectionExitCode, listeners, "", TimeSpan.Zero, false),
+            var value when value.StartsWith("systemctl --user show") => Ok(mainPid),
+            var value when value.Contains("openclaw gateway start") => Ok(),
+            var value when value.Contains("curl -s") => Ok("200"),
+            _ => throw new InvalidOperationException($"Unexpected command: {command}"),
+        });
+        var ctx = CreateContext(commands: commands);
+        ctx.DistroName = "test-distro";
+
+        var result = await new StartGatewayStep().ExecuteAsync(ctx, CancellationToken.None);
+
+        Assert.Equal(expectedSuccess, result.IsSuccess);
+    }
+
+    [Fact]
+    public async Task PreflightPort_ForeignListener_BlocksBeforeServiceInstall()
+    {
+        using var listener = new TcpListener(IPAddress.Loopback, 0) { ExclusiveAddressUse = true };
+        listener.Start();
+        var commands = new FakeCommandRunner(_ => throw new InvalidOperationException("Must not install"));
+        var ctx = CreateContext(new SetupConfig { GatewayPort = ((IPEndPoint)listener.LocalEndpoint).Port }, commands);
+
+        var result = await new PreflightPortStep().ExecuteAsync(ctx, CancellationToken.None);
+
+        Assert.False(result.IsSuccess);
+        Assert.Contains("already in use", result.Message);
+        if (OperatingSystem.IsWindows())
+        {
+            using var process = System.Diagnostics.Process.GetCurrentProcess();
+            Assert.Contains(process.ProcessName, result.Message);
+        }
+        Assert.Empty(commands.WslCalls);
+    }
+
     [Fact]
     public async Task StartGateway_RestartUsesRestartCommandAndWaitsForHealth()
     {
@@ -3980,7 +4074,7 @@ public class SetupStepsTests : IDisposable
         Assert.True(result.IsSuccess, result.Message);
         Assert.DoesNotContain(
             commands.WslCalls,
-            call => call.Command.Contains("ss -tlnp"));
+            call => call.Command.StartsWith("ss "));
         Assert.Contains(
             commands.WslCalls,
             call => call.Command.Contains("openclaw gateway restart"));

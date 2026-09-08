@@ -1,12 +1,6 @@
-using System.Diagnostics;
 using System.Net;
-using System.Net.Http;
 using System.Net.Sockets;
-using System.Runtime.InteropServices;
-using System.Security.Cryptography;
-using System.Text.Json;
 using OpenClaw.Connection;
-using OpenClaw.Shared;
 
 namespace OpenClaw.SetupEngine;
 
@@ -30,7 +24,13 @@ public sealed class PreflightPortStep : SetupStep
         foreach (var address in addresses)
         {
             if (!CanBind(address, port, out var error))
-                return StepResult.Fail($"Port {port} is already in use for {DescribeBind(address)} ({error.SocketErrorCode})");
+            {
+                var owners = string.Join(", ", WindowsTcpListenerSnapshot.Capture().Listeners
+                    .Where(listener => listener.Port == port && listener.Address.AddressFamily == address.AddressFamily)
+                    .Select(listener => listener.ProcessName).Where(name => !string.IsNullOrWhiteSpace(name)).Distinct());
+                return StepResult.Fail($"Port {port} is already in use for {DescribeBind(address)} ({error.SocketErrorCode})" +
+                    (owners.Length > 0 ? $". Owning process: {owners}." : ""));
+            }
         }
 
         return StepResult.Ok($"Port {port} is available");
