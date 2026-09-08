@@ -1969,7 +1969,7 @@ public class SetupStepsTests : IDisposable
         Assert.Contains("--output \"$installer\"", command);
         Assert.Contains("'https://openclaw.ai/install-cli.sh'", command);
         Assert.Contains("if ! test -s \"$installer\"", command);
-        Assert.Contains("bash -s -- --version '2026.5.22' --node-version '22.22.3' < \"$installer\"", command);
+        Assert.Contains("bash -s -- --version '2026.5.22' --node-version '24.19.0' < \"$installer\"", command);
         Assert.DoesNotContain("--retry", command);
         Assert.DoesNotContain("| bash", command);
     }
