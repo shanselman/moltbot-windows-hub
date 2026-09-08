@@ -76,7 +76,7 @@
                             </ComboBox>
                         </Grid>
 
-                        <ListView x:Name="InstalledSkillsList" Grid.Row="1" Margin="0,10,0,0"
+                        <ListView x:Name="InstalledSkillsList" Grid.Row="2" Margin="0,10,0,0"
                                   ItemsSource="{Binding VisibleSkills}">
                             <ListView.ItemTemplate>
                                 <DataTemplate>
@@ -129,7 +129,7 @@
                             </ListView.ItemTemplate>
                         </ListView>
 
-                        <StackPanel x:Name="SkillsEmptyState" Grid.Row="1" Visibility="Collapsed"
+                        <StackPanel x:Name="SkillsEmptyState" Grid.Row="2" Visibility="Collapsed"
                                     HorizontalAlignment="Center" Margin="0,48,0,0" Spacing="8">
                             <FontIcon Glyph="&#xEA86;" FontSize="42" HorizontalAlignment="Center"
                                       Foreground="{ThemeResource TextFillColorSecondaryBrush}"/>
@@ -140,7 +140,6 @@
 
                     <Grid x:Name="DiscoverSkillsPanel" Grid.Row="2" Margin="0,12,0,0" Visibility="Collapsed">
                         <Grid.RowDefinitions>
-                            <RowDefinition Height="Auto"/>
                             <RowDefinition Height="Auto"/>
                             <RowDefinition Height="*"/>
                         </Grid.RowDefinitions>
@@ -158,7 +157,9 @@
                         <Border x:Name="SkillReviewPanel" Grid.Row="1" Visibility="Collapsed"
                                 Background="{ThemeResource CardBackgroundFillColorDefaultBrush}"
                                 CornerRadius="8" Padding="16" Margin="0,12,0,0">
-                            <StackPanel Spacing="8">
+                            <ScrollViewer VerticalScrollBarVisibility="Auto"
+                                          HorizontalScrollBarVisibility="Disabled">
+                              <StackPanel Spacing="8">
                                 <TextBlock x:Name="SkillReviewName" FontWeight="SemiBold" FontSize="18"/>
                                 <TextBlock x:Name="SkillReviewSummary" TextWrapping="Wrap"/>
                                 <TextBlock x:Name="SkillReviewPublisher" TextWrapping="Wrap"/>
@@ -179,9 +180,11 @@
                                     <Button x:Uid="ExtensionsPage_CancelActionButton" Content="Cancel"
                                             Click="OnCancelSkillReviewClick"/>
                                 </StackPanel>
-                            </StackPanel>
+                              </StackPanel>
+                            </ScrollViewer>
                         </Border>
-                        <ListView Grid.Row="2" Margin="0,10,0,0" ItemsSource="{Binding SkillSearchResults}">
+                        <ListView x:Name="SkillSearchResultsList" Grid.Row="1" Margin="0,10,0,0"
+                                  ItemsSource="{Binding SkillSearchResults}">
                             <ListView.ItemTemplate>
                                 <DataTemplate>
                                     <Border Background="{ThemeResource CardBackgroundFillColorDefaultBrush}"
@@ -298,7 +301,6 @@
                     <Grid x:Name="DiscoverPluginsPanel" Grid.Row="3" Margin="0,12,0,0" Visibility="Collapsed">
                         <Grid.RowDefinitions>
                             <RowDefinition Height="Auto"/>
-                            <RowDefinition Height="Auto"/>
                             <RowDefinition Height="*"/>
                         </Grid.RowDefinitions>
                         <Grid ColumnSpacing="8">
@@ -315,7 +317,9 @@
                         <Border x:Name="PluginReviewPanel" Grid.Row="1" Visibility="Collapsed"
                                 Background="{ThemeResource CardBackgroundFillColorDefaultBrush}"
                                 CornerRadius="8" Padding="16" Margin="0,12,0,0">
-                            <StackPanel Spacing="8">
+                            <ScrollViewer VerticalScrollBarVisibility="Auto"
+                                          HorizontalScrollBarVisibility="Disabled">
+                              <StackPanel Spacing="8">
                                 <TextBlock x:Name="PluginReviewName" FontWeight="SemiBold" FontSize="18"/>
                                 <TextBlock x:Name="PluginReviewDescription" TextWrapping="Wrap"/>
                                 <TextBlock x:Name="PluginReviewVersion"/>
@@ -351,9 +355,11 @@
                                         HorizontalAlignment="Left" Click="OnPluginReviewActionClick"/>
                                 <Button x:Uid="ExtensionsPage_ClosePluginReviewAction" Content="Close"
                                         HorizontalAlignment="Left" Click="OnClosePluginReviewClick"/>
-                            </StackPanel>
+                              </StackPanel>
+                            </ScrollViewer>
                         </Border>
-                        <ListView Grid.Row="2" Margin="0,10,0,0" ItemsSource="{Binding PluginSearchResults}">
+                        <ListView x:Name="PluginSearchResultsList" Grid.Row="1" Margin="0,10,0,0"
+                                  ItemsSource="{Binding PluginSearchResults}">
                             <ListView.ItemTemplate>
                                 <DataTemplate>
                                     <Border Background="{ThemeResource CardBackgroundFillColorDefaultBrush}"

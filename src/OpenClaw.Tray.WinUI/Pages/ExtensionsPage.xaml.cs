@@ -30,6 +30,7 @@ public sealed partial class ExtensionsPage : Page
     private PluginCapabilityAcknowledgement? _pluginAcknowledgementOverride;
     private bool _pluginPolicyAcknowledgementRequired;
     private bool _pluginOperationInProgress;
+    private bool _synchronizingAgentSelection;
 
     public ExtensionsPage()
     {
@@ -47,8 +48,7 @@ public sealed partial class ExtensionsPage : Page
         if (_viewModel is not null)
         {
             _viewModel.PropertyChanged += OnViewModelPropertyChanged;
-            AgentCombo.ItemsSource = _viewModel.AgentIds;
-            AgentCombo.SelectedItem = _viewModel.SelectedAgentId;
+            SynchronizeAgentSelector();
         }
         UpdateState();
     }
@@ -70,8 +70,25 @@ public sealed partial class ExtensionsPage : Page
         {
             CloseSkillReview();
             ClosePluginReview();
+            SynchronizeAgentSelector();
         }
         UpdateState();
+    }
+
+    private void SynchronizeAgentSelector()
+    {
+        if (_viewModel is null)
+            return;
+        _synchronizingAgentSelection = true;
+        try
+        {
+            AgentCombo.ItemsSource = _viewModel.AgentIds;
+            AgentCombo.SelectedItem = _viewModel.SelectedAgentId;
+        }
+        finally
+        {
+            _synchronizingAgentSelection = false;
+        }
     }
 
     private void UpdateState()
@@ -151,7 +168,8 @@ public sealed partial class ExtensionsPage : Page
 
     private void OnAgentSelectionChanged(object sender, SelectionChangedEventArgs e)
     {
-        if (_viewModel is null || AgentCombo.SelectedItem is not string agentId)
+        if (_synchronizingAgentSelection ||
+            _viewModel is null || AgentCombo.SelectedItem is not string agentId)
             return;
         CloseSkillReview();
         _ = _viewModel.SelectAgentAsync(agentId);
@@ -221,6 +239,7 @@ public sealed partial class ExtensionsPage : Page
         UnscannedSkillAcknowledge.IsChecked = false;
         InstallReviewedSkillButton.IsEnabled = review.Item.CanInstall &&
             !review.RequiresUnscannedConfirmation;
+        SkillSearchResultsList.Visibility = Visibility.Collapsed;
         SkillReviewPanel.Visibility = Visibility.Visible;
     }
 
@@ -241,6 +260,7 @@ public sealed partial class ExtensionsPage : Page
         _skillReviewGeneration++;
         _skillReview = null;
         SkillReviewPanel.Visibility = Visibility.Collapsed;
+        SkillSearchResultsList.Visibility = Visibility.Visible;
     }
 
     private void OnInstallReviewedSkillClick(object sender, RoutedEventArgs e) =>
@@ -482,6 +502,7 @@ public sealed partial class ExtensionsPage : Page
             _ => "ExtensionsPage_CloseAction",
         });
         UpdatePluginActionEnabled();
+        PluginSearchResultsList.Visibility = Visibility.Collapsed;
         PluginReviewPanel.Visibility = Visibility.Visible;
     }
 
@@ -513,6 +534,7 @@ public sealed partial class ExtensionsPage : Page
         _pluginAcknowledgementOverride = null;
         _pluginPolicyAcknowledgementRequired = false;
         PluginReviewPanel.Visibility = Visibility.Collapsed;
+        PluginSearchResultsList.Visibility = Visibility.Visible;
     }
 
     private void OnTogglePluginClick(object sender, RoutedEventArgs e) =>
