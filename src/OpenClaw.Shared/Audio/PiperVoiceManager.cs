@@ -52,7 +52,8 @@ public sealed class PiperVoiceManager
     /// Sizes shown in the UI are approximate compressed sizes.
     ///
     /// SECURITY — pinned SHA-256 hashes (lowercase hex) verified against
-    /// the sherpa-onnx GitHub release on 2026-05-05. Downloads with a
+    /// the sherpa-onnx GitHub release on 2026-05-05 (en_GB-northern_english_male-medium
+    /// verified 2026-09-07). Downloads with a
     /// different hash are rejected and the partial tarball is deleted.
     /// Before every public release: re-verify each hash from an independent
     /// source and document provenance. See
@@ -69,6 +70,9 @@ public sealed class PiperVoiceManager
         new("en_GB-alan-low",    "English (GB): Alan (low quality, fast)",  "en-GB",
             "https://github.com/k2-fsa/sherpa-onnx/releases/download/tts-models/vits-piper-en_GB-alan-low.tar.bz2",
             "1308e730b7a12c3b64b669d65daa0138fcb83b1a086edee92fa9fa68cb0290dd"),
+        new("en_GB-northern_english_male-medium", "English (GB): Northern English Male (medium quality)", "en-GB",
+            "https://github.com/k2-fsa/sherpa-onnx/releases/download/tts-models/vits-piper-en_GB-northern_english_male-medium.tar.bz2",
+            "2bb2c1e709f58c11f17c693b3b38f500e110e7f54f2651774ec48b8d41f12c55"),
         new("fr_FR-siwis-low",   "Français (FR): Siwis (low quality, fast)","fr-FR",
             "https://github.com/k2-fsa/sherpa-onnx/releases/download/tts-models/vits-piper-fr_FR-siwis-low.tar.bz2",
             "3d69170c160c8375c4123901a72a3845222b39456d39ab74f5bbd7310952b5af"),
