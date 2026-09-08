@@ -235,7 +235,6 @@ public sealed class InstallCliStep : SetupStep
             installer="$installer_dir/installer.sh"
             trap 'rm -rf -- "$installer_dir"' EXIT
             curl -fsSL{transferDeadlineArguments} \
-              --remove-on-error \
               --proto '=https' \
               --tlsv1.2 \
               --output "$installer" \

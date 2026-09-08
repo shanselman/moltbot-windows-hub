@@ -1963,7 +1963,7 @@ public class SetupStepsTests : IDisposable
         Assert.Contains("trap 'rm -rf -- \"$installer_dir\"' EXIT", command);
         Assert.Contains("--connect-timeout 15", command);
         Assert.Contains("--max-time 60", command);
-        Assert.Contains("--remove-on-error", command);
+        Assert.DoesNotContain("--remove-on-error", command);
         Assert.Contains("--proto '=https'", command);
         Assert.Contains("--tlsv1.2", command);
         Assert.Contains("--output \"$installer\"", command);
@@ -2029,7 +2029,7 @@ public class SetupStepsTests : IDisposable
             preview);
         Assert.DoesNotContain("--connect-timeout", preview);
         Assert.DoesNotContain("--max-time", preview);
-        Assert.Contains("--remove-on-error", preview);
+        Assert.DoesNotContain("--remove-on-error", preview);
     }
 
     [Fact]

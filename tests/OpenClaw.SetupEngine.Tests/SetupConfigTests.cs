@@ -453,7 +453,7 @@ public class SetupConfigTests : IDisposable
             Assert.Contains("'https://example.test/install.sh'", summary.ExactCommands);
             Assert.DoesNotContain("--connect-timeout", summary.ExactCommands);
             Assert.DoesNotContain("--max-time", summary.ExactCommands);
-            Assert.Contains("--remove-on-error", summary.ExactCommands);
+            Assert.DoesNotContain("--remove-on-error", summary.ExactCommands);
             Assert.Contains(
                 $"bash -s -- --version '{GatewayReleasePolicy.SecurityFloor}' < \"$installer\"",
                 summary.ExactCommands);
