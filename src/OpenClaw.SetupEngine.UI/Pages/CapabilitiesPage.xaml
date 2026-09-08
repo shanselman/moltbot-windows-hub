@@ -269,8 +269,7 @@
                                 <Expander Margin="0,8,0,0" HorizontalAlignment="Stretch" HorizontalContentAlignment="Stretch"
                                           Header="Show the exact commands &amp; files">
                                     <TextBlock x:Name="ExactCommandsText" FontFamily="Cascadia Mono, Consolas" FontSize="12" TextWrapping="Wrap"
-                                               Foreground="{ThemeResource TextFillColorSecondaryBrush}" Margin="0,4,0,4"
-                                               Text="wsl --install -d Ubuntu-24.04 --name OpenClawGateway --no-launch&#x0a;curl -fsSL --proto '=https' --tlsv1.2 &lt;install-url&gt; | bash&#x0a;openclaw config set gateway.bind loopback · port 18789&#x0a;openclaw gateway install --force   (systemd --user service)&#x0a;writes -&gt; %LOCALAPPDATA%\OpenClawTray\wsl\OpenClawGateway\&#x0a;writes -&gt; %APPDATA%\OpenClawTray\gateways.json + identity" />
+                                               Foreground="{ThemeResource TextFillColorSecondaryBrush}" Margin="0,4,0,4" />
                                 </Expander>
                             </StackPanel>
                         </StackPanel>
