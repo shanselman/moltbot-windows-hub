@@ -31,6 +31,7 @@ internal sealed class LocalAiGatewayProviderCoordinator : ILocalAiEndpointLifecy
 
     public async Task<LocalAiEndpointLifecycleResult> QuiesceAsync(
         LocalAiResolvedInstall install,
+        LocalAiQuiesceReason reason = LocalAiQuiesceReason.Teardown,
         CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(install);
@@ -69,8 +70,15 @@ internal sealed class LocalAiGatewayProviderCoordinator : ILocalAiEndpointLifecy
             return Failed("The llamacpp primary model was changed outside the companion; preserving it and refusing to cycle the managed endpoint.");
         }
 
+        // Unsetting the primary model does not make the gateway idle; it makes the
+        // gateway resolve its built-in default (an OpenAI model), so a request that
+        // lands mid-cycle fails with an unrelated provider-auth error instead of a
+        // Local AI one. Retain the managed primary unless there is a real prior
+        // model to restore, or Local AI is going away for good.
         string? expectedPrimary = current.PrimaryModel;
-        if (primaryIsManaged)
+        bool retainManagedPrimary = reason == LocalAiQuiesceReason.EndpointCycle &&
+            install.Manifest.GatewayFallbackModel is null;
+        if (primaryIsManaged && !retainManagedPrimary)
         {
             expectedPrimary = install.Manifest.GatewayFallbackModel;
             LocalAiEndpointLifecycleResult primaryResult = expectedPrimary is null
@@ -130,10 +138,17 @@ internal sealed class LocalAiGatewayProviderCoordinator : ILocalAiEndpointLifecy
                 : Failed("The Local AI gateway route changed outside the companion; preserving it instead of publishing the managed endpoint.");
         }
 
+        // An endpoint cycle leaves the managed primary in place (there is no prior
+        // model to fall back to), so seeing it here is this companion's own state,
+        // not an outside edit.
         string? fallbackModel = install.Manifest.GatewayFallbackModel;
-        if (current.PrimaryExists != (fallbackModel is not null) ||
-            (fallbackModel is not null &&
-                !string.Equals(current.PrimaryModel, fallbackModel, StringComparison.Ordinal)))
+        bool retainedManagedPrimary = fallbackModel is null &&
+            current.PrimaryExists &&
+            string.Equals(current.PrimaryModel, managedPrimary, StringComparison.Ordinal);
+        if (!retainedManagedPrimary &&
+            (current.PrimaryExists != (fallbackModel is not null) ||
+                (fallbackModel is not null &&
+                    !string.Equals(current.PrimaryModel, fallbackModel, StringComparison.Ordinal))))
         {
             return Failed("The gateway primary model changed while Local AI was stopped; preserving it instead of overwriting it.");
         }
@@ -143,7 +158,7 @@ internal sealed class LocalAiGatewayProviderCoordinator : ILocalAiEndpointLifecy
             return Failed(applied.Detail!);
         if (!applied.Result!.Success)
         {
-            LocalAiEndpointLifecycleResult cleanup = await QuiesceAsync(install, cancellationToken)
+            LocalAiEndpointLifecycleResult cleanup = await QuiesceAsync(install, LocalAiQuiesceReason.Teardown, cancellationToken)
                 .ConfigureAwait(false);
             return PublicationFailed(
                 "The verified Local AI route could not be published to the app-owned gateway.",
@@ -156,7 +171,7 @@ internal sealed class LocalAiGatewayProviderCoordinator : ILocalAiEndpointLifecy
             !verified.PrimaryExists ||
             !string.Equals(verified.PrimaryModel, managedPrimary, StringComparison.Ordinal))
         {
-            LocalAiEndpointLifecycleResult cleanup = await QuiesceAsync(install, cancellationToken)
+            LocalAiEndpointLifecycleResult cleanup = await QuiesceAsync(install, LocalAiQuiesceReason.Teardown, cancellationToken)
                 .ConfigureAwait(false);
             return PublicationFailed(
                 "The app-owned gateway did not retain the verified Local AI route.",

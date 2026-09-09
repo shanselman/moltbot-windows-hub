@@ -165,41 +165,73 @@ public sealed class LlamaServerRuntimeService : ILocalAiRuntime
         if (_managedProcess is not null)
             await DisposeManagedProcessAsync(CancellationToken.None).ConfigureAwait(false);
 
-        LocalAiEndpointLifecycleResult quiesced = await _options.EndpointLifecycle
-            .QuiesceAsync(install, cancellationToken)
-            .ConfigureAwait(false);
-        if (!quiesced.Success)
+        // Decide the port before touching gateway routing. Rebinding the last
+        // verified port keeps the already-published route valid for the whole
+        // startup, so the gateway is never left without a Local AI provider.
+        WindowsTcpListenerSnapshotResult beforeStart = _platform.CaptureListeners();
+        if (!beforeStart.Ipv4Complete)
         {
-            return Publish(
-                LocalAiRuntimeState.Failed,
-                LocalAiOwnership.None,
-                quiesced.Detail ?? "The Local AI gateway provider could not be safely disabled.");
+            return await FailStartupAsync(
+                    LocalAiRuntimeState.Conflict,
+                    "TCP listener ownership could not be determined.",
+                    install)
+                .ConfigureAwait(false);
+        }
+
+        // A foreign process owns the port the published route points at, so that
+        // route must be withdrawn before returning rather than left aimed at it.
+        int plannedPort = ResolvePlannedPort(install, beforeStart);
+        if (plannedPort != LocalAiPortPolicy.Automatic &&
+            FindEndpointListeners(beforeStart, plannedPort).Count > 0)
+        {
+            return await FailStartupAsync(
+                    LocalAiRuntimeState.Conflict,
+                    "The configured llama-server port is already in use.",
+                    install)
+                .ConfigureAwait(false);
+        }
+
+        // The published route already names the port we are about to bind, so
+        // withdrawing it would only open a window in which the gateway falls
+        // back to its built-in default provider. PublishAsync re-verifies below.
+        Uri? retainedRoute = plannedPort != LocalAiPortPolicy.Automatic &&
+            install.Endpoint is { } publishedRoute &&
+            publishedRoute.Port == plannedPort
+                ? publishedRoute
+                : null;
+        if (retainedRoute is null)
+        {
+            LocalAiEndpointLifecycleResult quiesced = await _options.EndpointLifecycle
+                .QuiesceAsync(install, LocalAiQuiesceReason.EndpointCycle, cancellationToken)
+                .ConfigureAwait(false);
+            if (!quiesced.Success)
+            {
+                return Publish(
+                    LocalAiRuntimeState.Failed,
+                    LocalAiOwnership.None,
+                    quiesced.Detail ?? "The Local AI gateway provider could not be safely disabled.");
+            }
         }
 
         LlamaServerRouterLaunchPlan launchPlan;
         try
         {
             ValidateInstalledFiles(install);
-            LocalAiPortPolicy.Validate(install.Manifest.RequestedPort);
+            LocalAiPortPolicy.Validate(plannedPort);
             launchPlan = LlamaServerRouterConfiguration.Build(
                 _options.Paths,
                 install,
-                install.Manifest.RequestedPort);
+                plannedPort);
             await WritePresetAtomicallyAsync(launchPlan, cancellationToken).ConfigureAwait(false);
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or InvalidDataException)
         {
             _logger.Error("Could not prepare the managed llama-server router.", ex);
-            return Publish(LocalAiRuntimeState.Failed, LocalAiOwnership.None, Sanitize(ex.Message));
-        }
-
-        WindowsTcpListenerSnapshotResult beforeStart = _platform.CaptureListeners();
-        if (!beforeStart.Ipv4Complete)
-            return Publish(LocalAiRuntimeState.Conflict, LocalAiOwnership.None, "TCP listener ownership could not be determined.");
-        if (install.Manifest.RequestedPort != LocalAiPortPolicy.Automatic &&
-            FindEndpointListeners(beforeStart, install.Manifest.RequestedPort).Count > 0)
-        {
-            return Publish(LocalAiRuntimeState.Conflict, LocalAiOwnership.None, "The configured llama-server port is already in use.");
+            return await FailStartupAsync(
+                    LocalAiRuntimeState.Failed,
+                    Sanitize(ex.Message),
+                    retainedRoute is null ? null : install)
+                .ConfigureAwait(false);
         }
 
         long generation = ++_generation;
@@ -232,10 +264,19 @@ public sealed class LlamaServerRuntimeService : ILocalAiRuntime
 
                 EndpointOwnershipObservation ownership = DiscoverOwnedEndpoint(install, _managedProcess);
                 if (!ownership.IsComplete)
-                    return await FailStartupAsync(LocalAiRuntimeState.Conflict, "TCP listener ownership could not be determined.").ConfigureAwait(false);
+                {
+                    return await FailStartupAsync(
+                            LocalAiRuntimeState.Conflict,
+                            "TCP listener ownership could not be determined.",
+                            retainedRoute is null ? null : install)
+                        .ConfigureAwait(false);
+                }
                 if (ownership.ConflictDetail is not null)
                 {
-                    return await FailStartupAsync(LocalAiRuntimeState.Conflict, ownership.ConflictDetail)
+                    return await FailStartupAsync(
+                            LocalAiRuntimeState.Conflict,
+                            ownership.ConflictDetail,
+                            retainedRoute is null ? null : install)
                         .ConfigureAwait(false);
                 }
                 if (ownership.Endpoint is not null)
@@ -246,8 +287,32 @@ public sealed class LlamaServerRuntimeService : ILocalAiRuntime
                             install.ModelPath,
                             cancellationToken)
                         .ConfigureAwait(false);
+                    if (!probe.IsReadyForManagedModel(install.ModelPath))
+                    {
+                        // A failed probe means the retained route is about to lose
+                        // its listener; the eventual timeout path must withdraw it.
+                    }
                     if (probe.IsReadyForManagedModel(install.ModelPath))
                     {
+                        if (retainedRoute is not null && retainedRoute != ownership.Endpoint)
+                        {
+                            // The router bound a different port than the retained route
+                            // advertises, so that route is now stale and must be withdrawn
+                            // before the new one is published.
+                            LocalAiEndpointLifecycleResult withdrawn = await _options.EndpointLifecycle
+                                .QuiesceAsync(install, LocalAiQuiesceReason.EndpointCycle, cancellationToken)
+                                .ConfigureAwait(false);
+                            if (!withdrawn.Success)
+                            {
+                                return await FailStartupAsync(
+                                        LocalAiRuntimeState.Failed,
+                                        withdrawn.Detail ?? "The stale Local AI route could not be withdrawn.",
+                                        install)
+                                    .ConfigureAwait(false);
+                            }
+                            retainedRoute = null;
+                        }
+
                         LocalAiInstallManifest verifiedManifest = install.Manifest with
                         {
                             Endpoint = ownership.Endpoint.AbsoluteUri,
@@ -262,7 +327,8 @@ public sealed class LlamaServerRuntimeService : ILocalAiRuntime
                         {
                             return await FailStartupAsync(
                                     LocalAiRuntimeState.Failed,
-                                    published.Detail ?? "The Local AI gateway provider could not be safely published.")
+                                    published.Detail ?? "The Local AI gateway provider could not be safely published.",
+                                    _install)
                                 .ConfigureAwait(false);
                         }
 
@@ -275,12 +341,17 @@ public sealed class LlamaServerRuntimeService : ILocalAiRuntime
 
             return await FailStartupAsync(
                     LocalAiRuntimeState.Failed,
-                    "The local AI router did not become healthy before the startup timeout.")
+                    "The local AI router did not become healthy before the startup timeout.",
+                    retainedRoute is null ? null : install)
                 .ConfigureAwait(false);
         }
         catch (OperationCanceledException)
         {
             ++_generation;
+            // Cancellation is terminal for this startup attempt: if a route was
+            // retained, withdraw it before the child's listener disappears, or
+            // the gateway would keep routing to a port nothing serves.
+            await WithdrawRetainedRouteAsync(install).ConfigureAwait(false);
             await DisposeManagedProcessAsync(CancellationToken.None).ConfigureAwait(false);
             Publish(LocalAiRuntimeState.Stopped, LocalAiOwnership.None, "Local AI startup was canceled.");
             throw;
@@ -288,6 +359,9 @@ public sealed class LlamaServerRuntimeService : ILocalAiRuntime
         catch (Exception ex)
         {
             ++_generation;
+            // A launch failure or immediate child exit is terminal: withdraw any
+            // retained route before the child's listener disappears.
+            await WithdrawRetainedRouteAsync(install).ConfigureAwait(false);
             await DisposeManagedProcessAsync(CancellationToken.None).ConfigureAwait(false);
             _logger.Error("Managed llama-server startup failed.", ex);
             return Publish(LocalAiRuntimeState.Failed, LocalAiOwnership.None, Sanitize(ex.Message));
@@ -435,7 +509,7 @@ public sealed class LlamaServerRuntimeService : ILocalAiRuntime
         try
         {
             quiesced = await _options.EndpointLifecycle
-                .QuiesceAsync(install, cancellationToken)
+                .QuiesceAsync(install, LocalAiQuiesceReason.EndpointCycle, cancellationToken)
                 .ConfigureAwait(false);
         }
         finally
@@ -548,7 +622,7 @@ public sealed class LlamaServerRuntimeService : ILocalAiRuntime
             return Snapshot;
 
         LocalAiEndpointLifecycleResult quiesced = await _options.EndpointLifecycle
-            .QuiesceAsync(_install!, cancellationToken)
+            .QuiesceAsync(_install!, LocalAiQuiesceReason.Teardown, cancellationToken)
             .ConfigureAwait(false);
         if (!quiesced.Success)
         {
@@ -587,11 +661,75 @@ public sealed class LlamaServerRuntimeService : ILocalAiRuntime
         }
     }
 
-    private async Task<LocalAiRuntimeSnapshot> FailStartupAsync(LocalAiRuntimeState state, string detail)
+    /// <summary>
+    /// Terminates a startup attempt. When <paramref name="routeToWithdraw"/> is
+    /// set, the gateway is still pointing at a route this attempt left standing
+    /// and no listener will answer it after the child stops, so the route is
+    /// withdrawn before the child is disposed.
+    /// </summary>
+    private async Task<LocalAiRuntimeSnapshot> FailStartupAsync(
+        LocalAiRuntimeState state,
+        string detail,
+        LocalAiResolvedInstall? routeToWithdraw = null)
     {
         ++_generation;
+        if (routeToWithdraw is not null)
+            await WithdrawRouteAsync(routeToWithdraw, "after a failed start").ConfigureAwait(false);
         await DisposeManagedProcessAsync(CancellationToken.None).ConfigureAwait(false);
         return Publish(state, LocalAiOwnership.None, detail);
+    }
+
+    /// <summary>
+    /// Withdraws the gateway route that a terminal startup outcome left
+    /// standing, as teardown semantics: no restart will follow on this path.
+    /// Failures are logged and never mask the original outcome.
+    /// </summary>
+    private async Task WithdrawRetainedRouteAsync(LocalAiResolvedInstall install)
+    {
+        if (install.Endpoint is null)
+            return;
+        await WithdrawRouteAsync(install, "after a terminal startup failure").ConfigureAwait(false);
+    }
+
+    private async Task WithdrawRouteAsync(LocalAiResolvedInstall install, string context)
+    {
+        try
+        {
+            LocalAiEndpointLifecycleResult withdrawn = await _options.EndpointLifecycle
+                .QuiesceAsync(install, LocalAiQuiesceReason.Teardown, CancellationToken.None)
+                .ConfigureAwait(false);
+            if (!withdrawn.Success)
+                _logger.Warn($"{withdrawn.Detail ?? "The Local AI route could not be withdrawn"} {context}.");
+        }
+        catch (Exception ex)
+        {
+            _logger.Warn($"The Local AI route could not be withdrawn {context}: {Sanitize(ex.Message)}");
+        }
+    }
+
+    /// <summary>
+    /// Picks the port the router should bind. An explicit port always wins. Otherwise
+    /// the last verified port is reused when it is free, so the published gateway
+    /// route survives a restart instead of having to be withdrawn and rewritten.
+    /// </summary>
+    private static int ResolvePlannedPort(
+        LocalAiResolvedInstall install,
+        WindowsTcpListenerSnapshotResult listeners)
+    {
+        int requestedPort = install.Manifest.RequestedPort;
+        if (requestedPort != LocalAiPortPolicy.Automatic)
+            return requestedPort;
+
+        if (install.Endpoint is not { } lastVerified ||
+            !LocalAiPortPolicy.TryValidate(lastVerified.Port, out _) ||
+            lastVerified.Port == LocalAiPortPolicy.Automatic)
+        {
+            return LocalAiPortPolicy.Automatic;
+        }
+
+        return FindEndpointListeners(listeners, lastVerified.Port).Count == 0
+            ? lastVerified.Port
+            : LocalAiPortPolicy.Automatic;
     }
 
     private async Task DisposeManagedProcessAsync(CancellationToken cancellationToken)
@@ -637,10 +775,18 @@ public sealed class LlamaServerRuntimeService : ILocalAiRuntime
                 if (exited is not null)
                     await exited.DisposeAsync().ConfigureAwait(false);
 
+                // The quiesce reason depends on what follows: a pending restart
+                // is an endpoint cycle and keeps the managed primary selected,
+                // while exhausted retries are terminal and restore the prior
+                // gateway routing instead of leaving the provider absent.
+                bool willRestart = _restartAttempts < _options.MaxRestartAttempts;
                 if (_install is not null)
                 {
                     LocalAiEndpointLifecycleResult quiesced = await _options.EndpointLifecycle
-                        .QuiesceAsync(_install, CancellationToken.None)
+                        .QuiesceAsync(
+                            _install,
+                            willRestart ? LocalAiQuiesceReason.EndpointCycle : LocalAiQuiesceReason.Teardown,
+                            CancellationToken.None)
                         .ConfigureAwait(false);
                     if (!quiesced.Success)
                     {
@@ -655,7 +801,7 @@ public sealed class LlamaServerRuntimeService : ILocalAiRuntime
                     LocalAiRuntimeState.Failed,
                     LocalAiOwnership.None,
                     $"Managed llama-server exited unexpectedly{(exit.ExitCode.HasValue ? $" with code {exit.ExitCode.Value}" : string.Empty)}.");
-                if (_restartAttempts >= _options.MaxRestartAttempts)
+                if (!willRestart)
                     return;
                 _restartAttempts++;
             }
@@ -868,7 +1014,7 @@ public sealed class LlamaServerRuntimeService : ILocalAiRuntime
                     try
                     {
                         LocalAiEndpointLifecycleResult quiesced = await _options.EndpointLifecycle
-                            .QuiesceAsync(_install, CancellationToken.None)
+                            .QuiesceAsync(_install, LocalAiQuiesceReason.Teardown, CancellationToken.None)
                             .ConfigureAwait(false);
                         if (!quiesced.Success)
                             _logger.Warn(quiesced.Detail ?? "The Local AI gateway provider could not be disabled during shutdown.");
