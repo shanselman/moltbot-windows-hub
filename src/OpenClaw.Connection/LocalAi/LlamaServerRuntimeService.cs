@@ -287,13 +287,18 @@ public sealed class LlamaServerRuntimeService : ILocalAiRuntime
                             install.ModelPath,
                             cancellationToken)
                         .ConfigureAwait(false);
+                    if (!probe.IsReadyForManagedModel(install.ModelPath))
+                    {
+                        // A failed probe means the retained route is about to lose
+                        // its listener; the eventual timeout path must withdraw it.
+                    }
                     if (probe.IsReadyForManagedModel(install.ModelPath))
                     {
-                        // The router bound a different port than the retained route
-                        // advertises, so that route is now stale and must be withdrawn
-                        // before the new one is published.
                         if (retainedRoute is not null && retainedRoute != ownership.Endpoint)
                         {
+                            // The router bound a different port than the retained route
+                            // advertises, so that route is now stale and must be withdrawn
+                            // before the new one is published.
                             LocalAiEndpointLifecycleResult withdrawn = await _options.EndpointLifecycle
                                 .QuiesceAsync(install, LocalAiQuiesceReason.EndpointCycle, cancellationToken)
                                 .ConfigureAwait(false);
@@ -305,6 +310,7 @@ public sealed class LlamaServerRuntimeService : ILocalAiRuntime
                                         install)
                                     .ConfigureAwait(false);
                             }
+                            retainedRoute = null;
                         }
 
                         LocalAiInstallManifest verifiedManifest = install.Manifest with
@@ -342,6 +348,10 @@ public sealed class LlamaServerRuntimeService : ILocalAiRuntime
         catch (OperationCanceledException)
         {
             ++_generation;
+            // Cancellation is terminal for this startup attempt: if a route was
+            // retained, withdraw it before the child's listener disappears, or
+            // the gateway would keep routing to a port nothing serves.
+            await WithdrawRetainedRouteAsync(install).ConfigureAwait(false);
             await DisposeManagedProcessAsync(CancellationToken.None).ConfigureAwait(false);
             Publish(LocalAiRuntimeState.Stopped, LocalAiOwnership.None, "Local AI startup was canceled.");
             throw;
@@ -349,6 +359,9 @@ public sealed class LlamaServerRuntimeService : ILocalAiRuntime
         catch (Exception ex)
         {
             ++_generation;
+            // A launch failure or immediate child exit is terminal: withdraw any
+            // retained route before the child's listener disappears.
+            await WithdrawRetainedRouteAsync(install).ConfigureAwait(false);
             await DisposeManagedProcessAsync(CancellationToken.None).ConfigureAwait(false);
             _logger.Error("Managed llama-server startup failed.", ex);
             return Publish(LocalAiRuntimeState.Failed, LocalAiOwnership.None, Sanitize(ex.Message));
@@ -649,9 +662,10 @@ public sealed class LlamaServerRuntimeService : ILocalAiRuntime
     }
 
     /// <summary>
-    /// Fails a startup attempt. When <paramref name="routeToWithdraw"/> is set, the
-    /// gateway is still pointing at a route this attempt left standing (or just
-    /// published) and no listener will answer it, so it must be withdrawn here.
+    /// Terminates a startup attempt. When <paramref name="routeToWithdraw"/> is
+    /// set, the gateway is still pointing at a route this attempt left standing
+    /// and no listener will answer it after the child stops, so the route is
+    /// withdrawn before the child is disposed.
     /// </summary>
     private async Task<LocalAiRuntimeSnapshot> FailStartupAsync(
         LocalAiRuntimeState state,
@@ -659,23 +673,38 @@ public sealed class LlamaServerRuntimeService : ILocalAiRuntime
         LocalAiResolvedInstall? routeToWithdraw = null)
     {
         ++_generation;
-        await DisposeManagedProcessAsync(CancellationToken.None).ConfigureAwait(false);
         if (routeToWithdraw is not null)
-        {
-            try
-            {
-                LocalAiEndpointLifecycleResult withdrawn = await _options.EndpointLifecycle
-                    .QuiesceAsync(routeToWithdraw, LocalAiQuiesceReason.Teardown, CancellationToken.None)
-                    .ConfigureAwait(false);
-                if (!withdrawn.Success)
-                    _logger.Warn(withdrawn.Detail ?? "The Local AI route could not be withdrawn after a failed start.");
-            }
-            catch (Exception ex)
-            {
-                _logger.Warn($"The Local AI route could not be withdrawn after a failed start: {Sanitize(ex.Message)}");
-            }
-        }
+            await WithdrawRouteAsync(routeToWithdraw, "after a failed start").ConfigureAwait(false);
+        await DisposeManagedProcessAsync(CancellationToken.None).ConfigureAwait(false);
         return Publish(state, LocalAiOwnership.None, detail);
+    }
+
+    /// <summary>
+    /// Withdraws the gateway route that a terminal startup outcome left
+    /// standing, as teardown semantics: no restart will follow on this path.
+    /// Failures are logged and never mask the original outcome.
+    /// </summary>
+    private async Task WithdrawRetainedRouteAsync(LocalAiResolvedInstall install)
+    {
+        if (install.Endpoint is null)
+            return;
+        await WithdrawRouteAsync(install, "after a terminal startup failure").ConfigureAwait(false);
+    }
+
+    private async Task WithdrawRouteAsync(LocalAiResolvedInstall install, string context)
+    {
+        try
+        {
+            LocalAiEndpointLifecycleResult withdrawn = await _options.EndpointLifecycle
+                .QuiesceAsync(install, LocalAiQuiesceReason.Teardown, CancellationToken.None)
+                .ConfigureAwait(false);
+            if (!withdrawn.Success)
+                _logger.Warn($"{withdrawn.Detail ?? "The Local AI route could not be withdrawn"} {context}.");
+        }
+        catch (Exception ex)
+        {
+            _logger.Warn($"The Local AI route could not be withdrawn {context}: {Sanitize(ex.Message)}");
+        }
     }
 
     /// <summary>
@@ -746,10 +775,18 @@ public sealed class LlamaServerRuntimeService : ILocalAiRuntime
                 if (exited is not null)
                     await exited.DisposeAsync().ConfigureAwait(false);
 
+                // The quiesce reason depends on what follows: a pending restart
+                // is an endpoint cycle and keeps the managed primary selected,
+                // while exhausted retries are terminal and restore the prior
+                // gateway routing instead of leaving the provider absent.
+                bool willRestart = _restartAttempts < _options.MaxRestartAttempts;
                 if (_install is not null)
                 {
                     LocalAiEndpointLifecycleResult quiesced = await _options.EndpointLifecycle
-                        .QuiesceAsync(_install, LocalAiQuiesceReason.EndpointCycle, CancellationToken.None)
+                        .QuiesceAsync(
+                            _install,
+                            willRestart ? LocalAiQuiesceReason.EndpointCycle : LocalAiQuiesceReason.Teardown,
+                            CancellationToken.None)
                         .ConfigureAwait(false);
                     if (!quiesced.Success)
                     {
@@ -764,7 +801,7 @@ public sealed class LlamaServerRuntimeService : ILocalAiRuntime
                     LocalAiRuntimeState.Failed,
                     LocalAiOwnership.None,
                     $"Managed llama-server exited unexpectedly{(exit.ExitCode.HasValue ? $" with code {exit.ExitCode.Value}" : string.Empty)}.");
-                if (_restartAttempts >= _options.MaxRestartAttempts)
+                if (!willRestart)
                     return;
                 _restartAttempts++;
             }

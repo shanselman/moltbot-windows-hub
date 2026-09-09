@@ -245,7 +245,157 @@ public sealed class LocalAiPortLifecycleTests
         LocalAiRuntimeSnapshot snapshot = await runtime.EnsureStartedAsync();
 
         Assert.Equal(LocalAiRuntimeState.Failed, snapshot.State);
-        Assert.Equal(["start", "stop", "quiesce:Teardown"], events);
+        Assert.Equal(["start", "quiesce:Teardown", "stop"], events);
+    }
+
+    [Fact]
+    public async Task Restart_LaunchExceptionWithdrawsRetainedRouteAsTeardown()
+    {
+        // A launch exception is terminal: the retained route must be withdrawn
+        // before the gateway is left pointing at a port nothing will serve.
+        using var temp = new TempDirectory("local-ai-port-");
+        LocalAiPaths paths = await PrepareInstallAsync(temp);
+        var store = new LocalAiManifestStore(paths);
+        LocalAiResolvedInstall install = (await store.LoadAsync())!;
+        await store.SaveAsync(install.Manifest with { Endpoint = "http://127.0.0.1:28765/v1" });
+
+        var events = new List<string>();
+        var platform = new FakePlatform();
+        var host = new FakeProcessHost(platform, events, selectedPort: 28_765) { ThrowOnStart = true };
+        await using var runtime = CreateRuntime(
+            paths,
+            host,
+            platform,
+            new FakeClient(events),
+            new FakeLifecycle(events));
+
+        LocalAiRuntimeSnapshot snapshot = await runtime.EnsureStartedAsync();
+
+        Assert.Equal(LocalAiRuntimeState.Failed, snapshot.State);
+        Assert.Equal(["quiesce:Teardown"], events);
+        Assert.Null(host.LastSpec);
+        LocalAiResolvedInstall? saved = await new LocalAiManifestStore(paths).LoadAsync();
+        Assert.Equal(28_765, saved!.Endpoint!.Port);
+    }
+
+    [Fact]
+    public async Task Restart_ExhaustedAutomaticRestoresEndInTeardownNotEndpointCycle()
+    {
+        // The first unexpected exit schedules a restart and is an endpoint
+        // cycle. Once the retry budget is spent, the next exit is terminal and
+        // must restore gateway routing (teardown) rather than retain a managed
+        // primary whose provider is gone.
+        using var temp = new TempDirectory("local-ai-port-");
+        LocalAiPaths paths = await PrepareInstallAsync(temp);
+        var store = new LocalAiManifestStore(paths);
+        LocalAiResolvedInstall install = (await store.LoadAsync())!;
+        await store.SaveAsync(install.Manifest with { Endpoint = "http://127.0.0.1:28765/v1" });
+
+        var events = new List<string>();
+        var platform = new FakePlatform();
+        var host = new FakeProcessHost(platform, events, selectedPort: 28_765);
+        await using var runtime = CreateRuntime(
+            paths,
+            host,
+            platform,
+            new FakeClient(events),
+            new FakeLifecycle(events),
+            startupTimeout: TimeSpan.FromSeconds(5),
+            maxRestartAttempts: 1);
+
+        LocalAiRuntimeSnapshot started = await runtime.EnsureStartedAsync();
+        Assert.Equal(LocalAiRuntimeState.Healthy, started.State);
+        int settled = events.Count;
+
+        host.Process!.MarkExited();
+        host.LastExitCallback!(new LocalAiManagedProcessExit(
+            host.Process.ProcessId,
+            host.Process.StartedAtUtc,
+            1));
+        await WaitForRestartSettledAsync(events, settled);
+
+        host.Process!.MarkExited();
+        host.LastExitCallback!(new LocalAiManagedProcessExit(
+            host.Process.ProcessId,
+            host.Process.StartedAtUtc,
+            1));
+        await WaitForEventAsync(events, "quiesce:Teardown", settled);
+
+        Assert.Equal(LocalAiRuntimeState.Failed, runtime.Snapshot.State);
+        Assert.Equal(
+            [
+                "quiesce:EndpointCycle",
+                "quiesce:EndpointCycle",
+                "start",
+                "probe:28765",
+                "publish:28765",
+                "quiesce:Teardown",
+            ],
+            events.Skip(settled).ToArray());
+    }
+
+    /// <summary>
+    /// Waits until the automatic restart scheduled by an unexpected exit has
+    /// either published a fresh endpoint or failed, so the next trigger is not
+    /// racing the previous restart chain.
+    /// </summary>
+    private static async Task WaitForRestartSettledAsync(List<string> events, int settledCount)
+    {
+        DateTimeOffset deadline = DateTimeOffset.UtcNow + TimeSpan.FromSeconds(10);
+        while (DateTimeOffset.UtcNow < deadline)
+        {
+            string[] current = [.. events.Skip(settledCount)];
+            if (current.Contains("publish:28765") && current.LastOrDefault() == "publish:28765")
+                return;
+            await Task.Delay(10);
+        }
+        Assert.Fail(
+            "Timed out waiting for the restart to settle; saw " +
+            $"[{string.Join(", ", events.Skip(settledCount))}].");
+    }
+
+    private static async Task WaitForEventAsync(List<string> events, string expected, int settledCount)
+    {
+        DateTimeOffset deadline = DateTimeOffset.UtcNow + TimeSpan.FromSeconds(10);
+        while (DateTimeOffset.UtcNow < deadline)
+        {
+            if (events.Skip(settledCount).Contains(expected))
+                return;
+            await Task.Delay(10);
+        }
+        Assert.Fail(
+            $"Timed out waiting for {expected}; saw " +
+            $"[{string.Join(", ", events.Skip(settledCount))}].");
+    }
+
+    [Fact]
+    public async Task Restart_CancellationWithdrawsRetainedRouteBeforeDisposingChild()
+    {
+        // A canceled startup is terminal for the attempt: the retained route is
+        // withdrawn before the child's listener disappears.
+        using var temp = new TempDirectory("local-ai-port-");
+        LocalAiPaths paths = await PrepareInstallAsync(temp);
+        var store = new LocalAiManifestStore(paths);
+        LocalAiResolvedInstall install = (await store.LoadAsync())!;
+        await store.SaveAsync(install.Manifest with { Endpoint = "http://127.0.0.1:28765/v1" });
+
+        var events = new List<string>();
+        var platform = new FakePlatform { YieldOnDelay = true };
+        var host = new FakeProcessHost(platform, events, selectedPort: 28_765) { SuppressListener = true };
+        await using var runtime = CreateRuntime(
+            paths,
+            host,
+            platform,
+            new FakeClient(events),
+            new FakeLifecycle(events),
+            startupTimeout: TimeSpan.FromSeconds(30));
+
+        using var cancellation = new CancellationTokenSource(TimeSpan.FromMilliseconds(20));
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(
+            () => runtime.EnsureStartedAsync(cancellation.Token));
+
+        Assert.Equal(LocalAiRuntimeState.Stopped, runtime.Snapshot.State);
+        Assert.Equal(["start", "quiesce:Teardown", "stop"], events);
     }
 
     [Theory]
@@ -551,12 +701,8 @@ public sealed class LocalAiPortLifecycleTests
             @"C:\other\server.exe",
             platform.UtcNow.UtcDateTime));
         var host = new FakeProcessHost(platform, events, selectedPort: fixedPort);
-        await using var runtime = CreateRuntime(
-            paths,
-            host,
-            platform,
-            new FakeClient(events),
-            new FakeLifecycle(events));
+        var lifecycle = new FakeLifecycle(events);
+        await using var runtime = CreateRuntime(paths, host, platform, new FakeClient(events), lifecycle);
 
         LocalAiRuntimeSnapshot snapshot = await runtime.EnsureStartedAsync();
 
@@ -656,7 +802,7 @@ public sealed class LocalAiPortLifecycleTests
 
         Assert.Equal(LocalAiRuntimeState.Failed, snapshot.State);
         Assert.Equal(1, host.Process!.StopCount);
-        Assert.Equal(["quiesce:EndpointCycle", "start", "probe:28767", "publish:28767", "stop", "quiesce:Teardown"], events);
+        Assert.Equal(["quiesce:EndpointCycle", "start", "probe:28767", "publish:28767", "quiesce:Teardown", "stop"], events);
 
         // The endpoint receipt is already durable but the provider is still absent.
         // A later tray start must safely allocate again and complete publication.
@@ -681,7 +827,8 @@ public sealed class LocalAiPortLifecycleTests
         FakePlatform platform,
         FakeClient client,
         ILocalAiEndpointLifecycle lifecycle,
-        TimeSpan? startupTimeout = null) => new(
+        TimeSpan? startupTimeout = null,
+        int maxRestartAttempts = 2) => new(
             new LlamaServerRuntimeOptions
             {
                 Paths = paths,
@@ -689,6 +836,7 @@ public sealed class LocalAiPortLifecycleTests
                 HealthPollInterval = TimeSpan.FromMilliseconds(1),
                 StartupTimeout = startupTimeout ?? TimeSpan.FromSeconds(1),
                 RestartDelay = TimeSpan.Zero,
+                MaxRestartAttempts = maxRestartAttempts,
             },
             NullLogger.Instance,
             host,
@@ -884,11 +1032,14 @@ public sealed class LocalAiPortLifecycleTests
         public WindowsTcpListenerSnapshotResult CaptureListeners() =>
             new([.. Listeners], Ipv4Complete, Ipv6Complete: true);
 
-        public Task DelayAsync(TimeSpan delay, CancellationToken cancellationToken)
+        public bool YieldOnDelay { get; init; }
+
+        public async Task DelayAsync(TimeSpan delay, CancellationToken cancellationToken)
         {
             cancellationToken.ThrowIfCancellationRequested();
+            if (YieldOnDelay)
+                await Task.Yield();
             UtcNow += delay;
-            return Task.CompletedTask;
         }
     }
 
@@ -901,9 +1052,16 @@ public sealed class LocalAiPortLifecycleTests
     {
         public LocalAiProcessStartSpec? LastSpec { get; private set; }
         public FakeProcess? Process { get; private set; }
+        public Action<LocalAiManagedProcessExit>? LastExitCallback { get; private set; }
 
         /// <summary>Starts the child without ever opening a listener, so startup times out.</summary>
         public bool SuppressListener { get; init; }
+
+        /// <summary>Throws from StartProcessAsync, simulating a process-launch failure.</summary>
+        public bool ThrowOnStart { get; init; }
+
+        /// <summary>Fires the exit callback during StartProcessAsync, simulating an immediate child exit.</summary>
+        public bool ImmediateExit { get; init; }
 
         public Task<ILocalAiManagedProcess> StartProcessAsync(
             LocalAiProcessStartSpec spec,
@@ -911,9 +1069,18 @@ public sealed class LocalAiPortLifecycleTests
             CancellationToken cancellationToken)
         {
             cancellationToken.ThrowIfCancellationRequested();
+            if (ThrowOnStart)
+                throw new IOException("The managed llama-server process could not be launched.");
             events.Add("start");
             LastSpec = spec;
+            LastExitCallback = exited;
             Process = new FakeProcess(4201, platform.UtcNow, platform, events);
+            if (ImmediateExit)
+            {
+                Process.MarkExited();
+                exited(new LocalAiManagedProcessExit(Process.ProcessId, Process.StartedAtUtc, 1));
+                return Task.FromResult<ILocalAiManagedProcess>(Process);
+            }
             if (SuppressListener)
                 return Task.FromResult<ILocalAiManagedProcess>(Process);
             platform.Listeners.Add(new WindowsTcpListenerInfo(
@@ -937,6 +1104,9 @@ public sealed class LocalAiPortLifecycleTests
         public DateTimeOffset StartedAtUtc { get; } = startedAtUtc;
         public bool HasExited { get; private set; }
         public int StopCount { get; private set; }
+
+        /// <summary>Marks the child as exited without going through StopAsync.</summary>
+        public void MarkExited() => HasExited = true;
 
         public Task StopAsync(TimeSpan timeout, CancellationToken cancellationToken)
         {
