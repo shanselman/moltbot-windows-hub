@@ -873,11 +873,12 @@ gh run download <run-id> --repo shanselman/openclaw-windows-hub
 
 5. **Piper voice preview fails with "Piper TTS native library could not be loaded"**
    - The build copied a Visual C++ runtime that is too old for `onnxruntime`
-     next to the exe. Local x64 builds take the runtime from your Visual Studio
-     install; without the "C++ Redistributable Update" component the build
-     falls back to a 14.29 runtime and warns (`OPENCLAW0001`).
-   - Install that component via the Visual Studio Installer (Individual
-     Components), rebuild, and confirm `msvcp140.dll` beside
+     next to the exe. Local x64 builds take a compatible 14.38-or-newer runtime
+     from your Visual Studio install. If the component is missing, stale, or
+     incomplete for x64, the build falls back to a 14.29 runtime and warns
+     (`OPENCLAW0001`).
+   - Install or update "C++ Redistributable Update" via the Visual Studio
+     Installer (Individual Components), rebuild, and confirm `msvcp140.dll` beside
      `OpenClaw.Tray.WinUI.exe` is 14.38 or newer.
    - The same failure shows up in `%LOCALAPPDATA%\OpenClawTray\openclaw-tray.log`
      as `DllNotFoundException` from `PiperTextToSpeechClient`.

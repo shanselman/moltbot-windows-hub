@@ -43,7 +43,7 @@
            Text="vswhere did not find a Visual Studio install with the C++ Redistributable (Microsoft.VisualStudio.Component.VC.Redist.14.Latest) component. Install that component via the Visual Studio Installer (Individual Components tab)." />
 
     <Error Condition="'@(OpenClawVSVCRuntimeFiles)' == ''"
-           Text="No $(OpenClawVCRuntimeArch) VC++ Runtime DLLs were found under '$(OpenClawVCRedistCrtDir)'. Install the C++ Redistributable Update Visual Studio component." />
+           Text="The Visual Studio VC++ Redistributable could not be used for $(OpenClawVCRuntimeArch). Version file '$(_OpenClawVCRedistVersionFile)' reported '$(OpenClawVCRedistVersion)' (minimum $(OpenClawVCRuntimeMinimumVersion)); resolved CRT directory: '$(OpenClawVCRedistCrtDir)'; expected architecture path: '$(OpenClawVsInstallRoot)\VC\Redist\MSVC\$(OpenClawVCRedistVersion)\$(OpenClawVCRuntimeArch)'. Install or update the C++ Redistributable Update Visual Studio component." />
 
     <!-- Replace the NuGet-sourced x64 items so publish always ships the VS install's DLLs. -->
     <ItemGroup>
@@ -68,7 +68,7 @@
 
     <Warning Condition="'@(OpenClawVSVCRuntimeFiles)' == ''"
              Code="OPENCLAW0001"
-             Text="No Visual Studio install with the C++ Redistributable component was found; copying the VCRuntime.CefSharp.140 (14.29) runtime to '$(TargetDir)'. onnxruntime needs 14.38 or newer, so Piper TTS and Silero VAD will fail to load from this output. Install 'C++ Redistributable Update' (Microsoft.VisualStudio.Component.VC.Redist.14.Latest) via the Visual Studio Installer." />
+             Text="No compatible Visual Studio VC++ Redistributable at or above $(OpenClawVCRuntimeMinimumVersion) was found; copying the VCRuntime.CefSharp.140 (14.29) runtime to '$(TargetDir)'. Piper TTS and Silero VAD will fail to load from this output. Install or update 'C++ Redistributable Update' (Microsoft.VisualStudio.Component.VC.Redist.14.Latest) via the Visual Studio Installer." />
   </Target>
 
   <Target Name="CopyOpenClawVCRuntimeToOutput"

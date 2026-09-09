@@ -192,10 +192,10 @@ root for the native speech stack. Both build legs source their loose VC runtime
 DLLs from the Visual Studio install on the CI runner (resolved via `vswhere` in
 the repo-root `Directory.Build.targets`, consumed by `src\Directory.Build.targets`).
 This ensures the bundled CRT is new enough for `onnxruntime`. Local x64 builds
-and test hosts use the same resolution whenever a Visual Studio install with the
-C++ Redistributable component is present; the `VCRuntime.CefSharp.140` NuGet
-(14.29) is only a fallback for machines without one, and the build warns because
-that runtime is too old for `onnxruntime`. The release validation
+and test hosts use the same resolution whenever the Visual Studio install's
+current redist is at least 14.38 and contains the requested architecture; the
+`VCRuntime.CefSharp.140` NuGet (14.29) is the warned fallback when that compatible
+runtime is missing, stale, or architecture-incomplete. The release validation
 script enforces a minimum VC++ runtime version floor (currently 14.38) to
 prevent regressions, and the x64 verifier load-probes the native TTS stack
 (`onnxruntime.dll`, `sherpa-onnx.dll`, and `sherpa-onnx-c-api.dll`) from the

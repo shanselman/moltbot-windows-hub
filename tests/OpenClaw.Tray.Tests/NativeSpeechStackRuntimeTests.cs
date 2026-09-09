@@ -2,6 +2,7 @@ using System.ComponentModel;
 using System.Diagnostics;
 using System.Reflection;
 using System.Runtime.InteropServices;
+using System.Text;
 
 namespace OpenClaw.Tray.Tests;
 
@@ -81,9 +82,30 @@ public sealed class NativeSpeechStackRuntimeTests
         var shared = File.ReadAllText(Path.Combine(root, "Directory.Build.targets"));
         var src = File.ReadAllText(Path.Combine(root, "src", "Directory.Build.targets"));
         var tests = File.ReadAllText(Path.Combine(root, "tests", "Directory.Build.props"));
+        var releaseValidation = File.ReadAllText(Path.Combine(
+            root,
+            "scripts",
+            "Test-ReleaseNativeDependencies.ps1"));
 
         Assert.Contains("Target Name=\"LocateOpenClawVCRuntimeFromVSInstall\"", shared);
         Assert.Contains("Microsoft.VCRedistVersion.default.txt", shared);
+        Assert.Contains("OpenClawVCRuntimeMinimumVersion", shared);
+        Assert.Contains("VersionGreaterThanOrEquals", shared);
+        Assert.Contains("Regex]::IsMatch", shared);
+        Assert.Contains(
+            "Condition=\"'$(OpenClawVCRedistVersion)' == '' and Exists",
+            shared);
+        Assert.Contains(
+            $">{VCRuntimeMinVersion.ToString(3)}</OpenClawVCRuntimeMinimumVersion>",
+            shared);
+        Assert.Contains(
+            $"VCRuntimeMinVersion = [version]\"{VCRuntimeMinVersion}\"",
+            releaseValidation);
+        Assert.Contains(
+            "OpenClawVCRuntimeVersionIsSupported)' == 'true'",
+            shared);
+        Assert.DoesNotContain(">*</OpenClawVCRedistVersion>", shared);
+        Assert.DoesNotContain(@"Redist\MSVC\*\", shared);
 
         Assert.Contains("Target Name=\"ResolveOpenClawVCRuntimeForBuild\"", src);
         Assert.Contains("DependsOnTargets=\"LocateOpenClawVCRuntimeFromVSInstall\"", src);
@@ -134,7 +156,22 @@ public sealed class NativeSpeechStackRuntimeTests
                     "Error 1114 means the app-local VC++ runtime is older than onnxruntime requires.");
             }
 
-            FreeLibrary(handle);
+            try
+            {
+                var loadedPath = new StringBuilder(32_768);
+                var length = GetModuleFileNameW(handle, loadedPath, loadedPath.Capacity);
+                Assert.True(length > 0, $"GetModuleFileNameW failed for {library}.");
+                Assert.True(
+                    string.Equals(
+                        Path.GetFullPath(library),
+                        Path.GetFullPath(loadedPath.ToString()),
+                        StringComparison.OrdinalIgnoreCase),
+                    $"Requested {library}, but Windows reused {loadedPath}.");
+            }
+            finally
+            {
+                FreeLibrary(handle);
+            }
         }
         finally
         {
@@ -195,6 +232,12 @@ public sealed class NativeSpeechStackRuntimeTests
     [DllImport("kernel32.dll", SetLastError = true)]
     [return: MarshalAs(UnmanagedType.Bool)]
     private static extern bool FreeLibrary(IntPtr hModule);
+
+    [DllImport("kernel32.dll", SetLastError = true, CharSet = CharSet.Unicode)]
+    private static extern int GetModuleFileNameW(
+        IntPtr hModule,
+        StringBuilder lpFilename,
+        int nSize);
 
     [DllImport("kernel32.dll", SetLastError = true, CharSet = CharSet.Unicode)]
     private static extern IntPtr AddDllDirectory(string newDirectory);

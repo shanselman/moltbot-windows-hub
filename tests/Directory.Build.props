@@ -60,7 +60,7 @@
     </ItemGroup>
     <Warning Condition="'@(OpenClawVSVCRuntimeFiles)' == ''"
              Code="OPENCLAW0001"
-             Text="No Visual Studio install with the C++ Redistributable component was found; copying the VCRuntime.CefSharp.140 (14.29) runtime to '$(TargetDir)'. onnxruntime needs 14.38 or newer, so native speech tests will fail to load it. Install 'C++ Redistributable Update' (Microsoft.VisualStudio.Component.VC.Redist.14.Latest) via the Visual Studio Installer." />
+             Text="No compatible Visual Studio VC++ Redistributable at or above $(OpenClawVCRuntimeMinimumVersion) was found; copying the VCRuntime.CefSharp.140 (14.29) runtime to '$(TargetDir)'. Native speech tests will fail to load it. Install or update 'C++ Redistributable Update' (Microsoft.VisualStudio.Component.VC.Redist.14.Latest) via the Visual Studio Installer." />
     <Copy SourceFiles="@(OpenClawNativeRuntime)" DestinationFolder="$(TargetDir)" SkipUnchangedFiles="true" />
   </Target>
 
