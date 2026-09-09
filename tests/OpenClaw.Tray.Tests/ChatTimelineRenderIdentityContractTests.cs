@@ -92,7 +92,7 @@ public sealed class ChatTimelineRenderIdentityContractTests
 
         Assert.Contains("timeline.TurnActive || hasPendingQueuedSend", root);
         Assert.Contains("message.SendState is ChatQueuedMessageSendState.Queued or ChatQueuedMessageSendState.Sending", root);
-        Assert.Contains("button.IsEnabled = enabled;", composer);
+        Assert.Contains(".IsEnabled(enabled)", composer);
         Assert.Equal(3, Regex.Matches(composer, @"!inputs\.MessageOptionsDisabled").Count);
     }
 

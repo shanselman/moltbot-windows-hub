@@ -565,7 +565,9 @@ public sealed class ReactorChatTimeline : Component<ReactorChatTimelineProps>
                 .Set(value => value.IsTextSelectionEnabled = true),
         };
 
-        return Factories.Markdown(ChatMarkdownSanitizer.Sanitize(text), options);
+        // Fully qualified: the markdown factory ships in Microsoft.UI.Reactor.Advanced, and importing
+        // that namespace would make the simple name `Factories` ambiguous with Microsoft.UI.Reactor.Factories.
+        return Microsoft.UI.Reactor.Advanced.Factories.Markdown(ChatMarkdownSanitizer.Sanitize(text), options);
     }
 
     private static Element BuildAssistantFooter(
@@ -648,12 +650,9 @@ public sealed class ReactorChatTimeline : Component<ReactorChatTimelineProps>
             .ToolTip(label)
             .OnGotFocus((_, _) => onGotFocus())
             .OnLostFocus((_, _) => onLostFocus())
-            .Set(button =>
-            {
-                button.Opacity = isVisible ? 1 : 0;
-                button.IsHitTestVisible = isVisible;
-                button.IsTabStop = true;
-            });
+            .Opacity(isVisible ? 1 : 0)
+            .IsTabStop(true)
+            .Set(button => button.IsHitTestVisible = isVisible);
     }
 
     private static (string Message, IReadOnlyList<ChatAttachmentPresentation> Attachments) ParseAttachments(string? text)
@@ -721,7 +720,7 @@ public sealed class ReactorChatTimeline : Component<ReactorChatTimelineProps>
             var pixelHeight = bitmap.PixelHeight > 0 ? bitmap.PixelHeight : (int)maxHeight;
             var scale = Math.Min(Math.Min(maxWidth / pixelWidth, maxHeight / pixelHeight), 1.0);
             return Border(Empty())
-                .Set(border => border.Background = new ImageBrush
+                .Background(new ImageBrush
                 {
                     ImageSource = bitmap,
                     Stretch = Stretch.UniformToFill,
@@ -1036,11 +1035,8 @@ public sealed class ReactorChatTimeline : Component<ReactorChatTimelineProps>
     private static Element HoverMetadata(Element child, bool isHovered)
     {
         return Border(child)
-            .Set(border =>
-            {
-                border.Opacity = isHovered ? 1 : 0;
-                border.IsHitTestVisible = false;
-            });
+            .Opacity(isHovered ? 1 : 0)
+            .Set(border => border.IsHitTestVisible = false);
     }
 
     private static TextBlockElement Text(

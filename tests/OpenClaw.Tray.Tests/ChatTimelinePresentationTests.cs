@@ -230,7 +230,7 @@ public sealed class ChatTimelinePresentationTests
             "Chat",
             "ReactorChatComposer.cs"));
 
-        Assert.Contains("textBlock.Margin = new Thickness(2, 4, 0, 0)", composer);
+        Assert.Contains(".Margin(2, 4, 0, 0)", composer);
     }
 
     [Fact]
@@ -583,8 +583,8 @@ public sealed class ChatTimelinePresentationTests
         Assert.Contains("? VStack(", renderer);
         Assert.Contains("control.MinHeight = 28;", renderer);
         Assert.Contains("control.FontSize = 12;", renderer);
-        Assert.Contains("border.BorderThickness = isNested", renderer);
-        Assert.Contains("? new Thickness(0)", renderer);
+        Assert.Contains(".BorderThickness(isNested ? 0 : 1)", renderer);
+        Assert.Contains(".Margin(isNested ? 0 : 68, isNested ? 0 : 4, isNested ? 0 : 40, isNested ? 0 : 4)", renderer);
         Assert.Contains("? \"SubtleFillColorTransparentBrush\"", renderer);
         Assert.Contains(": Empty();", renderer);
         Assert.DoesNotContain("activity.Tools.Select(BuildStandalone)", renderer);

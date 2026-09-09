@@ -250,7 +250,7 @@ internal sealed class ChatAssistantImageCard : Component<ChatAssistantImageCardP
             Math.Min(maximumWidth / pixelWidth, maximumHeight / pixelHeight),
             1.0);
         var preview = Border(Empty())
-            .Set(border => border.Background = new ImageBrush
+            .Background(new ImageBrush
             {
                 ImageSource = bitmap,
                 Stretch = Stretch.Uniform,
@@ -282,7 +282,7 @@ internal sealed class ChatAssistantImageCard : Component<ChatAssistantImageCardP
             1.0);
         return ScrollViewer(
             Border(Empty())
-                .Set(border => border.Background = new ImageBrush
+                .Background(new ImageBrush
                 {
                     ImageSource = bitmap,
                     Stretch = Stretch.Uniform,

@@ -86,21 +86,10 @@ internal static class ToolCallCardRenderer
             .WithKey($"tool-expander:{entry.Id}:collapse:{props.ToolCallsCollapseVersion}");
 
         return Border(expander)
-            .Set(border =>
-            {
-                border.Margin = isNested
-                    ? new Thickness(0)
-                    : new Thickness(68, 4, 40, 4);
-                border.Padding = isNested
-                    ? new Thickness(0)
-                    : new Thickness(12, 8, 12, 8);
-                border.BorderThickness = isNested
-                    ? new Thickness(0)
-                    : new Thickness(1);
-                border.CornerRadius = isNested
-                    ? new CornerRadius(4)
-                    : new CornerRadius(12);
-            })
+            .Margin(isNested ? 0 : 68, isNested ? 0 : 4, isNested ? 0 : 40, isNested ? 0 : 4)
+            .Padding(isNested ? 0 : 12, isNested ? 0 : 8, isNested ? 0 : 12, isNested ? 0 : 8)
+            .BorderThickness(isNested ? 0 : 1)
+            .CornerRadius(isNested ? 4 : 12)
             .Background(BrushFor(
                 isNested
                     ? "SubtleFillColorTransparentBrush"
