@@ -70,18 +70,17 @@ internal static class ToolCallCardRenderer
             .HAlign(HorizontalAlignment.Stretch)
             .HorizontalContentAlignment(HorizontalAlignment.Stretch)
             .AutomationId($"ChatToolCall_{SanitizeAutomationId(entry.Id)}")
-            .Set(control =>
-            {
-                if (isNested)
-                {
-                    control.FontSize = 12;
-                    control.MinHeight = 28;
-                    control.Padding = new Thickness(4, 0, 4, 0);
-                }
-            })
             .AutomationName(
                 $"{LocalizedOrDefault("Chat_Tool_CallLabel", "Tool call")} {toolName}. {statusLabel}.")
             .WithKey($"tool-expander:{entry.Id}:collapse:{props.ToolCallsCollapseVersion}");
+
+        if (isNested)
+        {
+            expander = expander
+                .FontSize(12)
+                .MinHeight(28)
+                .Padding(4, 0, 4, 0);
+        }
 
         return Border(expander)
             .Margin(isNested ? 0 : 68, isNested ? 0 : 4, isNested ? 0 : 40, isNested ? 0 : 4)

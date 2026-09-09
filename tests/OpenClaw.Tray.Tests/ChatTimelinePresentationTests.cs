@@ -253,7 +253,7 @@ public sealed class ChatTimelinePresentationTests
         Assert.True(
             composer.Split("AccessibilityView.Raw", StringSplitOptions.None).Length - 1 >= 4);
         Assert.Contains(".AutomationId(\"ChatComposerInput\")", composer);
-        Assert.Contains("AutomationProperties.SetAutomationId(", composer);
+        Assert.Contains(".AutomationId(automationId)", composer);
         Assert.Contains("RaisePropertyChangedEvent(", composer);
         Assert.Contains("AutomationElementIdentifiers.IsOffscreenProperty", composer);
         Assert.Equal(
@@ -581,8 +581,8 @@ public sealed class ChatTimelinePresentationTests
         Assert.Contains("internal sealed class ToolActivityCard : Component<ToolActivityCardProps>", renderer);
         Assert.Contains("Element details = isExpanded", renderer);
         Assert.Contains("? VStack(", renderer);
-        Assert.Contains("control.MinHeight = 28;", renderer);
-        Assert.Contains("control.FontSize = 12;", renderer);
+        Assert.Contains(".MinHeight(28)", renderer);
+        Assert.Contains(".FontSize(12)", renderer);
         Assert.Contains(".BorderThickness(isNested ? 0 : 1)", renderer);
         Assert.Contains(".Margin(isNested ? 0 : 68, isNested ? 0 : 4, isNested ? 0 : 40, isNested ? 0 : 4)", renderer);
         Assert.Contains("? \"SubtleFillColorTransparentBrush\"", renderer);
