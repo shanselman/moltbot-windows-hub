@@ -1,0 +1,77 @@
+<Project>
+
+  <!--
+    Shared Visual C++ runtime resolution for every project in the repo.
+
+    The native speech stack (onnxruntime, sherpa-onnx) imports the VC++
+    runtime, and onnxruntime >= 1.20 needs 14.38 or newer. The
+    VCRuntime.CefSharp.140 NuGet package used as the offline fallback ships
+    14.29, which is too old: an app-local 14.29 msvcp140.dll shadows the
+    system runtime and onnxruntime.dll fails to initialize (Win32 error 1114),
+    which the Piper TTS client surfaces as DllNotFoundException.
+
+    LocateOpenClawVCRuntimeFromVSInstall never fails the build. It fills
+    @(OpenClawVSVCRuntimeFiles) with the loose CRT DLLs from the newest Visual
+    Studio install that has the C++ Redistributable component, or leaves the
+    item empty when no such install exists. Consumers decide what an empty
+    result means: src\Directory.Build.targets warns for local builds and errors
+    for publish; tests\Directory.Build.props warns for test hosts.
+  -->
+
+  <PropertyGroup>
+    <OpenClawVCRuntimePackageVersion Condition="'$(OpenClawVCRuntimePackageVersion)' == ''">1.0.5</OpenClawVCRuntimePackageVersion>
+    <OpenClawVCRuntimePackageRoot Condition="'$(OpenClawVCRuntimePackageRoot)' == ''">$(NuGetPackageRoot)vcruntime.cefsharp.140\$(OpenClawVCRuntimePackageVersion)\vc_redist\</OpenClawVCRuntimePackageRoot>
+    <OpenClawVCRuntimeMinimumVersion Condition="'$(OpenClawVCRuntimeMinimumVersion)' == ''">14.38.33130</OpenClawVCRuntimeMinimumVersion>
+    <OpenClawVCRuntimeArch Condition="'$(OpenClawVCRuntimeArch)' == '' and '$(RuntimeIdentifier)' == 'win-x64'">x64</OpenClawVCRuntimeArch>
+    <OpenClawVCRuntimeArch Condition="'$(OpenClawVCRuntimeArch)' == '' and '$(RuntimeIdentifier)' == 'win-arm64'">arm64</OpenClawVCRuntimeArch>
+    <OpenClawVsWherePath Condition="'$(OpenClawVsWherePath)' == ''">$(MSBuildProgramFiles32)\Microsoft Visual Studio\Installer\vswhere.exe</OpenClawVsWherePath>
+  </PropertyGroup>
+
+  <Target Name="LocateOpenClawVCRuntimeFromVSInstall"
+          Condition="'$(OpenClawVCRuntimeArch)' != '' and '$(OS)' == 'Windows_NT'">
+
+    <PropertyGroup Condition="'$(OpenClawVsInstallRoot)' != '' and !Exists('$(OpenClawVsInstallRoot)')">
+      <OpenClawVsInstallRoot></OpenClawVsInstallRoot>
+    </PropertyGroup>
+
+    <Exec Condition="'$(OpenClawVsInstallRoot)' == '' and Exists('$(OpenClawVsWherePath)')"
+          Command="&quot;$(OpenClawVsWherePath)&quot; -latest -products * -requires Microsoft.VisualStudio.Component.VC.Redist.14.Latest -property installationPath"
+          ConsoleToMSBuild="true"
+          IgnoreExitCode="true"
+          IgnoreStandardErrorWarningFormat="true"
+          StandardOutputImportance="low"
+          StandardErrorImportance="low">
+      <Output TaskParameter="ConsoleOutput" PropertyName="OpenClawVsInstallRoot" />
+    </Exec>
+
+    <PropertyGroup Condition="'$(OpenClawVsInstallRoot)' != '' and !Exists('$(OpenClawVsInstallRoot)')">
+      <OpenClawVsInstallRoot></OpenClawVsInstallRoot>
+    </PropertyGroup>
+
+    <!--
+      VC\Auxiliary\Build\Microsoft.VCRedistVersion.default.txt names the one
+      redist version the install treats as current. Accept it only when it is
+      at least the 14.38 floor required by onnxruntime and when that exact
+      version contains the requested architecture. Missing, older, or
+      architecture-incomplete installs stay unresolved so local builds use the
+      warned NuGet fallback and publish fails closed.
+
+      The Microsoft.VC*.CRT folder name carries the toolset major version
+      (Microsoft.VC143.CRT for VS 2022, Microsoft.VC145.CRT for VS 18); there is
+      one per arch per redist version. Only vcruntime140*.dll and msvcp140*.dll
+      are collected, which is the set the native speech stack imports.
+    -->
+    <PropertyGroup Condition="'$(OpenClawVsInstallRoot)' != ''">
+      <_OpenClawVCRedistVersionFile>$(OpenClawVsInstallRoot)\VC\Auxiliary\Build\Microsoft.VCRedistVersion.default.txt</_OpenClawVCRedistVersionFile>
+      <OpenClawVCRedistVersion Condition="'$(OpenClawVCRedistVersion)' == '' and Exists('$(_OpenClawVCRedistVersionFile)')">$([System.IO.File]::ReadAllText('$(_OpenClawVCRedistVersionFile)').Trim())</OpenClawVCRedistVersion>
+      <OpenClawVCRuntimeVersionIsSupported Condition="'$(OpenClawVCRedistVersion)' != '' and $([System.Text.RegularExpressions.Regex]::IsMatch('$(OpenClawVCRedistVersion)', '^[0-9]+(\.[0-9]+){1,3}$'))">$([MSBuild]::VersionGreaterThanOrEquals('$(OpenClawVCRedistVersion)', '$(OpenClawVCRuntimeMinimumVersion)'))</OpenClawVCRuntimeVersionIsSupported>
+      <OpenClawVCRedistCrtDir Condition="'$(OpenClawVCRuntimeVersionIsSupported)' == 'true' and Exists('$(OpenClawVsInstallRoot)\VC\Redist\MSVC\$(OpenClawVCRedistVersion)\$(OpenClawVCRuntimeArch)')">$(OpenClawVsInstallRoot)\VC\Redist\MSVC\$(OpenClawVCRedistVersion)\$(OpenClawVCRuntimeArch)\Microsoft.VC*.CRT\</OpenClawVCRedistCrtDir>
+    </PropertyGroup>
+
+    <ItemGroup Condition="'$(OpenClawVCRedistCrtDir)' != ''">
+      <OpenClawVSVCRuntimeFiles Include="$(OpenClawVCRedistCrtDir)vcruntime140*.dll" />
+      <OpenClawVSVCRuntimeFiles Include="$(OpenClawVCRedistCrtDir)msvcp140*.dll" />
+    </ItemGroup>
+  </Target>
+
+</Project>

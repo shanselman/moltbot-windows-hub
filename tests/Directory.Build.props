@@ -15,6 +15,12 @@
     <IsPackable>false</IsPackable>
     <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
     <OpenClawVCRuntimeVersion>1.0.5</OpenClawVCRuntimeVersion>
+    <OpenClawVCRuntimePackageVersion>$(OpenClawVCRuntimeVersion)</OpenClawVCRuntimePackageVersion>
+    <!-- Test hosts load native speech dependencies from their own output, so
+         they get the same app-local VC++ runtime as the tray (see the repo-root
+         Directory.Build.targets): x64 unless the RID or the host is ARM64,
+         because the NuGet fallback ships no ARM64 DLLs. -->
+    <OpenClawVCRuntimeArch Condition="'$(OS)' == 'Windows_NT' and '$(RuntimeIdentifier)' == '' and '$(PROCESSOR_ARCHITECTURE)' != 'ARM64'">x64</OpenClawVCRuntimeArch>
     <!-- Audit direct + transitive dependencies for known CVEs during restore,
          matching the setting in src/Directory.Build.props. -->
     <NuGetAuditMode>all</NuGetAuditMode>
@@ -38,10 +44,23 @@
     <Using Include="Xunit" />
   </ItemGroup>
 
-  <Target Name="CopyWindowsNativeRuntimeForTestHost" AfterTargets="Build" Condition="'$(OS)' == 'Windows_NT'">
+  <!--
+    Copy an app-local VC++ runtime next to the test host. onnxruntime >= 1.20
+    needs 14.38 or newer, so prefer the Visual Studio install's DLLs and only
+    fall back to the VCRuntime.CefSharp.140 (14.29) DLLs, with a warning, when
+    no such install exists. NativeSpeechStackRuntimeTests load-probes the result.
+  -->
+  <Target Name="CopyWindowsNativeRuntimeForTestHost"
+          AfterTargets="Build"
+          DependsOnTargets="LocateOpenClawVCRuntimeFromVSInstall"
+          Condition="'$(OS)' == 'Windows_NT' and '$(OpenClawVCRuntimeArch)' == 'x64'">
     <ItemGroup>
-      <OpenClawNativeRuntime Include="$(NuGetPackageRoot)vcruntime.cefsharp.140\$(OpenClawVCRuntimeVersion)\vc_redist\x64\*.dll" Condition="'$(PROCESSOR_ARCHITECTURE)' != 'ARM64' And Exists('$(NuGetPackageRoot)vcruntime.cefsharp.140\$(OpenClawVCRuntimeVersion)\vc_redist\x64\vcruntime140.dll')" />
+      <OpenClawNativeRuntime Include="@(OpenClawVSVCRuntimeFiles)" />
+      <OpenClawNativeRuntime Include="$(OpenClawVCRuntimePackageRoot)x64\*.dll" Condition="'@(OpenClawVSVCRuntimeFiles)' == ''" />
     </ItemGroup>
+    <Warning Condition="'@(OpenClawVSVCRuntimeFiles)' == ''"
+             Code="OPENCLAW0001"
+             Text="No compatible Visual Studio VC++ Redistributable at or above $(OpenClawVCRuntimeMinimumVersion) was found; copying the VCRuntime.CefSharp.140 (14.29) runtime to '$(TargetDir)'. Native speech tests will fail to load it. Install or update 'C++ Redistributable Update' (Microsoft.VisualStudio.Component.VC.Redist.14.Latest) via the Visual Studio Installer." />
     <Copy SourceFiles="@(OpenClawNativeRuntime)" DestinationFolder="$(TargetDir)" SkipUnchangedFiles="true" />
   </Target>
 

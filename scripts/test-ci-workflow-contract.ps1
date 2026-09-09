@@ -436,6 +436,7 @@ foreach ($token in @(
         "'global.json'",
         "'NuGet.Config'",
         "'Directory.Build.props'",
+        "'Directory.Build.targets'",
         "'src/Directory.Build.props'",
         "'src/Directory.Build.targets'",
         "'tests/Directory.Build.props'",
