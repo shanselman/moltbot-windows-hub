@@ -55,11 +55,12 @@ public static class SetupReviewSummaryBuilder
             ? tailscaleEndpoint
             : isLanBind ? $"LAN:{gatewayPort}" : $"127.0.0.1:{gatewayPort}";
         var wslCommand = "wsl " + string.Join(' ', WslInstallSupport.BuildDirectInstallArgs(baseDistro, distroName, installPath));
-        var runtimeArgument = release.IsCustomInstaller
-            ? ""
-            : $" --node-version {GatewayReleasePolicy.NodeVersion}";
-        var installCommand =
-            $"curl -fsSL --proto '=https' --tlsv1.2 <install-url> | bash -s -- --version {release.Version}{runtimeArgument}";
+        var installCommand = installerHost is null
+            ? "setup stops before CLI download: installer URL must use HTTPS"
+            : InstallCliStep.BuildInstallCommandPreview(
+                installUrl,
+                release.Version,
+                release.IsCustomInstaller ? null : GatewayReleasePolicy.NodeVersion);
         LocalModelInfo localAiModel =
             LocalModelCatalog.Find(config.LocalAi.SelectedModelId) ?? LocalModelCatalog.Default;
         LocalInferenceRunProfile? localAiProfile =

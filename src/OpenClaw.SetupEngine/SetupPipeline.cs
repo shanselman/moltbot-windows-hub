@@ -28,6 +28,8 @@ public sealed record PipelineResult(
     GatewayCompatibilityFailureKind? CompatibilityFailure = null,
     LocalAiFailureDetail? Detail = null)
 {
+    public bool RequiresRestart { get; init; }
+
     public int ExitCode => Outcome switch
     {
         PipelineOutcome.Success => 0,
@@ -58,7 +60,7 @@ public static class SetupStepFactory
             new PreflightLocalAiHardwareStep(),
             new PreflightWslStep(),
             new PreflightWindowsTailscaleStep(),
-            new EnsureWslPlatformStep(),
+            new EnsureWslPlatformStep(reusePreflightResult: true),
             new ReconcileLocalAiInstallationStep(),
             new AcquireLocalAiRuntimeStep(),
             new AcquireLocalAiModelStep(),
@@ -222,7 +224,10 @@ public sealed class SetupPipeline
                 step.Id,
                 result.Message,
                 (result.Error as GatewayCompatibilityException)?.Kind,
-                result.Detail);
+                result.Detail)
+            {
+                RequiresRestart = result.RequiresRestart,
+            };
         }
 
         pipelineSw.Stop();

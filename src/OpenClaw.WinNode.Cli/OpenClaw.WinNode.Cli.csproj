@@ -9,9 +9,13 @@
   </PropertyGroup>
 
   <ItemGroup>
-    <!-- Ship the agent skill reference next to winnode.exe. -->
-    <Content Include="skill.md">
+    <!-- Ship the discoverable repository skill next to winnode.exe under the
+         legacy sidecar name referenced by CLI help. -->
+    <Content Include="..\..\.agents\skills\winnode\SKILL.md">
+      <Link>skill.md</Link>
+      <TargetPath>skill.md</TargetPath>
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+      <CopyToPublishDirectory>PreserveNewest</CopyToPublishDirectory>
     </Content>
   </ItemGroup>
 

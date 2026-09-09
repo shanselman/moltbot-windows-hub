@@ -86,6 +86,12 @@ $cases = @(
         Classification = "docs_only"
     },
     @{
+        Scenario = "WinNode skill reference"
+        Paths = @(".agents/skills/winnode/SKILL.md")
+        Classification = "targeted"
+        Required = @("core_tests")
+    },
+    @{
         Scenario = "CLI-only product change"
         Paths = @("src/OpenClaw.Cli/Program.cs")
         Classification = "targeted"
@@ -120,6 +126,12 @@ $cases = @(
         Paths = @("src/OpenClaw.SetupEngine/SetupOrchestrator.cs")
         Classification = "targeted"
         Required = @("tray_tests", "setup_e2e")
+    },
+    @{
+        Scenario = "Gateway release policy change"
+        Paths = @("src/OpenClaw.SetupEngine/GatewayReleasePolicy.cs")
+        Classification = "targeted"
+        Required = @("tray_tests", "setup_e2e", "revocation_e2e", "network_e2e")
     },
     @{
         Scenario = "Connection change"

@@ -127,7 +127,7 @@ public static class GatewayReleasePolicy
 {
     public const string DefaultInstallUrl = "https://openclaw.ai/install-cli.sh";
     public const int ProtocolGeneration = 4;
-    public const string NodeVersion = "22.22.3";
+    public const string NodeVersion = "24.19.0";
     public const string SecurityFloor = "2026.6.11";
     public const string RecommendedVersion = "2026.6.34";
     public const string RuntimeRejectedVersion = "2026.7.1";
