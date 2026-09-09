@@ -67,19 +67,17 @@ internal static class ToolCallCardRenderer
                 $"{toolName} · {statusLabel}",
                 Border(VStack(6, details.ToArray()))
                     .Padding(18, 8, 18, 10))
+            .HAlign(HorizontalAlignment.Stretch)
+            .HorizontalContentAlignment(HorizontalAlignment.Stretch)
+            .AutomationId($"ChatToolCall_{SanitizeAutomationId(entry.Id)}")
             .Set(control =>
             {
-                control.HorizontalAlignment = HorizontalAlignment.Stretch;
-                control.HorizontalContentAlignment = HorizontalAlignment.Stretch;
                 if (isNested)
                 {
                     control.FontSize = 12;
                     control.MinHeight = 28;
                     control.Padding = new Thickness(4, 0, 4, 0);
                 }
-                AutomationProperties.SetAutomationId(
-                    control,
-                    $"ChatToolCall_{SanitizeAutomationId(entry.Id)}");
             })
             .AutomationName(
                 $"{LocalizedOrDefault("Chat_Tool_CallLabel", "Tool call")} {toolName}. {statusLabel}.")
@@ -189,13 +187,11 @@ internal static class ToolCallCardRenderer
         var expander = Expander(
                 summaryText,
                 details)
+            .HAlign(HorizontalAlignment.Stretch)
+            .HorizontalContentAlignment(HorizontalAlignment.Stretch)
+            .AutomationId($"ChatToolActivity_{SanitizeAutomationId(activity.Tools[0].Id)}")
             .Set(control =>
             {
-                control.HorizontalAlignment = HorizontalAlignment.Stretch;
-                control.HorizontalContentAlignment = HorizontalAlignment.Stretch;
-                AutomationProperties.SetAutomationId(
-                    control,
-                    $"ChatToolActivity_{SanitizeAutomationId(activity.Tools[0].Id)}");
                 ApplyActivityExpander(
                     control,
                     onUserExpansionChanged,
@@ -304,7 +300,7 @@ internal static class ToolCallCardRenderer
         global::Windows.UI.Text.FontWeight weight,
         string foregroundResource) =>
         TextBlock(text)
-            .Set(control => control.TextWrapping = TextWrapping.Wrap)
+            .TextWrapping(TextWrapping.Wrap)
             .FontSize(fontSize)
             .FontWeight(weight)
             .Foreground(BrushFor(foregroundResource, Microsoft.UI.Colors.Black));

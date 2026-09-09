@@ -575,7 +575,7 @@ public sealed class ChatTimelinePresentationTests
         Assert.Contains("text.IsTextSelectionEnabled = true", renderer);
         Assert.DoesNotContain("var stateText =", renderer);
         Assert.DoesNotContain("var glyph =", renderer);
-        Assert.Contains("AutomationProperties.SetAutomationId(", renderer);
+        Assert.Contains(".AutomationId(", renderer);
         Assert.Contains("ChatToolActivity_", renderer);
         Assert.Contains("ChatToolCall_", renderer);
         Assert.Contains("internal sealed class ToolActivityCard : Component<ToolActivityCardProps>", renderer);

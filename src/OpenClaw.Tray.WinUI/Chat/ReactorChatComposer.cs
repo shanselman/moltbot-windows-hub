@@ -177,11 +177,8 @@ internal sealed class ReactorChatComposer : Component<ReactorChatComposerViewPro
             return Button(
                     TextBlock(glyph)
                         .AccessibilityView(Microsoft.UI.Xaml.Automation.Peers.AccessibilityView.Raw)
-                        .Set(textBlock =>
-                        {
-                            textBlock.FontFamily = FluentIconCatalog.SymbolThemeFontFamily;
-                            textBlock.FontSize = 16;
-                        }),
+                        .FontFamily(FluentIconCatalog.SymbolThemeFontFamily)
+                        .FontSize(16),
                     onClick)
                 .AutomationName(automationName)
                 .Foreground(Theme.SecondaryText)
@@ -219,20 +216,14 @@ internal sealed class ReactorChatComposer : Component<ReactorChatComposerViewPro
                         4,
                         TextBlock(label)
                             .MaxWidth(maxLabelWidth)
-                            .Set(textBlock =>
-                            {
-                                textBlock.FontSize = 13;
-                                textBlock.TextTrimming = TextTrimming.CharacterEllipsis;
-                                textBlock.TextWrapping = TextWrapping.NoWrap;
-                            }),
+                            .FontSize(13)
+                            .TextTrimming(TextTrimming.CharacterEllipsis)
+                            .TextWrapping(TextWrapping.NoWrap),
                         TextBlock("\uE70D")
                             .Margin(2, 4, 0, 0)
                             .AccessibilityView(Microsoft.UI.Xaml.Automation.Peers.AccessibilityView.Raw)
-                            .Set(textBlock =>
-                            {
-                                textBlock.FontFamily = FluentIconCatalog.SymbolThemeFontFamily;
-                                textBlock.FontSize = 10;
-                            })),
+                            .FontFamily(FluentIconCatalog.SymbolThemeFontFamily)
+                            .FontSize(10)),
                     () => { })
                 .AutomationName(automationName)
                 .Foreground(Theme.SecondaryText)
@@ -351,7 +342,7 @@ internal sealed class ReactorChatComposer : Component<ReactorChatComposerViewPro
                         8,
                         TextBlock(queuedCountText)
                             .FontSize(13)
-                            .Set(textBlock => textBlock.FontWeight = Microsoft.UI.Text.FontWeights.SemiBold),
+                            .FontWeight(Microsoft.UI.Text.FontWeights.SemiBold),
                         ScrollView(VStack(4, queuedRows))
                             .MaxHeight(props.IsCompact ? 144 : 220)
                             .Set(scrollView =>
@@ -516,11 +507,11 @@ internal sealed class ReactorChatComposer : Component<ReactorChatComposerViewPro
             .BorderThickness(0)
             .BorderBrush(transparentInputBrush)
             .Background(transparentInputBrush)
+            .AcceptsReturn(false)
+            .FontSize(14)
             .Set(control =>
             {
                 inputControl.Current = control;
-                control.FontSize = 14;
-                control.AcceptsReturn = false;
                 control.Resources["TextControlBorderThemeThickness"] = new Thickness(0);
                 control.Resources["TextControlBorderThemeThicknessFocused"] = new Thickness(0);
                 control.Resources["TextControlBackground"] = transparentInputBrush;
@@ -659,11 +650,8 @@ internal sealed class ReactorChatComposer : Component<ReactorChatComposerViewPro
             : Button(
                     TextBlock("\uE724")
                         .AccessibilityView(Microsoft.UI.Xaml.Automation.Peers.AccessibilityView.Raw)
-                        .Set(textBlock =>
-                        {
-                            textBlock.FontFamily = FluentIconCatalog.SymbolThemeFontFamily;
-                            textBlock.FontSize = 16;
-                        }),
+                        .FontFamily(FluentIconCatalog.SymbolThemeFontFamily)
+                        .FontSize(16),
                     Send)
                 .AccentButton()
                 .AutomationName(actionLabel)
@@ -879,7 +867,7 @@ internal sealed class ReactorChatComposer : Component<ReactorChatComposerViewPro
             .Resources(resources => resources
                 .Set("ButtonBackground", background)
                 .Set("ButtonBorderBrush", Theme.Ref("SubtleFillColorTransparentBrush")))
-            .Set(button => button.HorizontalContentAlignment = HorizontalAlignment.Left)
+            .HorizontalContentAlignment(HorizontalAlignment.Left)
             .BorderThickness(0)
             .OnMount(element =>
             {
@@ -972,7 +960,7 @@ internal sealed class ReactorChatComposer : Component<ReactorChatComposerViewPro
             .Resources(resources => resources
                 .Set("ButtonBackground", background)
                 .Set("ButtonBorderBrush", Theme.Ref("SubtleFillColorTransparentBrush")))
-            .Set(button => button.HorizontalContentAlignment = HorizontalAlignment.Stretch)
+            .HorizontalContentAlignment(HorizontalAlignment.Stretch)
             .BorderThickness(0)
             .OnMount(element =>
             {
