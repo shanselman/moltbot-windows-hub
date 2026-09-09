@@ -144,10 +144,10 @@ public sealed class ReactorChatTimeline : Component<ReactorChatTimelineProps>
                     .Set("ItemContainerSelectedPointerOverBackground", Theme.Ref("SubtleFillColorTransparentBrush"))
                     .Set("ItemContainerSelectedPressedBackground", Theme.Ref("SubtleFillColorTransparentBrush"))
                     .Set("ItemContainerSelectedInnerBorderBrush", Theme.Ref("SubtleFillColorTransparentBrush")))
+                .IsTabStop(false)
                 .Set(itemContainer =>
                 {
                     itemContainer.IsSelected = false;
-                    itemContainer.IsTabStop = false;
                     itemContainer.HorizontalContentAlignment = HorizontalAlignment.Stretch;
                 })
                 .HAlign(HorizontalAlignment.Stretch)
@@ -347,7 +347,7 @@ public sealed class ReactorChatTimeline : Component<ReactorChatTimelineProps>
                 12,
                 FontWeights.Normal,
                 "TextFillColorSecondaryBrush")
-            .Set(text => text.FontStyle = global::Windows.UI.Text.FontStyle.Italic)
+            .FontStyle(global::Windows.UI.Text.FontStyle.Italic)
             .Margin(64, 8, 24, 8);
     }
 
@@ -398,7 +398,7 @@ public sealed class ReactorChatTimeline : Component<ReactorChatTimelineProps>
                     14,
                     FontWeights.Normal,
                     "TextOnAccentFillColorPrimaryBrush")
-                .Set(text => text.IsTextSelectionEnabled = true));
+                .IsTextSelectionEnabled(true));
         }
 
         var bubble = Border(VStack(8, content.ToArray()))
@@ -555,17 +555,19 @@ public sealed class ReactorChatTimeline : Component<ReactorChatTimelineProps>
                     14,
                     FontWeights.Normal,
                     "TextFillColorPrimaryBrush")
-                .Set(value => value.IsTextSelectionEnabled = true),
+                .IsTextSelectionEnabled(true),
             LinkBuilder = (children, _) => HStack(children),
             HtmlBlock = raw => Text(
                     ChatMarkdownSanitizer.FlattenRawHtmlBlockToInertText(raw),
                     14,
                     FontWeights.Normal,
                     "TextFillColorPrimaryBrush")
-                .Set(value => value.IsTextSelectionEnabled = true),
+                .IsTextSelectionEnabled(true),
         };
 
-        return Factories.Markdown(ChatMarkdownSanitizer.Sanitize(text), options);
+        // Fully qualified: the markdown factory ships in Microsoft.UI.Reactor.Advanced, and importing
+        // that namespace would make the simple name `Factories` ambiguous with Microsoft.UI.Reactor.Factories.
+        return Microsoft.UI.Reactor.Advanced.Factories.Markdown(ChatMarkdownSanitizer.Sanitize(text), options);
     }
 
     private static Element BuildAssistantFooter(
@@ -629,7 +631,7 @@ public sealed class ReactorChatTimeline : Component<ReactorChatTimelineProps>
         return Button(
                 TextBlock(glyph)
                     .FontSize(12)
-                    .Set(text => text.FontFamily = FluentIconCatalog.SymbolThemeFontFamily)
+                    .FontFamily(FluentIconCatalog.SymbolThemeFontFamily)
                     .Foreground(Theme.SecondaryText),
                 onClick)
             .Width(20)
@@ -648,12 +650,9 @@ public sealed class ReactorChatTimeline : Component<ReactorChatTimelineProps>
             .ToolTip(label)
             .OnGotFocus((_, _) => onGotFocus())
             .OnLostFocus((_, _) => onLostFocus())
-            .Set(button =>
-            {
-                button.Opacity = isVisible ? 1 : 0;
-                button.IsHitTestVisible = isVisible;
-                button.IsTabStop = true;
-            });
+            .Opacity(isVisible ? 1 : 0)
+            .IsTabStop(true)
+            .IsHitTestVisible(isVisible);
     }
 
     private static (string Message, IReadOnlyList<ChatAttachmentPresentation> Attachments) ParseAttachments(string? text)
@@ -721,7 +720,7 @@ public sealed class ReactorChatTimeline : Component<ReactorChatTimelineProps>
             var pixelHeight = bitmap.PixelHeight > 0 ? bitmap.PixelHeight : (int)maxHeight;
             var scale = Math.Min(Math.Min(maxWidth / pixelWidth, maxHeight / pixelHeight), 1.0);
             return Border(Empty())
-                .Set(border => border.Background = new ImageBrush
+                .Background(new ImageBrush
                 {
                     ImageSource = bitmap,
                     Stretch = Stretch.UniformToFill,
@@ -737,7 +736,7 @@ public sealed class ReactorChatTimeline : Component<ReactorChatTimelineProps>
                 16,
                 FontWeights.Normal,
                 "TextOnAccentFillColorPrimaryBrush")
-            .Set(text => text.FontFamily = FluentIconCatalog.SymbolThemeFontFamily)
+            .FontFamily(FluentIconCatalog.SymbolThemeFontFamily)
             .Center();
         var glyphBackground = Border(glyph)
             .Size(32, 32)
@@ -748,11 +747,8 @@ public sealed class ReactorChatTimeline : Component<ReactorChatTimelineProps>
                 13,
                 FontWeights.Normal,
                 "TextOnAccentFillColorPrimaryBrush")
-            .Set(text =>
-            {
-                text.TextWrapping = TextWrapping.NoWrap;
-                text.TextTrimming = TextTrimming.CharacterEllipsis;
-            })
+            .TextWrapping(TextWrapping.NoWrap)
+            .TextTrimming(TextTrimming.CharacterEllipsis)
             .MaxWidth(240)
             .VAlign(VerticalAlignment.Center);
 
@@ -761,11 +757,8 @@ public sealed class ReactorChatTimeline : Component<ReactorChatTimelineProps>
                 11,
                 FontWeights.Normal,
                 "TextOnAccentFillColorSecondaryBrush")
-            .Set(text =>
-            {
-                text.TextWrapping = TextWrapping.NoWrap;
-                text.TextTrimming = TextTrimming.CharacterEllipsis;
-            })
+            .TextWrapping(TextWrapping.NoWrap)
+            .TextTrimming(TextTrimming.CharacterEllipsis)
             .MaxWidth(240);
 
         return Border(HStack(8, glyphBackground, VStack(1, name, mimeType)))
@@ -803,15 +796,12 @@ public sealed class ReactorChatTimeline : Component<ReactorChatTimelineProps>
                 12,
                 FontWeights.Normal,
                 "TextFillColorSecondaryBrush")
-            .Set(text => text.IsTextSelectionEnabled = true);
+            .IsTextSelectionEnabled(true);
         return Expander(
                 LocalizedOrDefault("Chat_Reasoning_ThinkingHeader", "Thinking"),
                 content)
-            .Set(control =>
-            {
-                control.HorizontalAlignment = HorizontalAlignment.Stretch;
-                control.HorizontalContentAlignment = HorizontalAlignment.Stretch;
-            })
+            .HAlign(HorizontalAlignment.Stretch)
+            .HorizontalContentAlignment(HorizontalAlignment.Stretch)
             .Margin(52, 4);
     }
 
@@ -893,11 +883,8 @@ public sealed class ReactorChatTimeline : Component<ReactorChatTimelineProps>
                 12,
                 FontWeights.Normal,
                 "TextFillColorPrimaryBrush")
-            .Set(text =>
-            {
-                text.FontFamily = new FontFamily("Cascadia Code, Consolas");
-                text.IsTextSelectionEnabled = true;
-            }))
+            .FontFamily(new FontFamily("Cascadia Code, Consolas"))
+            .IsTextSelectionEnabled(true))
             .Padding(10, 8)
             .CornerRadius(6)
             .Background(BrushFor(
@@ -933,7 +920,7 @@ public sealed class ReactorChatTimeline : Component<ReactorChatTimelineProps>
                 12,
                 FontWeights.Normal,
                 isError ? "SystemFillColorCriticalBrush" : "TextFillColorSecondaryBrush")
-            .Set(text => text.TextAlignment = TextAlignment.Center))
+            .TextAlignment(TextAlignment.Center))
             .Margin(40, 4)
             .Padding(10, 4)
             .HAlign(HorizontalAlignment.Center)
@@ -962,7 +949,7 @@ public sealed class ReactorChatTimeline : Component<ReactorChatTimelineProps>
                     Text(presentation.Title, 13, FontWeights.SemiBold)
                         .HAlign(HorizontalAlignment.Center),
                     Text(presentation.Detail, 12, FontWeights.Normal, "TextFillColorSecondaryBrush")
-                        .Set(text => text.TextAlignment = TextAlignment.Center)
+                        .TextAlignment(TextAlignment.Center)
                         .HAlign(HorizontalAlignment.Center),
                     Button(
                             presentation.ActionLabel,
@@ -1036,11 +1023,8 @@ public sealed class ReactorChatTimeline : Component<ReactorChatTimelineProps>
     private static Element HoverMetadata(Element child, bool isHovered)
     {
         return Border(child)
-            .Set(border =>
-            {
-                border.Opacity = isHovered ? 1 : 0;
-                border.IsHitTestVisible = false;
-            });
+            .Opacity(isHovered ? 1 : 0)
+            .IsHitTestVisible(false);
     }
 
     private static TextBlockElement Text(
@@ -1049,7 +1033,7 @@ public sealed class ReactorChatTimeline : Component<ReactorChatTimelineProps>
         global::Windows.UI.Text.FontWeight? weight = null,
         string foregroundResource = "TextFillColorPrimaryBrush") =>
         TextBlock(text)
-            .Set(control => control.TextWrapping = TextWrapping.Wrap)
+            .TextWrapping(TextWrapping.Wrap)
             .FontSize(fontSize)
             .FontWeight(weight ?? FontWeights.Normal)
             .Foreground(BrushFor(foregroundResource, Microsoft.UI.Colors.Black));

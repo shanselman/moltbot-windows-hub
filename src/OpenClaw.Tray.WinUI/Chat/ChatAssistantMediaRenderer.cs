@@ -53,7 +53,7 @@ internal static class ChatAssistantMediaRenderer
             .FontSize(18)
             .FontWeight(FontWeights.Normal)
             .Foreground(Theme.Ref("TextFillColorSecondaryBrush"))
-            .Set(text => text.FontFamily = FluentIconCatalog.SymbolThemeFontFamily)
+            .FontFamily(FluentIconCatalog.SymbolThemeFontFamily)
             .Center();
         var glyphBackground = Border(glyph)
             .Size(36, 36)
@@ -63,21 +63,15 @@ internal static class ChatAssistantMediaRenderer
             .FontSize(13)
             .FontWeight(FontWeights.SemiBold)
             .Foreground(Theme.Ref("TextFillColorPrimaryBrush"))
-            .Set(text =>
-            {
-                text.TextWrapping = TextWrapping.NoWrap;
-                text.TextTrimming = TextTrimming.CharacterEllipsis;
-            })
+            .TextWrapping(TextWrapping.NoWrap)
+            .TextTrimming(TextTrimming.CharacterEllipsis)
             .MaxWidth(320);
         var status = TextBlock(detail)
             .FontSize(11)
             .FontWeight(FontWeights.Normal)
             .Foreground(Theme.Ref("TextFillColorSecondaryBrush"))
-            .Set(text =>
-            {
-                text.TextWrapping = TextWrapping.NoWrap;
-                text.TextTrimming = TextTrimming.CharacterEllipsis;
-            })
+            .TextWrapping(TextWrapping.NoWrap)
+            .TextTrimming(TextTrimming.CharacterEllipsis)
             .MaxWidth(320);
         var content = HStack(
             10,
@@ -250,7 +244,7 @@ internal sealed class ChatAssistantImageCard : Component<ChatAssistantImageCardP
             Math.Min(maximumWidth / pixelWidth, maximumHeight / pixelHeight),
             1.0);
         var preview = Border(Empty())
-            .Set(border => border.Background = new ImageBrush
+            .Background(new ImageBrush
             {
                 ImageSource = bitmap,
                 Stretch = Stretch.Uniform,
@@ -282,7 +276,7 @@ internal sealed class ChatAssistantImageCard : Component<ChatAssistantImageCardP
             1.0);
         return ScrollViewer(
             Border(Empty())
-                .Set(border => border.Background = new ImageBrush
+                .Background(new ImageBrush
                 {
                     ImageSource = bitmap,
                     Stretch = Stretch.Uniform,

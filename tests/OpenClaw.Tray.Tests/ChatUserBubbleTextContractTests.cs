@@ -10,7 +10,7 @@ public sealed class ChatUserBubbleTextContractTests
         Assert.Contains("private static Element BuildUser(", timeline);
         Assert.Contains("content.Add(Text(", timeline);
         Assert.Contains("messageText,", timeline);
-        Assert.Contains(".Set(text => text.IsTextSelectionEnabled = true)", timeline);
+        Assert.Contains(".IsTextSelectionEnabled(true)", timeline);
         Assert.Contains("var accessibleText = BuildAccessibleUserText(messageText, attachments)", timeline);
         Assert.Contains(".AutomationName(accessibleText)", timeline);
     }

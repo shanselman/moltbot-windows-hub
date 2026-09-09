@@ -165,7 +165,7 @@ internal sealed class ReactorChatComposer : Component<ReactorChatComposerViewPro
         var actionLabel = inputs.TurnActive
             ? Localized("Chat_Composer_Tooltip_Stop", "Stop")
             : Localized("Chat_Composer_Tooltip_Send", "Send");
-        var controlCornerRadius = new CornerRadius(4);
+        const double controlCornerRadius = 4;
 
         Element IconButton(
             string glyph,
@@ -175,14 +175,10 @@ internal sealed class ReactorChatComposer : Component<ReactorChatComposerViewPro
             string? automationId = null)
         {
             return Button(
-                    TextBlock(glyph).Set(textBlock =>
-                    {
-                        textBlock.FontFamily = FluentIconCatalog.SymbolThemeFontFamily;
-                        textBlock.FontSize = 16;
-                        Microsoft.UI.Xaml.Automation.AutomationProperties.SetAccessibilityView(
-                            textBlock,
-                            Microsoft.UI.Xaml.Automation.Peers.AccessibilityView.Raw);
-                    }),
+                    TextBlock(glyph)
+                        .AccessibilityView(Microsoft.UI.Xaml.Automation.Peers.AccessibilityView.Raw)
+                        .FontFamily(FluentIconCatalog.SymbolThemeFontFamily)
+                        .FontSize(16),
                     onClick)
                 .AutomationName(automationName)
                 .Foreground(Theme.SecondaryText)
@@ -193,25 +189,17 @@ internal sealed class ReactorChatComposer : Component<ReactorChatComposerViewPro
                     .Set("ButtonBorderBrush", Theme.Ref("SubtleFillColorTransparentBrush"))
                     .Set("ButtonBorderBrushPointerOver", Theme.Ref("SubtleFillColorTransparentBrush"))
                     .Set("ButtonBorderBrushPressed", Theme.Ref("SubtleFillColorTransparentBrush")))
-                .Set(button =>
-                {
-                    button.Width = 32;
-                    button.Height = 32;
-                    button.MinWidth = 32;
-                    button.MinHeight = 32;
-                    button.Padding = new Thickness(0);
-                    button.CornerRadius = controlCornerRadius;
-                    button.IsEnabled = enabled;
-                    button.BorderThickness = new Thickness(0);
-                    if (!string.IsNullOrWhiteSpace(automationId))
-                    {
-                        Microsoft.UI.Xaml.Automation.AutomationProperties.SetAutomationId(
-                            button,
-                            automationId);
-                    }
-                    ComposerAutomationVisibility.Prepare(button);
-                    ToolTipService.SetToolTip(button, automationName);
-                })
+                .Width(32)
+                .Height(32)
+                .MinWidth(32)
+                .MinHeight(32)
+                .Padding(0)
+                .CornerRadius(controlCornerRadius)
+                .IsEnabled(enabled)
+                .BorderThickness(0)
+                .AutomationId(string.IsNullOrWhiteSpace(automationId) ? string.Empty : automationId)
+                .ToolTip(automationName)
+                .Set(button => ComposerAutomationVisibility.Prepare(button))
                 .OnUnmount(control => ComposerAutomationVisibility.Detach(
                     (FrameworkElement)control));
         }
@@ -226,22 +214,16 @@ internal sealed class ReactorChatComposer : Component<ReactorChatComposerViewPro
             return Button(
                     HStack(
                         4,
-                        TextBlock(label).Set(textBlock =>
-                        {
-                            textBlock.FontSize = 13;
-                            textBlock.MaxWidth = maxLabelWidth;
-                            textBlock.TextTrimming = TextTrimming.CharacterEllipsis;
-                            textBlock.TextWrapping = TextWrapping.NoWrap;
-                        }),
-                        TextBlock("\uE70D").Set(textBlock =>
-                        {
-                            textBlock.FontFamily = FluentIconCatalog.SymbolThemeFontFamily;
-                            textBlock.FontSize = 10;
-                            textBlock.Margin = new Thickness(2, 4, 0, 0);
-                            Microsoft.UI.Xaml.Automation.AutomationProperties.SetAccessibilityView(
-                                textBlock,
-                                Microsoft.UI.Xaml.Automation.Peers.AccessibilityView.Raw);
-                        })),
+                        TextBlock(label)
+                            .MaxWidth(maxLabelWidth)
+                            .FontSize(13)
+                            .TextTrimming(TextTrimming.CharacterEllipsis)
+                            .TextWrapping(TextWrapping.NoWrap),
+                        TextBlock("\uE70D")
+                            .Margin(2, 4, 0, 0)
+                            .AccessibilityView(Microsoft.UI.Xaml.Automation.Peers.AccessibilityView.Raw)
+                            .FontFamily(FluentIconCatalog.SymbolThemeFontFamily)
+                            .FontSize(10)),
                     () => { })
                 .AutomationName(automationName)
                 .Foreground(Theme.SecondaryText)
@@ -252,20 +234,15 @@ internal sealed class ReactorChatComposer : Component<ReactorChatComposerViewPro
                     .Set("ButtonBorderBrush", Theme.Ref("SubtleFillColorTransparentBrush"))
                     .Set("ButtonBorderBrushPointerOver", Theme.Ref("SubtleFillColorTransparentBrush"))
                     .Set("ButtonBorderBrushPressed", Theme.Ref("SubtleFillColorTransparentBrush")))
-                .Set(button =>
-                {
-                    button.Height = 32;
-                    button.MinHeight = 32;
-                    button.MinWidth = 0;
-                    button.Padding = new Thickness(8, 0, 8, 0);
-                    button.CornerRadius = controlCornerRadius;
-                    button.IsEnabled = enabled;
-                    button.BorderThickness = new Thickness(0);
-                    Microsoft.UI.Xaml.Automation.AutomationProperties.SetAutomationId(
-                        button,
-                        automationId);
-                    ComposerAutomationVisibility.Prepare(button);
-                })
+                .Height(32)
+                .MinHeight(32)
+                .MinWidth(0)
+                .Padding(8, 0, 8, 0)
+                .CornerRadius(controlCornerRadius)
+                .IsEnabled(enabled)
+                .BorderThickness(0)
+                .AutomationId(automationId)
+                .Set(button => ComposerAutomationVisibility.Prepare(button))
                 .OnUnmount(control => ComposerAutomationVisibility.Detach(
                     (FrameworkElement)control));
         }
@@ -365,7 +342,7 @@ internal sealed class ReactorChatComposer : Component<ReactorChatComposerViewPro
                         8,
                         TextBlock(queuedCountText)
                             .FontSize(13)
-                            .Set(textBlock => textBlock.FontWeight = Microsoft.UI.Text.FontWeights.SemiBold),
+                            .FontWeight(Microsoft.UI.Text.FontWeights.SemiBold),
                         ScrollView(VStack(4, queuedRows))
                             .MaxHeight(props.IsCompact ? 144 : 220)
                             .Set(scrollView =>
@@ -375,9 +352,7 @@ internal sealed class ReactorChatComposer : Component<ReactorChatComposerViewPro
                                 scrollView.HorizontalScrollMode = ScrollingScrollMode.Disabled;
                                 scrollView.HorizontalContentAlignment = HorizontalAlignment.Stretch;
                             })))
-                .Set(border => Microsoft.UI.Xaml.Automation.AutomationProperties.SetLiveSetting(
-                    border,
-                    Microsoft.UI.Xaml.Automation.Peers.AutomationLiveSetting.Polite))
+                .LiveRegion(Microsoft.UI.Xaml.Automation.Peers.AutomationLiveSetting.Polite)
                 .AutomationName(queuedCountText);
 
         var slashPopupVisible = slashDisplay.IsVisible
@@ -446,6 +421,7 @@ internal sealed class ReactorChatComposer : Component<ReactorChatComposerViewPro
             slashPopupContentRef.Current = (popupStateKey, slashPopupContent);
         }
 
+        var transparentInputBrush = new SolidColorBrush(Microsoft.UI.Colors.Transparent);
         var input = TextBox(
                 text,
                 vm.SetDraft,
@@ -524,27 +500,26 @@ internal sealed class ReactorChatComposer : Component<ReactorChatComposerViewPro
                 Send();
             })
             .TextWrapping(TextWrapping.Wrap)
+            .MinHeight(56)
+            .MaxHeight(200)
+            .Padding(8)
+            .IsEnabled(inputs.ConnectionState == "connected")
+            .BorderThickness(0)
+            .BorderBrush(transparentInputBrush)
+            .Background(transparentInputBrush)
+            .AcceptsReturn(false)
+            .FontSize(14)
             .Set(control =>
             {
                 inputControl.Current = control;
-                var transparent = new SolidColorBrush(Microsoft.UI.Colors.Transparent);
-                control.MinHeight = 56;
-                control.MaxHeight = 200;
-                control.FontSize = 14;
-                control.Padding = new Thickness(8);
-                control.IsEnabled = inputs.ConnectionState == "connected";
-                control.AcceptsReturn = false;
-                control.BorderThickness = new Thickness(0);
-                control.BorderBrush = transparent;
-                control.Background = transparent;
                 control.Resources["TextControlBorderThemeThickness"] = new Thickness(0);
                 control.Resources["TextControlBorderThemeThicknessFocused"] = new Thickness(0);
-                control.Resources["TextControlBackground"] = transparent;
-                control.Resources["TextControlBackgroundFocused"] = transparent;
-                control.Resources["TextControlBackgroundPointerOver"] = transparent;
-                control.Resources["TextControlBorderBrush"] = transparent;
-                control.Resources["TextControlBorderBrushFocused"] = transparent;
-                control.Resources["TextControlBorderBrushPointerOver"] = transparent;
+                control.Resources["TextControlBackground"] = transparentInputBrush;
+                control.Resources["TextControlBackgroundFocused"] = transparentInputBrush;
+                control.Resources["TextControlBackgroundPointerOver"] = transparentInputBrush;
+                control.Resources["TextControlBorderBrush"] = transparentInputBrush;
+                control.Resources["TextControlBorderBrushFocused"] = transparentInputBrush;
+                control.Resources["TextControlBorderBrushPointerOver"] = transparentInputBrush;
                 ComposerAutomationVisibility.Prepare(control);
             })
             .OnMount(control =>
@@ -673,32 +648,23 @@ internal sealed class ReactorChatComposer : Component<ReactorChatComposerViewPro
                 controller.Stop,
                 automationId: "ChatComposerPrimaryAction")
             : Button(
-                    TextBlock("\uE724").Set(textBlock =>
-                    {
-                        textBlock.FontFamily = FluentIconCatalog.SymbolThemeFontFamily;
-                        textBlock.FontSize = 16;
-                        Microsoft.UI.Xaml.Automation.AutomationProperties.SetAccessibilityView(
-                            textBlock,
-                            Microsoft.UI.Xaml.Automation.Peers.AccessibilityView.Raw);
-                    }),
+                    TextBlock("\uE724")
+                        .AccessibilityView(Microsoft.UI.Xaml.Automation.Peers.AccessibilityView.Raw)
+                        .FontFamily(FluentIconCatalog.SymbolThemeFontFamily)
+                        .FontSize(16),
                     Send)
                 .AccentButton()
                 .AutomationName(actionLabel)
-                .Set(button =>
-                {
-                    button.Width = 32;
-                    button.Height = 32;
-                    button.MinWidth = 32;
-                    button.MinHeight = 32;
-                    button.Padding = new Thickness(0);
-                    button.CornerRadius = controlCornerRadius;
-                    Microsoft.UI.Xaml.Automation.AutomationProperties.SetAutomationId(
-                        button,
-                        "ChatComposerPrimaryAction");
-                    button.IsEnabled = vm.CanSend;
-                    ComposerAutomationVisibility.Prepare(button);
-                    ToolTipService.SetToolTip(button, actionLabel);
-                })
+                .Width(32)
+                .Height(32)
+                .MinWidth(32)
+                .MinHeight(32)
+                .Padding(0)
+                .CornerRadius(controlCornerRadius)
+                .AutomationId("ChatComposerPrimaryAction")
+                .IsEnabled(vm.CanSend)
+                .ToolTip(actionLabel)
+                .Set(button => ComposerAutomationVisibility.Prepare(button))
                 .OnUnmount(control => ComposerAutomationVisibility.Detach(
                     (FrameworkElement)control));
 
@@ -901,11 +867,8 @@ internal sealed class ReactorChatComposer : Component<ReactorChatComposerViewPro
             .Resources(resources => resources
                 .Set("ButtonBackground", background)
                 .Set("ButtonBorderBrush", Theme.Ref("SubtleFillColorTransparentBrush")))
-            .Set(button =>
-            {
-                button.HorizontalContentAlignment = HorizontalAlignment.Left;
-                button.BorderThickness = new Thickness(0);
-            })
+            .HorizontalContentAlignment(HorizontalAlignment.Left)
+            .BorderThickness(0)
             .OnMount(element =>
             {
                 if (selected)
@@ -997,11 +960,8 @@ internal sealed class ReactorChatComposer : Component<ReactorChatComposerViewPro
             .Resources(resources => resources
                 .Set("ButtonBackground", background)
                 .Set("ButtonBorderBrush", Theme.Ref("SubtleFillColorTransparentBrush")))
-            .Set(button =>
-            {
-                button.HorizontalContentAlignment = HorizontalAlignment.Stretch;
-                button.BorderThickness = new Thickness(0);
-            })
+            .HorizontalContentAlignment(HorizontalAlignment.Stretch)
+            .BorderThickness(0)
             .OnMount(element =>
             {
                 if (selected)
