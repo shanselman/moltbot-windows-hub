@@ -153,6 +153,13 @@ function Add-PathImpact {
         [Parameter(Mandatory)][string]$Path
     )
 
+    if ($Path.Equals(
+            "src/OpenClaw.SetupEngine/GatewayReleasePolicy.cs",
+            [StringComparison]::OrdinalIgnoreCase)) {
+        Add-Lanes -Impact $Impact -Tray -SetupE2e -RevocationE2e -NetworkE2e
+        return $true
+    }
+
     if ($Path.StartsWith("src/OpenClaw.Cli/", [StringComparison]::OrdinalIgnoreCase) -or
         $Path.StartsWith("src/OpenClaw.WinNode.Cli/", [StringComparison]::OrdinalIgnoreCase)) {
         Add-Lanes -Impact $Impact -Core

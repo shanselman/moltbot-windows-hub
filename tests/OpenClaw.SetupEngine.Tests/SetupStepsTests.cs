@@ -2033,6 +2033,27 @@ public class SetupStepsTests : IDisposable
     }
 
     [Fact]
+    public async Task InstallCli_InstallFailureSurfacesStdoutWhenStderrIsEmpty()
+    {
+        var commands = new FakeCommandRunner(
+            _ => Ok(),
+            (_, command, _) => command.Contains("curl -fsSL", StringComparison.Ordinal)
+                ? FailWithStdout("ERROR: Node 22.22.3 is unsupported; use Node 24.16.0+.")
+                : command.StartsWith("rm -rf -- /tmp/openclaw-installer-", StringComparison.Ordinal)
+                    ? Ok()
+                    : throw new InvalidOperationException($"Unexpected command: {command}"));
+        var config = new SetupConfig();
+        GatewayReleasePolicy.ResolveAndApply(config);
+        var ctx = CreateContext(config, commands);
+
+        var result = await new InstallCliStep().ExecuteAsync(ctx, CancellationToken.None);
+
+        Assert.Equal(StepOutcome.Failed, result.Outcome);
+        Assert.Contains("Node 22.22.3 is unsupported", result.Message);
+        AssertCleanupRan(commands);
+    }
+
+    [Fact]
     public void InstallCli_BuildInstallCommand_EscapesSingleQuotesInUrlAndVersion()
     {
         var command = InstallCliStep.BuildInstallCommand("https://openclaw.ai/install-cli's.sh", "2026.5.22'a");
